@@ -1,0 +1,140 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.95in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{mdframed}
+\definecolor{accent}{HTML}{2563a8}
+\definecolor{soft}{HTML}{e8eef5}
+\newmdenv[linecolor=accent,linewidth=1pt,backgroundcolor=soft,roundcorner=4pt,
+  innertopmargin=7pt,innerbottommargin=7pt,innerleftmargin=10pt,innerrightmargin=10pt]{keybox}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\vecop}{\operatorname{vec}}
+\title{\textbf{OD Demand Compression as a Linear Encoder--Decoder}\\[2pt]
+\large Folding, unfolding, and response-preserving zone aggregation}
+\date{}
+\begin{document}
+\maketitle
+\vspace{-3em}
+\begin{center}\rule{0.5\textwidth}{0.4pt}\end{center}
+
+Companion to \texttt{compress\_the\_response.tex} (the intuition) and
+\texttt{superzone\_design\_principles.md} (the engineering). Here we make the
+aggregation a precise linear system and use it to \emph{choose} the encoder.
+
+\section{The assignment response chain}
+OD demand $d\in\R^{n_{OD}}$, path flow $f\in\R^{n_P}$, link flow $v\in\R^{n_L}$:
+\[
+d \xrightarrow{R} f=Rd \xrightarrow{B^{\!\top}} v=B^{\!\top}f=\underbrace{B^{\!\top}R}_{H}\,d,
+\qquad v = Hd .
+\]
+$R$ is the OD$\to$path split, $B$ the path--link incidence, and
+$H=B^{\!\top}R\in\R^{n_L\times n_{OD}}$ is the \textbf{OD-to-link response}.
+Link cost $\tau=c(v)$; linearised about equilibrium, $\Delta\tau\approx C_v\Delta v$
+with $C_v=\operatorname{diag}(c_a'(v_a))$, so the OD-to-time response is $T=C_vH$.
+
+\section{Encoder (fold) and decoder (unfold)}
+Let $S\in\{0,1\}^{N\times K}$ map each original zone to one of $K$ super-zones
+($S_{ik}=1$ iff zone $i\in$ super-zone $k$). Because an OD is a pair, the OD
+folding matrix is the Kronecker square $Q=S\otimes S$, and with $d=\vecop(D)$,
+\[
+\textbf{encoder:}\quad E=Q^{\!\top}=(S\otimes S)^{\!\top},\qquad \bar d = Q^{\!\top}d
+\quad(\text{super-zone OD}).
+\]
+A decoder $U$ unfolds the super-zone OD back to a loadable original OD,
+$\tilde d = U\bar d = U Q^{\!\top} d$, giving a linear autoencoder
+$P=UQ^{\!\top}$, $\ \tilde d = Pd$. Two decoders serve different goals:
+\[
+\textbf{reconstruction } U_R=Q(Q^{\!\top}Q)^{-1}\ (\text{best } d\approx U_RQ^{\!\top}d),
+\qquad
+\textbf{computational } U_C\ (\text{load super OD }(k,l)\text{ at representative }(c_k,c_l)).
+\]
+DTALite/TAPLite uses $U_C$. The \emph{hierarchical} build
+(\texttt{superzone\_hier.py}) realises $U_C$ in the network itself: super-zones are
+the only centroids, every original zone is a through node, zero-cost connectors
+join \mbox{super $\leftrightarrow$ member}, so demand keyed to super-zones loads
+through the members.
+
+\section{The right error: response distortion, not OD reconstruction}
+The quantity to preserve is the link flow, not the OD table:
+\[
+v=Hd,\qquad \tilde v = H\tilde d = HUQ^{\!\top}d,\qquad
+\boxed{\,e_v = v-\tilde v = H\,(I-UQ^{\!\top})\,d\,}.
+\]
+``Lossless'' means $Hd\approx HUQ^{\!\top}d$, i.e. $H(I-UQ^{\!\top})d\approx0$ ---
+\emph{not} $d\approx UQ^{\!\top}d$. Travel time follows,
+$e_\tau\approx C_v\,e_v = C_vH(I-UQ^{\!\top})d$, bounded by
+$\lVert e_\tau\rVert\le L_c\lVert e_v\rVert$ for locally Lipschitz $c$.
+
+\begin{keybox}
+\textbf{Corner-case theorem (verified).} If $S=I_N$ (one super-zone per zone) then
+$Q=I$, the computational decoder $U_C$ is the identity loading, $UQ^{\!\top}=I$, so
+$e_v=0$ \emph{exactly}. Empirically: Chicago Sketch and Chicago Regional at $S=I$
+reproduce the full assignment to every decimal (link-volume $R^2=1.000$, $0\%$
+RMSE, identical VMT/TT/gap). This is the unit test for any encoder/decoder.
+\end{keybox}
+
+\section{Low-rank structure and the corridor subspace}
+$H$ is huge but low-rank: many OD pairs share corridors. With
+$H\approx U_s\Sigma_sV_s^{\!\top}$ and the corridor projector $P_s=U_sU_s^{\!\top}$,
+we need only the \emph{dominant} modes preserved,
+\[
+\boxed{\,P_sH(I-UQ^{\!\top})d\approx0\,}.
+\]
+\textit{Empirically (Chicago Regional, $N=1790$):} the demand matrix $D$ itself is
+rank $\approx 32$ --- $\operatorname{SVD}(D)$ holds $50\%$ of the energy in rank $1$
+(the gravity/size mode), $90\%$ in $3$, $99\%$ in $32$. So $K=178$ super-zones give
+\emph{far} more capacity than the response needs: \textbf{the encoder rank is not the
+binding constraint --- the decoder $U_C$ is} (intra-super demand it drops and the
+single representative it loads through).
+
+\section{Choosing the encoder $S$: experiment ($K{=}178$, 20 iters)}
+Five constructions of $S$, each run and scored by response distortion vs.\ full:
+\begin{center}\small
+\begin{tabular}{lcccc}
+\toprule
+encoder $S$ & link $R^2$ & corridor (fwy) $R^2$ & \%RMSE & volume kept \\
+\midrule
+geographic quantile grid      & 0.808 & 0.892 & 73 & 0.690 \\
+geographic $k$-means           & 0.802 & 0.951 & 76 & 0.656 \\
+\textbf{demand-weighted $k$-means} & \textbf{0.849} & \textbf{0.966} & \textbf{66} & \textbf{0.708} \\
+low-rank OD-SVD embedding      & 0.838 & 0.952 & 68 & 0.703 \\
+flow-direction $k$-means       & 0.795 & 0.943 & 77 & 0.651 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent\textbf{Recommendation: demand-weighted $k$-means} (cluster zone centroids
+with weights $=$ total zone demand). It wins every metric --- corridor $R^2=0.97$ ---
+because the rank-1 mode \emph{is} the gravity/size pattern, and demand-weighting puts
+super-zone resolution exactly where the response is largest. The
+\textbf{low-rank OD-SVD embedding} (cluster origins by the top-$r$ left singular
+vectors of $D$) is the principled runner-up and should overtake demand-weighting on
+networks where corridors are \emph{not} aligned with demand density. Plain
+geographic grids/$k$-means and direction signatures trail. All $k$-means variants
+beat the quantile grid on corridors (more compact clusters).
+
+\section{Design problem and the decoder lever}
+The full statement:
+\[
+\boxed{\;\min_{S,\,U}\ \big\lVert P_sH(I-UQ^{\!\top})d\big\rVert_W^2
+\;+\;\lambda\,I(S)\;+\;\mu\,C(S),
+\qquad Q=S\otimes S,\ H=B^{\!\top}R,\ P_s=U_sU_s^{\!\top}\;}
+\]
+with $I(S)$ the intra-super-zone (dropped) demand and $C(S)$ a compactness/
+interpretability penalty. Since the experiment shows the decoder dominates the
+residual at usable $K$, the highest-value next move is a \textbf{better $U_C$}:
+spread each super-zone's loading across its member access points in proportion to
+member demand (a soft, demand-weighted $U_C$) instead of a single representative ---
+this directly shrinks the $I(S)$ term and the single-access concentration error,
+the two things the corner case removes.
+
+\begin{keybox}
+\textbf{Summary.} Zone aggregation is a linear autoencoder on the OD object:
+encoder $Q^{\!\top}=(S\otimes S)^{\!\top}$ folds, decoder $U$ unfolds, and the only
+error that matters is $e_v=H(I-UQ^{\!\top})d$ --- response, not reconstruction. The
+OD response is rank $\sim\!32$, so capacity is abundant; pick $S$ by
+\emph{demand-weighted} clustering (corridor $R^2\approx0.97$ at $K{=}178$), keep the
+low-rank OD-SVD embedding as the response-aware alternative, and invest remaining
+accuracy in a demand-spread decoder $U_C$.
+\end{keybox}
+\end{document}

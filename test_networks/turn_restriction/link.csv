@@ -1,0 +1,5 @@
+link_id,from_node_id,to_node_id,link_type,lanes,capacity,free_speed,vdf_free_speed_mph,length,vdf_length_mi,vdf_alpha,vdf_beta,vdf_plf
+101,1,2,1,1,9000,96.54,60,1609,1.0,0.15,4,1
+102,1,3,1,1,9000,96.54,60,1609,1.0,0.15,4,1
+103,2,3,1,1,9000,96.54,60,1609,1.0,0.15,4,1
+104,3,4,1,1,9000,96.54,60,1609,1.0,0.15,4,1

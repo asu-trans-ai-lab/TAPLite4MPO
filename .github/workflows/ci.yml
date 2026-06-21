@@ -1,0 +1,36 @@
+name: build-and-test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    # The kernel uses MSVC-secure CRT calls (fopen_s/scanf_s), so it builds on
+    # Windows (MSVC has them natively; MinGW also works locally via build.sh).
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Configure (CMake + MSVC)
+        run: cmake -S kernel -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build kernel (DTALite_exe)
+        run: cmake --build build --config Release --target DTALite_exe
+
+      - name: Stage executable -> bin/DTALite.exe
+        shell: bash
+        run: |
+          mkdir -p bin
+          cp build/Release/DTALite_exe.exe bin/DTALite.exe
+          ls -la bin/
+
+      - name: Regression suite
+        run: python test_networks/run_regression.py

@@ -1,0 +1,400 @@
+{
+  "schema_version": "gmns-dtalite-1.0",
+  "units": {
+    "length_input": "meters (link.csv 'length'); or miles via 'vdf_length_mi'",
+    "speed": "mph (vdf_free_speed_mph, cutoff_speed); 'free_speed' is km/h unless overridden",
+    "capacity": "veh/hour/lane",
+    "travel_time_output": "minutes",
+    "volume": "vehicles over the analysis period"
+  },
+  "files": {
+    "link.csv": {
+      "fields": [
+        {
+          "name": "from_node_id",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "origin node (must exist in node.csv)"
+        },
+        {
+          "name": "to_node_id",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "destination node (must exist in node.csv)"
+        },
+        {
+          "name": "link_id",
+          "type": "int",
+          "required": false,
+          "default": null,
+          "description": "external link id; preserved in all outputs"
+        },
+        {
+          "name": "lanes",
+          "type": "number",
+          "required": true,
+          "default": null,
+          "description": "lane count (> 0)"
+        },
+        {
+          "name": "capacity",
+          "type": "number",
+          "required": true,
+          "default": null,
+          "description": "PER-LANE capacity, veh/hour/lane"
+        },
+        {
+          "name": "free_speed",
+          "type": "number",
+          "required": true,
+          "default": null,
+          "description": "free-flow speed (km/h unless vdf_free_speed_mph given)"
+        },
+        {
+          "name": "vdf_free_speed_mph",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "free-flow speed in mph (unambiguous)"
+        },
+        {
+          "name": "length",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "length in meters (converted to miles internally)"
+        },
+        {
+          "name": "vdf_length_mi",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "length in miles; overrides 'length' when >= 0"
+        },
+        {
+          "name": "vdf_type",
+          "type": "int",
+          "required": false,
+          "default": 0,
+          "description": "0 BPR, 1 conic, 2 QVDF"
+        },
+        {
+          "name": "vdf_alpha",
+          "type": "number",
+          "required": false,
+          "default": 0.15,
+          "description": "BPR/conic alpha"
+        },
+        {
+          "name": "vdf_beta",
+          "type": "number",
+          "required": false,
+          "default": 4,
+          "description": "BPR/conic beta"
+        },
+        {
+          "name": "vdf_plf",
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "description": "peak load factor"
+        },
+        {
+          "name": "cutoff_speed",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "speed at capacity, mph (default 0.75*free_speed)"
+        },
+        {
+          "name": "vdf_cp",
+          "type": "number",
+          "required": false,
+          "default": 0.28125,
+          "description": "QVDF queue parameter"
+        },
+        {
+          "name": "vdf_cd",
+          "type": "number",
+          "required": false,
+          "default": 1.0,
+          "description": "QVDF queue parameter"
+        },
+        {
+          "name": "vdf_n",
+          "type": "number",
+          "required": false,
+          "default": 1.0,
+          "description": "QVDF queue parameter"
+        },
+        {
+          "name": "vdf_s",
+          "type": "number",
+          "required": false,
+          "default": 4,
+          "description": "QVDF queue parameter"
+        },
+        {
+          "name": "allowed_use",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "description": "mode access control (empty/all, 'closed', or ';'-list)"
+        },
+        {
+          "name": "non_uturn_flag",
+          "type": "int",
+          "required": false,
+          "default": 0,
+          "description": "1 bans the immediate U-turn"
+        }
+      ]
+    },
+    "node.csv": {
+      "fields": [
+        {
+          "name": "node_id",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "unique node id"
+        },
+        {
+          "name": "zone_id",
+          "type": "int",
+          "required": false,
+          "default": 0,
+          "description": "zone id if this node is a centroid, else 0"
+        },
+        {
+          "name": "x_coord",
+          "type": "number",
+          "required": true,
+          "default": null,
+          "description": "x / longitude"
+        },
+        {
+          "name": "y_coord",
+          "type": "number",
+          "required": true,
+          "default": null,
+          "description": "y / latitude"
+        }
+      ]
+    },
+    "demand.csv": {
+      "fields": [
+        {
+          "name": "o_zone_id",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "origin zone id"
+        },
+        {
+          "name": "d_zone_id",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "destination zone id"
+        },
+        {
+          "name": "volume",
+          "type": "number",
+          "required": true,
+          "default": null,
+          "description": "demand for the analysis period (>= 0)"
+        }
+      ]
+    },
+    "settings.csv": {
+      "fields": [
+        {
+          "name": "number_of_iterations",
+          "type": "number",
+          "required": false,
+          "default": 20,
+          "description": ""
+        },
+        {
+          "name": "number_of_processors",
+          "type": "number",
+          "required": false,
+          "default": 8,
+          "description": ""
+        },
+        {
+          "name": "demand_period_starting_hours",
+          "type": "number",
+          "required": false,
+          "default": 7,
+          "description": ""
+        },
+        {
+          "name": "demand_period_ending_hours",
+          "type": "number",
+          "required": false,
+          "default": 8,
+          "description": ""
+        },
+        {
+          "name": "first_through_node_id",
+          "type": "number",
+          "required": false,
+          "default": -1,
+          "description": ""
+        },
+        {
+          "name": "base_demand_mode",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": ""
+        },
+        {
+          "name": "route_output",
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "description": ""
+        },
+        {
+          "name": "vehicle_output",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": ""
+        },
+        {
+          "name": "log_file",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": ""
+        },
+        {
+          "name": "odme_mode",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": ""
+        },
+        {
+          "name": "odme_vmt",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": ""
+        },
+        {
+          "name": "demand_format",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": ""
+        },
+        {
+          "name": "added_delay_per_mile",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": ""
+        },
+        {
+          "name": "convergence_gap_pct",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": ""
+        },
+        {
+          "name": "convergence_consecutive",
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "description": ""
+        }
+      ]
+    },
+    "mode_type.csv": {
+      "fields": [
+        {
+          "name": "mode_type",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "short token used in allowed_use"
+        },
+        {
+          "name": "vot",
+          "type": "number",
+          "required": false,
+          "default": 10,
+          "description": "value of time"
+        },
+        {
+          "name": "pce",
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "description": "passenger-car equivalent"
+        },
+        {
+          "name": "occ",
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "description": "occupancy"
+        },
+        {
+          "name": "demand_file",
+          "type": "string",
+          "required": false,
+          "default": "demand.csv",
+          "description": "this mode's demand CSV"
+        },
+        {
+          "name": "dedicated_shortest_path",
+          "type": "int",
+          "required": false,
+          "default": 1,
+          "description": "1 = per-mode allowed_use shortest path"
+        }
+      ]
+    },
+    "movement.csv": {
+      "fields": [
+        {
+          "name": "node_id",
+          "type": "int",
+          "required": false,
+          "default": null,
+          "description": "intersection node"
+        },
+        {
+          "name": "ib_link_id",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "inbound link (external id)"
+        },
+        {
+          "name": "ob_link_id",
+          "type": "int",
+          "required": true,
+          "default": null,
+          "description": "outbound link (external id)"
+        },
+        {
+          "name": "penalty",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "forbidden when >= 10"
+        }
+      ]
+    }
+  }
+}

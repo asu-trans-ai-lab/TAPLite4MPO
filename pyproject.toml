@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dtalite-qa"
+version = "0.1.0"
+description = "QA / control layer for the DTALite/TAPLite C++ kernel: validate inputs, fill kernel defaults, inventory allowed_use, and check accessibility."
+requires-python = ">=3.8"
+dependencies = []          # standard library only
+
+[project.scripts]
+dtalite-qa = "dtalite_qa.__main__:main"
+
+[tool.setuptools]
+packages = ["dtalite_qa"]
