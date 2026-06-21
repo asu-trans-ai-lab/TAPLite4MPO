@@ -42,3 +42,9 @@ examples/**/gmns_superzone/
 examples/**/gmns_identity/
 examples/arc_atlanta/arc_skim_*.csv
 examples/arc_atlanta/skim_run.log
+
+# native binding build artifacts (built locally via kernel/python/build_native.sh)
+pytaplite/_native*.pyd
+pytaplite/_native*.so
+kernel/python/build/
+*.egg-info/

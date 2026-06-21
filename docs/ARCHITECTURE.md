@@ -63,32 +63,48 @@ reporting.
 | **Build the kernel** (once) | a C++17 compiler (g++/clang/MSVC) + CMake + OpenMP — `bash build.sh` → `bin/DTALite.exe` |
 | Run the kernel | the built `DTALite.exe` (Windows/Linux/macOS); no runtime deps |
 | Use `dtalite_qa` (intake/check/run/workflow/guide) | Python 3.8+ (standard library only) |
+| Drive the kernel from Python (`pytaplite`) | Python 3.8+ (+ `pandas` for `to_pandas`) + a built `DTALite.exe` |
+| Build the **native in-process binding** (optional) | `pybind11` + the C++ toolchain — `bash kernel/python/build_native.sh` |
 | Super-zone encoders / skim recovery | Python + `numpy`, `scipy` (and `scikit-learn` for `demand_kmeans`) |
 | Read agency shapefiles in the example converters | `pyshp` / `pyogrio` / `pandas` (provenance scripts only) |
 
 CI (`.github/workflows/ci.yml`) builds the kernel with MSVC on `windows-latest` and runs the
 regression — proof the C++ layer is the thing under test.
 
-## "Can I call the C++ kernel *from* Python?"
+## Calling the C++ kernel from Python — two ways, both shipped
 
-Yes — that is exactly what the Python layer does today, by **subprocess**, not by a native
-binding:
+**1. `pytaplite` — the clean Python interface (recommended).**
 ```python
-from dtalite_qa import control
-result = control.run("my_scenario", exe="bin/DTALite.exe")   # prepares, then runs DTALite.exe
-print(result["returncode"], result["normalized"])            # outputs in the normalized folder
+import pytaplite
+r = pytaplite.assign("examples/arc_atlanta/gmns_calibrated")   # runs the C++ kernel
+print(r.summary())        # {'links': ..., 'total_VMT': ..., 'returncode': 0}
+df = r.to_pandas()        # link_performance as a DataFrame
 ```
-or the lowest level — just launch the binary yourself:
+It locates the binary, runs the assignment, and loads `link_performance.csv` back. By default
+it launches the kernel as a **subprocess**; if the native module below is built it switches to
+an **in-process** call automatically. See [`../pytaplite/`](../pytaplite/).
+
+**2. The native in-process binding — `pytaplite._native` (no file-launch round trip).**
+The kernel compiles either as the exe (`BUILD_EXE` → `main()`) or as a library
+(`AssignmentAPI()`), so a `pybind11` module wraps it directly. Build it once:
+```bash
+pip install pybind11
+bash kernel/python/build_native.sh        # -> pytaplite/_native.<py>.{pyd,so}
+#   (or kernel/python/CMakeLists.txt; on Windows build with the toolchain matching your Python)
+```
+Then `pytaplite.assign(...)` calls `AssignmentAPI()` **in-process** (the GIL is released during
+the solve) — for tight demand↔supply feedback loops. **Caveat:** the kernel keeps global
+state, so it is **one assignment per process**; for many runs `pytaplite` falls back to
+subprocess (or use `multiprocessing`). The native module is optional and git-ignored; the
+subprocess path works without it.
+
+Lowest level — just launch the binary yourself (any language can):
 ```python
 import subprocess
-subprocess.run(["bin/DTALite.exe"], cwd="my_scenario")       # the solver, in that folder
+subprocess.run(["bin/DTALite.exe"], cwd="my_scenario")        # the solver, in that folder
 ```
 
 The kernel is a **self-contained binary**, deliberately: it stays fast and dependency-free,
-and any language can drive it by writing the CSVs and launching it. A native **`pybind11`
-in-process binding** (call the solver as a Python function, no file round-trip) is a sensible
-future addition for tight demand↔supply feedback loops — it is **not** in the repo yet. If you
-need it, open an issue; the kernel's entry points are structured to allow it.
 
 ## Where each part lives
 - `kernel/src/TAPLite.cpp`, `kernel/CMakeLists.txt`, `build.sh` — **the solver**.

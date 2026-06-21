@@ -117,6 +117,9 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
   pipeline (gates, stages, conventions, the ARC loop) for agent-assisted work in this repo.
 - `dtalite_qa/` — Python package: `guide`, `intake`, `workflow`, `validate`, `fill`, `inventory`,
   `accessibility`, `report`, `demand-bin`, `plf`, `adapt`, `run` (see `python -m dtalite_qa -h`).
+- **[`pytaplite/`](pytaplite/)** — Python interface that **drives the C++ kernel**:
+  `pytaplite.assign(scenario)` → runs `DTALite.exe`, returns `link_performance` (subprocess, or
+  the in-process `_native` binding from [`kernel/python/`](kernel/python/) if built).
 
 ## 5. Folder map
 ```

@@ -3,14 +3,18 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dtalite-qa"
+name = "taplite4mpo"
 version = "0.1.0"
-description = "QA / control layer for the DTALite/TAPLite C++ kernel: validate inputs, fill kernel defaults, inventory allowed_use, and check accessibility."
+description = "Python layer for the TAPLite/DTALite C++ assignment kernel: dtalite_qa (validate, intake, workflow) + pytaplite (drive the kernel and load results). The C++ kernel is the solver."
 requires-python = ">=3.8"
-dependencies = []          # standard library only
+dependencies = []          # standard library only; pandas/numpy/scipy optional (see below)
+
+[project.optional-dependencies]
+data = ["pandas"]                       # pytaplite Result.to_pandas
+science = ["numpy", "scipy"]            # super-zone encoders + skim recovery
 
 [project.scripts]
 dtalite-qa = "dtalite_qa.__main__:main"
 
 [tool.setuptools]
-packages = ["dtalite_qa"]
+packages = ["dtalite_qa", "pytaplite"]
