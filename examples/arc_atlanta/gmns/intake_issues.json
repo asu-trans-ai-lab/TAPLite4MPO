@@ -1,0 +1,51 @@
+{
+  "scenario": "examples/arc_atlanta/gmns",
+  "gate": "READY",
+  "counts": {
+    "BLOCKER": 0,
+    "DECISION": 0,
+    "MISSING": 0,
+    "INFO": 0
+  },
+  "facts": {
+    "links": 145971,
+    "capacity": {
+      "n": 118687,
+      "min": 750.0,
+      "med": 900.0,
+      "max": 4100.0
+    },
+    "length": {
+      "n": 145971,
+      "min": 8.047,
+      "med": 200.09,
+      "max": 8400.791
+    },
+    "plf_values": [
+      0.915
+    ],
+    "free_speed": {
+      "n": 145971,
+      "min": 7.0,
+      "med": 30.0,
+      "max": 70.0
+    },
+    "period_hours": 4.0,
+    "zones": 6031
+  },
+  "declared": [
+    "capacity_basis",
+    "capacity_period",
+    "capacity_source_field",
+    "count_field",
+    "demand_kind",
+    "demand_period_hours",
+    "length_unit",
+    "peak_load_factor",
+    "speed_unit",
+    "vdf_source",
+    "vot",
+    "zone_id_basis"
+  ],
+  "issues": []
+}

@@ -22,6 +22,7 @@ from . import report as _report
 from . import demandbin as _demandbin
 from . import adapt as _adapt
 from . import plf as _plf
+from . import intake as _intake
 
 
 def _print_report(rep):
@@ -60,6 +61,10 @@ def main(argv=None):
     sp.add_argument("--hours", type=float, default=None, help="override period length (hours)")
     sp = sub.add_parser("demand-bin")
     sp.add_argument("scenario", help="convert the scenario's demand CSVs to .bin (set demand_format=1)")
+    sp = sub.add_parser("intake")
+    sp.add_argument("scenario", help="GMNS scenario to run the MPO data-intake audit on")
+    sp.add_argument("--submission", default=None, help="declaration file (default: <scenario>/submission.yml)")
+    sp.add_argument("--out", default=None, help="output dir for intake_log.md / _issues.json / _dashboard.html")
     sp = sub.add_parser("adapt")
     sp.add_argument("scenario", help="older/foreign GMNS scenario to convert to current format")
     sp.add_argument("--out", required=True)
@@ -154,6 +159,19 @@ def main(argv=None):
                 print(f"  {df} -> {binp} ({n:,} pairs)")
         print("set demand_format=1 in settings.csv to read the .bin files")
         return 0
+
+    if args.cmd == "intake":
+        print(f"== intake {args.scenario} ==")
+        s = _intake.run_intake(args.scenario, submission=args.submission, out_dir=args.out)
+        c = s["counts"]
+        for i in s["issues"]:
+            print(f"  {i['severity']:8} {i['field']:24} {i['message']}")
+        od = args.out or args.scenario
+        print(f"\nGATE: {s['gate']}  ({c['BLOCKER']} blocker, {c['DECISION']} decision, "
+              f"{c['MISSING']} missing)")
+        print(f"  -> {od}/intake_dashboard.html  (open it, fill submission.yml, re-run)")
+        print(f"  -> {od}/intake_log.md   {od}/intake_issues.json")
+        return 0 if s["gate"] == "READY" else 1
 
     if args.cmd == "report":
         import os

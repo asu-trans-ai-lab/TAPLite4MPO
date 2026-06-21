@@ -1,0 +1,103 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>MPO intake — examples/arc_atlanta/gmns</title>
+<style>
+ body{font:14px/1.5 system-ui,Segoe UI,Arial;margin:0;color:#222;background:#f4f6f8}
+ header{background:#1e8449;color:#fff;padding:18px 26px}
+ header h1{margin:0;font-size:20px} header .gate{font-size:28px;font-weight:700;letter-spacing:1px}
+ .wrap{max-width:1080px;margin:0 auto;padding:20px 26px}
+ .pill{display:inline-block;padding:2px 10px;border-radius:12px;color:#fff;margin-right:6px;font-size:12px}
+ table{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 1px 3px #0002}
+ td,th{border-bottom:1px solid #eee;padding:8px 10px;vertical-align:top;text-align:left}
+ .sev{color:#fff;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:700}
+ .why{color:#666;font-size:12px;margin-top:3px} .fix{color:#1e6;color:#178a4c;font-size:12px;margin-top:3px}
+ .evidence{background:#fff;border-left:4px solid #2471a3;padding:8px 12px;margin:14px 0;font-size:13px}
+ .fld{background:#fff;border:1px solid #e2e6ea;border-left:4px solid #d68910;border-radius:6px;padding:10px 12px;margin:8px 0}
+ .fld.done{border-left-color:#1e8449;opacity:.7}
+ .fld label{font-weight:600} .fld code{color:#888;font-weight:400}
+ .fld input,.fld select{margin-top:5px;width:340px;max-width:90%;padding:5px;border:1px solid #ccc;border-radius:4px}
+ .help{color:#666;font-size:12px;margin-top:5px}
+ button{background:#1e8449;color:#fff;border:0;padding:10px 18px;border-radius:6px;font-size:14px;cursor:pointer}
+ pre{background:#1d2733;color:#dfe7ef;padding:14px;border-radius:6px;overflow:auto;white-space:pre-wrap}
+ h2{margin-top:28px} .sevtag{font-size:11px;font-weight:700}
+</style></head><body>
+<header><div class="wrap" style="max-width:1080px;padding:0">
+  <h1>MPO data intake — examples/arc_atlanta/gmns</h1>
+  <div class="gate">READY</div>
+  <div style="margin-top:6px">
+   <span class="pill" style="background:#c0392b">0 blocker</span>
+   <span class="pill" style="background:#d68910">0 decision</span>
+   <span class="pill" style="background:#2471a3">0 missing</span>
+  </div></div></header>
+<div class="wrap">
+  <p>This scenario is <b>READY</b>. Resolve every <b>BLOCKER</b> (and ideally the
+     decisions) by filling the declarations below, paste the generated block into
+     <code>submission.yml</code>, and re-run <code>dtalite_qa intake</code>.</p>
+  <div class='evidence'>Evidence from the data: capacity (non-connector): median <b>900</b>, range 750–4100 · length: median <b>200.1</b> (>100 ⇒ likely metres) · assignment period <b>4 h</b> · vdf_plf values: [0.915]</div>
+
+  <h2>1. Issues</h2>
+  <table><tr><th>Severity</th><th>Field</th><th>What & why / how to fix</th></tr>
+  <tr><td colspan="3">No issues 🎉</td></tr></table>
+
+  <h2>2. Guided declarations</h2>
+  <p>Fill what you know (amber = still open, green = already declared). These are the facts
+     the shapefile/matrix can't carry.</p>
+  <div class="fld done">
+          <label>Capacity basis <code>capacity_basis</code> <span class="sevtag" style="color:#c0392b">BLOCKER</span></label>
+          <select data-k="capacity_basis"><option ></option><option selected>per_lane</option><option >per_link</option></select>
+          <div class="help">Is the GMNS 'capacity' column per LANE or per LINK? DTALite expects per-lane.<br><i>Why: Wrong basis scales every D/C by the lane count — silently.</i></div></div>
+<div class="fld done">
+          <label>Capacity time basis <code>capacity_period</code> <span class="sevtag" style="color:#c0392b">BLOCKER</span></label>
+          <select data-k="capacity_period"><option ></option><option selected>hourly</option><option >period</option><option >daily</option></select>
+          <div class="help">Does that capacity represent one HOUR, the whole assignment PERIOD, or a DAY?<br><i>Why: A daily capacity makes a peak run look empty (median V/C ~0); an hourly cap over a multi-hour period over-states congestion. This is the #1 hand-off error.</i></div></div>
+<div class="fld done">
+          <label>Capacity source column <code>capacity_source_field</code> <span class="sevtag" style="color:#2471a3">MISSING</span></label>
+          <input data-k="capacity_source_field" value="AMCAPACITY" placeholder="...">
+          <div class="help">Original column used for capacity (e.g. AB_CAP_PK, AMCAPACITY).<br><i>Why: Provenance — so a reviewer can re-derive it.</i></div></div>
+<div class="fld done">
+          <label>Peak load factor (PLF=phi/L) <code>peak_load_factor</code> <span class="sevtag" style="color:#d68910">DECISION</span></label>
+          <input data-k="peak_load_factor" value="0.915" placeholder="...">
+          <div class="help">0<PLF<=1. Converts period demand to the peak-hour load the capacity is sized for. If unknown, give phi_hour_to_period instead and PLF=phi/L is computed.<br><i>Why: Flat PLF=1 over a multi-hour period under-states peak congestion.</i></div></div>
+<div class="fld done">
+          <label>Length unit <code>length_unit</code> <span class="sevtag" style="color:#c0392b">BLOCKER</span></label>
+          <select data-k="length_unit"><option ></option><option >mi</option><option selected>m</option><option >km</option></select>
+          <div class="help">Unit of the GMNS 'length' column.<br><i>Why: Mislabelled metres-as-miles inflates distance-based cost ~1609x.</i></div></div>
+<div class="fld done">
+          <label>Speed unit <code>speed_unit</code> <span class="sevtag" style="color:#d68910">DECISION</span></label>
+          <select data-k="speed_unit"><option ></option><option selected>mph</option><option >kmh</option></select>
+          <div class="help">Unit of free_speed / vdf_free_speed.<br><i>Why: Drives free-flow time; mph vs kmh is a 1.6x error.</i></div></div>
+<div class="fld done">
+          <label>Demand kind <code>demand_kind</code> <span class="sevtag" style="color:#d68910">DECISION</span></label>
+          <select data-k="demand_kind"><option ></option><option selected>vehicle_trips</option><option >person_trips</option></select>
+          <div class="help">Are matrix cells vehicles or persons? If persons, give occupancy.<br><i>Why: Person trips loaded as vehicles over-load the network by the occupancy factor.</i></div></div>
+<div class="fld done">
+          <label>Demand period (hours) <code>demand_period_hours</code> <span class="sevtag" style="color:#d68910">DECISION</span></label>
+          <input data-k="demand_period_hours" value="4" placeholder="...">
+          <div class="help">How many hours the demand matrix spans (should match the assignment period).<br><i>Why: Sets the hourly load the kernel compares to capacity.</i></div></div>
+<div class="fld done">
+          <label>Zone-id basis <code>zone_id_basis</code> <span class="sevtag" style="color:#2471a3">MISSING</span></label>
+          <input data-k="zone_id_basis" value="GMNS zone_id == centroid node_id (1..N)" placeholder="...">
+          <div class="help">How matrix row/col labels map to GMNS zone_id (e.g. 'matrix label = original centroid node id -> ZONE field').<br><i>Why: A silent off-by-mapping scrambles the whole OD table.</i></div></div>
+<div class="fld done">
+          <label>Value of time ($/hr) <code>vot</code> <span class="sevtag" style="color:#d68910">DECISION</span></label>
+          <input data-k="vot" value="21.5" placeholder="...">
+          <div class="help">Used in generalized cost; per class if multiclass.<br><i>Why: Wrong VOT mis-weights tolls/distance vs time.</i></div></div>
+<div class="fld done">
+          <label>VDF parameter source <code>vdf_source</code> <span class="sevtag" style="color:#2471a3">MISSING</span></label>
+          <input data-k="vdf_source" value="ARC Section 7 per-FACTYPE A / alpha(D) / beta(B) coefficients" placeholder="...">
+          <div class="help">Provenance of alpha/beta (e.g. 'HCM default', 'calibrated 2019 counts').<br><i>Why: 'alpha/beta' with no provenance can't be trusted or reproduced.</i></div></div>
+<div class="fld done">
+          <label>Count / reference-volume field <code>count_field</code> <span class="sevtag" style="color:#2471a3">MISSING</span></label>
+          <input data-k="count_field" value="V_SOVAM+V_HOV2AM+V_HOV3AM" placeholder="...">
+          <div class="help">Observed-count or model ref-volume column for validation (or 'none').<br><i>Why: Without it the run can't be validated against reality.</i></div></div>
+  <p style="margin-top:14px"><button onclick="gen()">⬇ Generate submission.yml</button></p>
+  <pre id="out">// click Generate — then copy into &lt;scenario&gt;/submission.yml and re-run intake</pre>
+</div>
+<script>
+function gen(){
+  var lines=["# resolved by intake dashboard — re-run: python -m dtalite_qa intake <scenario>"];
+  document.querySelectorAll('[data-k]').forEach(function(el){
+    var v=el.value.trim(); if(v) lines.push(el.getAttribute('data-k')+": "+v);
+  });
+  document.getElementById('out').textContent=lines.join("\n");
+}
+</script></body></html>

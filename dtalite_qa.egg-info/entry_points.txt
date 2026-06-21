@@ -1,0 +1,2 @@
+[console_scripts]
+dtalite-qa = dtalite_qa.__main__:main

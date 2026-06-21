@@ -16,6 +16,12 @@ detail: `private/kernel_references/` (`DTALite_unified_traffic_assignment_spec.m
 
 ## 1. The MPO assignment workflow
 
+> **Onboarding a new agency model? Read [`docs/MPO_ONBOARDING_GUIDE.md`](docs/MPO_ONBOARDING_GUIDE.md) first.**
+> A shapefile + matrix + "alpha/beta" can't state the capacity basis/period, peak-load
+> factor, units, or trip kind — so the agency must supply a `submission.yml` declaration,
+> and `python -m dtalite_qa intake <scenario>` audits it (issue report + conversion log +
+> guided HTML dashboard) and **blocks rather than guessing** any undeclared convention.
+
 ```
  agency network (CUBE/Visum/shapefile + DBF lookups)
    └─ agency2gmns converter  (facility×area-type → capacity, speed, VDF coeffs;

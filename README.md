@@ -61,6 +61,14 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
 ---
 
 ## 4. Documentation
+- **[docs/MPO_ONBOARDING_GUIDE.md](docs/MPO_ONBOARDING_GUIDE.md)** — **start here for a new
+  agency model.** The process to turn a raw hand-off (shapefile + matrix + "alpha/beta")
+  into a trustworthy run: declare → convert → **intake audit** → resolve → validate. The
+  intake (`dtalite_qa intake`) never guesses a convention — it blocks on anything the MPO
+  didn't declare (capacity basis/period, PLF, units, trip kind) and produces an issue
+  report + conversion log + a guided HTML dashboard. The MPO fills
+  [`submission.yml`](dtalite_qa/templates/mpo_submission_template.yml) (the README for the
+  data; ARC's is in `examples/arc_atlanta/gmns/`).
 - **[USER_GUIDE.md](USER_GUIDE.md)** — Volume 1: kernel reference (input schema, settings,
   VDFs, outputs).
 - **[USER_GUIDE_VOL2_MPO.md](USER_GUIDE_VOL2_MPO.md)** — Volume 2: static highway assignment
@@ -74,8 +82,8 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
   output, and the **CBI sister-project pipeline** (corridor speeds → QVDF params → kernel).
 - `docs/` — methodology notes (peak load factor, super-zone aggregation, 4-step
   integration, OD-compression operators).
-- `dtalite_qa/` — Python package: `validate`, `fill`, `inventory`, `accessibility`,
-  `report`, `demand-bin`, `plf`, `adapt`, `run` (see `python -m dtalite_qa -h`).
+- `dtalite_qa/` — Python package: `intake`, `validate`, `fill`, `inventory`,
+  `accessibility`, `report`, `demand-bin`, `plf`, `adapt`, `run` (see `python -m dtalite_qa -h`).
 
 ## 5. Folder map
 ```

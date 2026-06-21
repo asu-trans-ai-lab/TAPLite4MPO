@@ -1,0 +1,51 @@
+# =============================================================================
+# ARC Atlanta — the MODEL submission. This is what every MPO hand-off should
+# look like: every convention declared, sourced from ARC's published
+# "Section 7 — Trip Assignment" documentation.
+#   https://atlregional.github.io/ARC_Model/TripAssignment.html
+# Run:  python -m dtalite_qa intake examples/arc_atlanta/gmns
+# =============================================================================
+agency: Atlanta Regional Commission (ARC)
+model_year: 2020
+contact: ARC Travel Demand Model team (see Section 7 documentation)
+
+# --- CAPACITY ---------------------------------------------------------------
+capacity_basis: per_lane          # capacity = AMCAPACITY / lanes
+capacity_period: hourly           # AMCAPACITY is the hourly LOS-E capacity by FACTYPE x ATYPE
+capacity_source_field: AMCAPACITY
+capacity_period_hours: 1
+
+# --- TIME PERIOD & PEAK LOAD FACTOR -----------------------------------------
+assignment_period: AM
+period_start_hour: 6
+period_end_hour: 10
+peak_load_factor: 0.915           # PLF = phi/L = 3.66 / 4
+phi_hour_to_period: 3.66          # ARC AM period factor
+plf_by_facility: none
+
+# --- UNITS ------------------------------------------------------------------
+length_unit: m                    # GMNS 'length' column is metres; vdf_length_mi holds miles
+speed_unit: mph
+time_unit: min
+
+# --- DEMAND -----------------------------------------------------------------
+demand_kind: vehicle_trips        # per class: SOV, HOV2, HOV3
+demand_period_hours: 4            # AM 6-10
+occupancy: 1
+pce: 1                            # autos; trucks handled as separate classes
+zone_id_basis: GMNS zone_id == centroid node_id (1..N)
+
+# --- VALUE OF TIME / COST ---------------------------------------------------
+vot: 21.5                         # passenger $/hr (truck 36.0)
+operating_cost_per_mi: 0.1729
+toll_coding: per-mode toll_<mode> in $; converted to minutes via VOT
+
+# --- VDF --------------------------------------------------------------------
+vdf_type: 0                       # modified BPR: t0(1 + A*x + alpha*x^beta)
+vdf_source: ARC Section 7 per-FACTYPE A / alpha(D) / beta(B) coefficients
+
+# --- VALIDATION -------------------------------------------------------------
+count_field: V_SOVAM+V_HOV2AM+V_HOV3AM   # ARC assigned AM auto volume (arc_am_ref_volume.csv)
+
+# --- RESTRICTIONS -----------------------------------------------------------
+restriction_coding: PROHIBIT field -> allowed_use (HOV / truck / managed lanes)

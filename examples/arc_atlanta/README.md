@@ -85,6 +85,10 @@ bash build.sh
 
 cd examples/arc_atlanta
 
+# (0) intake audit: ARC's declaration (gmns/submission.yml) is the MODEL hand-off.
+#     This gate is READY because every convention is declared (see MPO_ONBOARDING_GUIDE).
+python -m dtalite_qa intake gmns          # -> GATE: READY (0 blockers)
+
 # (a, optional) benchmark: check the network vs ARC's guideline tables (Table 7-1/7-2)
 #               and (re)extract arc_am_ref_volume.csv from the trimmed shapefile
 python arc_benchmark.py

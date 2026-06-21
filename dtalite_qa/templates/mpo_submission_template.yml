@@ -1,0 +1,58 @@
+# =============================================================================
+# MPO -> TAPLite SUBMISSION DECLARATION
+# =============================================================================
+# Copy this file to your scenario as  submission.yml  and fill EVERY field.
+# The shapefile + demand matrix you hand over cannot carry these facts; the
+# intake tool BLOCKS on anything left as TODO and tells you exactly why it
+# matters. This is the README the ARC example effectively provides via its
+# Section-7 documentation — every MPO must provide the equivalent.
+#
+# Run:  python -m dtalite_qa intake <scenario>
+#       open <scenario>/intake_dashboard.html, resolve, re-run.
+# =============================================================================
+
+agency: TODO                  # e.g. GSATS
+model_year: TODO              # e.g. 2025
+contact: TODO                 # who can answer questions about this data
+
+# --- CAPACITY  (the #1 hand-off error) --------------------------------------
+capacity_basis: TODO          # per_lane | per_link   (DTALite 'capacity' is per-lane)
+capacity_period: TODO         # hourly | period | daily   <-- MUST be explicit
+capacity_source_field: TODO   # original column used, e.g. AB_CAP_PK / AMCAPACITY
+capacity_period_hours: TODO   # if capacity_period=period: how many hours it covers
+
+# --- TIME PERIOD & PEAK LOAD FACTOR -----------------------------------------
+assignment_period: TODO       # e.g. AM
+period_start_hour: TODO       # e.g. 6
+period_end_hour: TODO         # e.g. 9
+peak_load_factor: TODO        # PLF = phi / L, 0<PLF<=1 (peak-hour share of the period)
+phi_hour_to_period: TODO      # optional alt: hour->period expansion factor (>=1)
+plf_by_facility: TODO         # optional: freeway=.. arterial=.. (else single PLF above)
+
+# --- UNITS ------------------------------------------------------------------
+length_unit: TODO             # mi | m | km   (the GMNS 'length' column)
+speed_unit: TODO              # mph | kmh
+time_unit: TODO               # min | sec
+
+# --- DEMAND -----------------------------------------------------------------
+demand_kind: TODO             # vehicle_trips | person_trips
+demand_period_hours: TODO     # hours the matrix spans (match the assignment period)
+occupancy: TODO               # if person_trips -> vehicles (else 1)
+pce: TODO                     # passenger-car-equivalent for trucks (else 1)
+zone_id_basis: TODO           # how matrix labels map to zone_id
+                              #  e.g. "matrix label = centroid node id -> ZONE field"
+
+# --- VALUE OF TIME / COST ---------------------------------------------------
+vot: TODO                     # $/hour (per class if multiclass)
+operating_cost_per_mi: TODO   # optional $/mi distance cost (else 0)
+toll_coding: TODO             # how tolls are represented, or 'none'
+
+# --- VDF --------------------------------------------------------------------
+vdf_type: TODO                # 0 BPR | 1 conical | 2 QVDF | 3 BPR2 | 4 INRETS | 5 Akcelik | 6 SANDAG
+vdf_source: TODO              # provenance of alpha/beta, e.g. 'HCM default' / 'calibrated 2019 counts'
+
+# --- VALIDATION -------------------------------------------------------------
+count_field: TODO             # observed-count / ref-volume column for validation, or 'none'
+
+# --- RESTRICTIONS -----------------------------------------------------------
+restriction_coding: TODO      # how HOV/truck/managed lanes are coded, or 'none'
