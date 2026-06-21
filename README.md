@@ -10,6 +10,11 @@ plus a Python QA/automation package, open benchmark networks, and a two-volume u
 guide. Built for teaching and for reproducing agency assignments (ARC, SERPM, TRPA,
 MTC, SANDAG, MWCOG, VDOT, ODOT).
 
+![TAPLite4MPO at a glance — the Golden Path (collect → GMNS → declare → run → validate → advanced), the three gates (can I run / trust / improve), why a shapefile is not yet a model, the dataset ladder (Sketch → Regional → ARC Atlanta → OSM), super-zone compression (~2× faster), and recovering the original-resolution zone-to-zone skim (R²=0.99).](workflow_diagram.png)
+
+> The whole pipeline at a glance. Start with **[docs/GOLDEN_PATH_CHECKLIST.md](docs/GOLDEN_PATH_CHECKLIST.md)**.
+> (Figure generated from `docs/IMAGE_PROMPTS.md`.)
+
 **Features**
 - Frank–Wolfe with an exact cost-based line search; **conjugate / bi-conjugate FW**
   (`assignment_method`) for faster convergence on congested networks.
