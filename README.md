@@ -61,6 +61,10 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
 ---
 
 ## 4. Documentation
+- **[docs/onboarding_guide.html](docs/onboarding_guide.html)** — **the visual onboarding guide**:
+  open in a browser for the staged journey (GIS field-map → declare → convert → intake →
+  quality → run → traceable workflow), each with its gate and a progress tracker. Generate
+  it anytime with `python -m dtalite_qa guide`.
 - **[docs/MPO_ONBOARDING_GUIDE.md](docs/MPO_ONBOARDING_GUIDE.md)** — **start here for a new
   agency model.** The process to turn a raw hand-off (shapefile + matrix + "alpha/beta")
   into a trustworthy run: declare → convert → **intake audit** → resolve → validate. The
@@ -82,7 +86,7 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
   output, and the **CBI sister-project pipeline** (corridor speeds → QVDF params → kernel).
 - `docs/` — methodology notes (peak load factor, super-zone aggregation, 4-step
   integration, OD-compression operators).
-- `dtalite_qa/` — Python package: `intake`, `workflow`, `validate`, `fill`, `inventory`,
+- `dtalite_qa/` — Python package: `guide`, `intake`, `workflow`, `validate`, `fill`, `inventory`,
   `accessibility`, `report`, `demand-bin`, `plf`, `adapt`, `run` (see `python -m dtalite_qa -h`).
 
 ## 5. Folder map

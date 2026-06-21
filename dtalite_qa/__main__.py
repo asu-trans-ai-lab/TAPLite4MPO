@@ -24,6 +24,7 @@ from . import adapt as _adapt
 from . import plf as _plf
 from . import intake as _intake
 from . import workflow as _workflow
+from . import guide as _guide
 
 
 def _print_report(rep):
@@ -66,6 +67,8 @@ def main(argv=None):
     sp.add_argument("scenario", help="GMNS scenario to run the MPO data-intake audit on")
     sp.add_argument("--submission", default=None, help="declaration file (default: <scenario>/submission.yml)")
     sp.add_argument("--out", default=None, help="output dir for intake_log.md / _issues.json / _dashboard.html")
+    sp = sub.add_parser("guide")
+    sp.add_argument("--out", default="onboarding_guide.html", help="output HTML path")
     sp = sub.add_parser("workflow")
     sp.add_argument("scenario", help="GMNS scenario to run the staged traceable workflow (R1-R7) on")
     sp.add_argument("--reference", default=None, help="link_performance/link CSV carrying reference columns (default: <scenario>/link_performance.csv)")
@@ -179,6 +182,13 @@ def main(argv=None):
         print(f"  -> {od}/intake_dashboard.html  (open it, fill submission.yml, re-run)")
         print(f"  -> {od}/intake_log.md   {od}/intake_issues.json")
         return 0 if s["gate"] == "READY" else 1
+
+    if args.cmd == "guide":
+        out = _guide.write(args.out)
+        print(f"onboarding guide written to {out}")
+        print("open it in a browser — the staged journey (GIS map -> declare -> convert -> "
+              "intake -> quality -> run -> traceable workflow), each gated.")
+        return 0
 
     if args.cmd == "workflow":
         print(f"== workflow {args.scenario} ==")

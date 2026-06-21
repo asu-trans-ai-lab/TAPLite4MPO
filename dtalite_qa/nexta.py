@@ -10,7 +10,7 @@ NeXTA differences handled:
     capacity / vdf_alpha / vdf_beta / vdf_fftt / allowed_use. free_speed is mph and
     length is miles (-> vdf_free_speed_mph / vdf_length_mi). FT -> facility_type.
   - VDF_cap{N} is the (all-lane) PERIOD capacity. AZTDM builds it as c_h*L (phi=L,
-    i.e. a FLAT load factor PLF=1). Per the ADOT Load-Factor memo (ADOT VDF calibration project,
+    i.e. a FLAT load factor PLF=1). Per the ADOT Load-Factor memo (Belezamo/Zhou,
     Sep 2022): c_period = phi*c_h, phi = L*PLF, and peak hourly demand D =
     v_period/(L*PLF), so the kernel's DOC = (V/lanes/H/plf)/lane_cap must be fed
     lane_cap = hourly c_h, vdf_plf = PLF (the real load factor), H = L -> DOC = D/c_h.
@@ -174,6 +174,22 @@ def convert(scenario, out_dir, period_name="AM", iterations=None, processors=8,
             src = csvio.path(scenario, d["file"])
             if os.path.exists(src):
                 shutil.copy(src, csvio.path(out_dir, d["file"]))
+
+    # emit a converter step-log that `intake` ingests
+    from . import convlog as _convlog
+    cl = _convlog.ConversionLog("nexta", source=os.path.join(scenario, "link.csv"))
+    cl.input("link.csv", "NeXTA period-indexed VDF columns")
+    cl.step(f"selected period {period_name} (hours {sh}-{eh}, L={H})")
+    cl.map("vdf_length_mi", "vdf_fftt * vdf_free_speed_mph / 60", "unit-agnostic length")
+    cl.map("capacity", f"VDF_cap{period_name}/(lanes*L)", "hourly per-lane")
+    cl.map("vdf_plf", f"MEMO_PLF[{period_name}]={plf_val} (arterial {plf_art})", "real load factor PLF=phi/L")
+    cl.assume("capacity_period", "hourly", "lane_cap = VDF_cap/(lanes*L)")
+    cl.assume("length_unit", "mi", "vdf_length_mi derived in miles")
+    cl.assume("peak_load_factor", str(plf_val), "MEMO_PLF; confirm vs agency period factors")
+    cl.assume("demand_period_hours", str(H), f"period {period_name} = {sh}-{eh}")
+    cl.output("link.csv", "current-format GMNS with period VDF")
+    cl.write(out_dir)
+    rep.append("conversion_log.json written (intake will ingest it)")
     return rep
 
 
