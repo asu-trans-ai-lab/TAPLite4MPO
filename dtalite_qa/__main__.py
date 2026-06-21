@@ -23,6 +23,7 @@ from . import demandbin as _demandbin
 from . import adapt as _adapt
 from . import plf as _plf
 from . import intake as _intake
+from . import workflow as _workflow
 
 
 def _print_report(rep):
@@ -65,6 +66,12 @@ def main(argv=None):
     sp.add_argument("scenario", help="GMNS scenario to run the MPO data-intake audit on")
     sp.add_argument("--submission", default=None, help="declaration file (default: <scenario>/submission.yml)")
     sp.add_argument("--out", default=None, help="output dir for intake_log.md / _issues.json / _dashboard.html")
+    sp = sub.add_parser("workflow")
+    sp.add_argument("scenario", help="GMNS scenario to run the staged traceable workflow (R1-R7) on")
+    sp.add_argument("--reference", default=None, help="link_performance/link CSV carrying reference columns (default: <scenario>/link_performance.csv)")
+    sp.add_argument("--period", default=None, help="reference column period prefix, e.g. PM -> PM_FLOW/PM_VMT")
+    sp.add_argument("--submission", default=None, help="declaration file (default: <scenario>/submission.yml)")
+    sp.add_argument("--out", default=None, help="output dir (default: <scenario>/traceability)")
     sp = sub.add_parser("adapt")
     sp.add_argument("scenario", help="older/foreign GMNS scenario to convert to current format")
     sp.add_argument("--out", required=True)
@@ -172,6 +179,17 @@ def main(argv=None):
         print(f"  -> {od}/intake_dashboard.html  (open it, fill submission.yml, re-run)")
         print(f"  -> {od}/intake_log.md   {od}/intake_issues.json")
         return 0 if s["gate"] == "READY" else 1
+
+    if args.cmd == "workflow":
+        print(f"== workflow {args.scenario} ==")
+        s = _workflow.run_workflow(args.scenario, reference=args.reference, period=args.period,
+                                   submission=args.submission, out_dir=args.out)
+        for st in s["stages"]:
+            print(f"  {st['status']:5} {st['id']:20} {st['gate']}")
+        print(f"\nOVERALL: {s['overall']}   (figures: {'on' if s['figures'] else 'off (no matplotlib)'})")
+        print(f"  -> {s['out']}/workflow_dashboard.html")
+        print(f"  -> {s['out']}/reports/00_traceability.md")
+        return 0 if s["overall"] in ("PASS", "WARN", "INCOMPLETE") else 1
 
     if args.cmd == "report":
         import os

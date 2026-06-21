@@ -82,7 +82,7 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
   output, and the **CBI sister-project pipeline** (corridor speeds → QVDF params → kernel).
 - `docs/` — methodology notes (peak load factor, super-zone aggregation, 4-step
   integration, OD-compression operators).
-- `dtalite_qa/` — Python package: `intake`, `validate`, `fill`, `inventory`,
+- `dtalite_qa/` — Python package: `intake`, `workflow`, `validate`, `fill`, `inventory`,
   `accessibility`, `report`, `demand-bin`, `plf`, `adapt`, `run` (see `python -m dtalite_qa -h`).
 
 ## 5. Folder map

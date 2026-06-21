@@ -106,6 +106,31 @@ python -m dtalite_qa run   <scenario> --exe bin/DTALite.exe
 # then validate assigned vs observed counts (see examples/arc_atlanta)
 ```
 
+### 6. Traceable staged workflow (R1–R7)
+For a full auditable record across conversion → assignment → validation, run the staged
+workflow. It is the generalized form of the **MAG Traceable-Workflow** (R1–R7); every stage
+writes a numbered report + tables (+ figures) and a verification **gate**:
+
+```bash
+python -m dtalite_qa workflow <scenario> [--reference <perf_with_ref.csv>] [--period PM]
+```
+
+| Stage | Gate |
+|---|---|
+| **R1** inventory & directionality | directed AB/BA present; network by FT-AT |
+| **R2** OD & allowed-uses | demand totals by class; allowed_use flags |
+| **R3** capacity & VDF join | **100%** capacity + α/β join rate |
+| **R4** period & PLF | PLF declared / not flat over a multi-hour period |
+| **R5** TAP consistency | model-vs-reference volume slope ≈ 1; problem-link list |
+| **R6** VMT/VHT validation | total VMT vs reference **≤ 5%**, by FT-AT |
+| **R7** rough emissions | speed-bin CO₂/NOx/VOC/PM₂.₅ from VMT/VHT |
+
+Outputs land in `<scenario>/traceability/` (`reports/00_traceability.md` index +
+`workflow_dashboard.html`). R5–R7 need a completed `link_performance.csv`; R5/R6 also need
+**reference columns** — period-prefixed (`PM_FLOW`, `PM_VMT`, …) or `ref_volume` — otherwise
+they cleanly report `SKIP`. This replaces hand-edited per-model comparison scripts with one
+reusable, gated, reproducible pipeline.
+
 ---
 
 ## Worked cautionary example — GSATS capacity
