@@ -62,8 +62,12 @@ column or setting; nothing is hidden in the engine.
   (`demand_sov/hov2/hov3.csv`), `settings.csv`, `mode_type.csv`.
 - `arc_am_ref_volume.csv` — ARC's own assigned AM auto volume per link
   (`V_SOVAM+V_HOV2AM+V_HOV3AM`) = the validation ground truth.
-- scripts: `arc_calibrate.py`, `arc_validate_run.py`, `arc_benchmark.py`,
-  `arc_atlanta_to_gmns.py`, `arc_demand_to_csv.py`.
+- **runnable scripts** (all inputs bundled): `arc_benchmark.py`, `arc_calibrate.py`,
+  `arc_validate_run.py`.
+- **provenance scripts** (show how `gmns/` was built — need the *full* ARC shapefiles /
+  trip cores, which are **not** bundled): `arc_atlanta_to_gmns.py`, `arc_demand_to_csv.py`.
+  You don't need them; the `gmns/` network + demand are already provided. Each prints a
+  clear message if you run it without the full source data.
 
 - `arc-Shape/arc-Shape/AMLink2020.*` — a **trimmed teaching shapefile** (~26 MB): the 25
   essential attributes (A/B, FACTYPE, ATYPE, lanes, AMCAPACITY, SPEED, restrictions, tolls,

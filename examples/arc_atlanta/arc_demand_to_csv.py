@@ -16,6 +16,15 @@ import pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "TODAM20_asgn", "TODAM20_asgn")
 OUT = os.path.join(HERE, "gmns")
+
+# PROVENANCE script — rebuilds gmns/demand_*.csv from the ARC AM trip cores (TODAM20_asgn/),
+# which are NOT bundled. The demand_sov / demand_hov2 / demand_hov3 CSVs are ALREADY provided
+# in gmns/, so you do NOT need to run this to use the example.
+if not os.path.isdir(SRC):
+    raise SystemExit(
+        "[provenance] TODAM20_asgn/ trip cores not found (not bundled). The per-class "
+        "demand_*.csv are ALREADY provided in gmns/; you do not need to run this.")
+
 os.makedirs(OUT, exist_ok=True)
 
 # Three access classes; F (non-toll) + T (toll VOT segment) combined per class.

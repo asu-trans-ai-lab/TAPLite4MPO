@@ -1,9 +1,9 @@
-# Intake log — examples/arc_atlanta/gmns
+# Intake log — gmns
 
 Time-ordered record of every step and assumption (the auditable trail).
 
-- **STEP** — intake scenario: examples/arc_atlanta/gmns
-- **STEP** — read declaration: examples/arc_atlanta/gmns\submission.yml (28 keys)
+- **STEP** — intake scenario: gmns
+- **STEP** — read declaration: gmns\submission.yml (28 keys)
 - **STEP** — read link.csv: 145971 links, 24 columns
 - **STEP** — assignment period = 6..10 h  (L=4 hours)
 - **NOTE** — declared capacity_basis = per_lane

@@ -21,6 +21,17 @@ import pyogrio
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHP = os.path.join(HERE, "arc-Shape", "arc-Shape")
 OUT = os.path.join(HERE, "gmns")
+
+# PROVENANCE script — shows how gmns/ was built from the FULL ARC shapefiles
+# (AMNode2020.shp + AMLink2020.shp WITH geometry, ~125 MB), which are NOT bundled.
+# The gmns/ network is ALREADY provided, so you do NOT need to run this to use the example.
+if not os.path.exists(os.path.join(SHP, "AMNode2020.shp")):
+    raise SystemExit(
+        "[provenance] AMNode2020.shp / full AMLink2020.shp not found (not bundled; ~125 MB,\n"
+        "from ARC's published model). The gmns/ network is ALREADY provided here, so you do not\n"
+        "need to run this. (The bundled arc-Shape/AMLink2020 is a trimmed teaching copy used\n"
+        "only by arc_benchmark.py.)")
+
 os.makedirs(OUT, exist_ok=True)
 NZONES = 6031
 MI2M = 1609.344

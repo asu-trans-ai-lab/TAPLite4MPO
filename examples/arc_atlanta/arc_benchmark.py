@@ -9,7 +9,8 @@ Reads the authoritative ARC link database (arc-Shape/AMLink2020.dbf) and:
   3. extracts ARC's own AM assigned volumes (V_SOVAM+V_HOV2AM+V_HOV3AM) as the
      reference-volume benchmark, keyed by (A,B), for assignment validation.
 
-Run from private/ARC_Atlanta/.  Requires pyshp.
+Run from this folder (examples/arc_atlanta/). Requires pyshp. Reads the bundled trimmed
+teaching shapefile arc-Shape/arc-Shape/AMLink2020.dbf.
 """
 import collections, csv, os, statistics, sys
 import shapefile
