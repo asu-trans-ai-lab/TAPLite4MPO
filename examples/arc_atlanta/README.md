@@ -130,7 +130,15 @@ bi-conjugate FW.)
 
 ---
 
-### Acceleration (optional)
-The same network demonstrates **super-zone aggregation**: `dtalite_qa/superzone_hier.py`
-+ `superzone_encoders.py` build a demand-weighted super-zone version that runs ~2× faster
-and **still passes ARC validation** (see `docs/superzone_design_principles.md`).
+### Acceleration (optional, Stage 5) — super-zones
+Once the full run is trusted, **[SUPERZONE.md](SUPERZONE.md)** is the MPO guide to compressing
+ARC's 6,031 zones into ~1,431 super-zones (4× fewer origins, full link network preserved) for
+faster scenario runs:
+```bash
+python arc_superzone.py 1500                       # gmns_calibrated/ -> gmns_superzone/
+cp ../../bin/DTALite.exe gmns_superzone/ && ( cd gmns_superzone && ./DTALite.exe )
+python arc_superzone.py validate gmns_superzone    # %RMSE vs ARC reference
+python arc_superzone.py identity                   # S=N corner case — must reproduce full exactly
+```
+It covers the speed/accuracy trade-off (intra-super-zone demand is dropped — tune `K`), the
+`S=N` trust check, and when **not** to use it. Background: `docs/superzone_design_principles.md`.

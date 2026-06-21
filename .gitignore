@@ -38,3 +38,5 @@ examples/**/results/
 # Python build metadata
 *.egg-info/
 build/
+examples/**/gmns_superzone/
+examples/**/gmns_identity/
