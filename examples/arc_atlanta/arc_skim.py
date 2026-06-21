@@ -80,7 +80,7 @@ def compare():
     mae = sum(abs(a[k] - b[k]) for k in keys) / n
     r2 = 1 - ss_res / ss_tot if ss_tot else float("nan")
     print(f"== full vs super-zone skim ==  {n:,} common OD pairs")
-    print(f"  R^2 = {r2:.4f}   mean |Δtime| = {mae:.3f} min   (full mean {mean:.2f} min)")
+    print(f"  R^2 = {r2:.4f}   mean abs time diff = {mae:.3f} min   (full mean {mean:.2f} min)")
     print("  -> the super-zone run reproduces the full-resolution zone-to-zone skim" if r2 > 0.95
           else "  -> skims diverge; raise K or check the remap")
 
