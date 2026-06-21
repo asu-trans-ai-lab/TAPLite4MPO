@@ -88,13 +88,21 @@ STAGES = [
               "PLF → consistency → VMT/VHT validation, each gated."),
 ]
 
+# (stage, what it checks, deliverable, gate)
 R1_R6 = [
-    ("R1", "Inventory & directionality", "directed AB/BA present; network by FT-AT"),
-    ("R2", "OD & allowed-uses", "demand totals by class; allowed_use flags"),
-    ("R3", "Capacity & VDF join", "100% capacity + α/β join rate"),
-    ("R4", "Period & PLF", "PLF declared / not flat over a multi-hour period"),
-    ("R5", "TAP consistency", "model-vs-reference volume slope ≈ 1; problem links"),
-    ("R6", "VMT/VHT validation", "total VMT vs reference ≤ 5%, by FT-AT"),
+    ("R1", "Forward star: every from/to node exists & links sorted; network + lane-miles by FT-AT",
+     "tables/network_by_ft_at.csv", "directed AB/BA present"),
+    ("R2", "Demand totals & OD pairs per class; allowed_use permissions (no illegal class on a link)",
+     "tables/od_by_class.csv · allowed_use_summary.csv", "OD totals vs provider"),
+    ("R3", "Every link carries capacity + α/β; summarised by vdf_code",
+     "tables/capacity_vdf_by_code.csv", "100% join rate"),
+    ("R4", "Period length; PLF by facility type; flat PLF over a multi-hour period is flagged",
+     "tables/plf_by_ft.csv", "PLF declared / not flat"),
+    ("R5", "Identities VMT=Σvol·len, VHT=Σvol·time/60 (≤1%); speed 0≤Vavg≤Vfree; "
+           "QVDF queue bounds; model-vs-reference volume slope≈1 + problem links",
+     "tables/problem_links_volume.csv · figures/vc_vs_speed.png", "identities ≤1%; slope≈1"),
+    ("R6", "Model vs reference VMT/VHT by FT-AT (the agency comparison)",
+     "tables/vmt_vht_by_ft_at_taplite.csv", "total VMT vs reference ≤5%"),
 ]
 
 
@@ -132,9 +140,18 @@ def render_html():
         if s["key"] == "declare":
             extra = f"<div class=ref><b>Declaration checklist</b><ul class=decl>{decl_rows}</ul></div>"
         if s["key"] == "workflow":
-            wf = "".join(f"<tr><td><b>{a}</b></td><td>{b}</td><td>{c}</td></tr>" for a, b, c in R1_R6)
-            extra = ("<div class=ref><b>R1–R6 stages &amp; gates</b><table>"
-                     f"<tr><th>stage</th><th>focus</th><th>gate</th></tr>{wf}</table></div>")
+            wf = "".join(f"<tr><td><b>{a}</b></td><td>{_esc(b)}</td>"
+                         f"<td><code>{_esc(c)}</code></td><td>{_esc(d)}</td></tr>"
+                         for a, b, c, d in R1_R6)
+            extra = ("<div class=ref><b>R1–R6 stages — what each checks, its deliverable, its gate</b>"
+                     "<table><tr><th>stage</th><th>what it checks</th><th>deliverable</th>"
+                     f"<th>gate</th></tr>{wf}</table>"
+                     "<p style='font-size:12px;color:#667;margin:8px 0 0'>Each stage writes "
+                     "<code>traceability/reports/0N_*.md</code>; the index is "
+                     "<code>00_traceability.md</code> and the dashboard <code>workflow_dashboard.html</code>. "
+                     "R5–R6 use a completed <code>link_performance.csv</code>; R5 identities need no "
+                     "reference, the R5 slope &amp; R6 comparison use period-prefixed "
+                     "(<code>PM_VMT</code>…) or <code>ref_volume</code> columns.</p></div>")
         cards += f"""
         <section class=stage id=stage{s['n']}>
           <h2><label><input type=checkbox data-n={s['n']} onchange=prog()>

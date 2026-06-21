@@ -319,13 +319,22 @@ def run_workflow(scenario, reference=None, period=None, submission=None, out_dir
             cands += [f"ref_{n}", f"obs_{n}", n if n.startswith(("ref_", "obs_")) else None]
         for c in cands:
             if c:
-                got = _col(phdr, c)
+                got = _col(phdr, c) or _col(lhdr, c)   # reference may live on link.csv (MAG PM_*)
                 if got:
                     return got
         return None
+    # join index so reference columns on link.csv are readable per perf row
+    link_index = {(r.get("from_node_id"), r.get("to_node_id")): r for r in links}
+    def _rget(prow, col):
+        if col is None:
+            return None
+        v = _f(prow, col)
+        if v is not None:
+            return v
+        lr = link_index.get((prow.get("from_node_id"), prow.get("to_node_id")))
+        return _f(lr, col) if lr else None
     def _has_data(col):
-        # a reference column is only real if it carries non-zero values
-        return col and any((_f(r, col) or 0) > 0 for r in perf)
+        return col and any((_rget(r, col) or 0) > 0 for r in perf[:20000])
     ref_flow = refcol("FLOW", "volume"); ref_flow = ref_flow if _has_data(ref_flow) else None
     ref_time = refcol("TIME"); ref_time = ref_time if _has_data(ref_time) else None
     ref_spee = refcol("SPEE", "SPEED", "speed"); ref_spee = ref_spee if _has_data(ref_spee) else None
@@ -333,49 +342,79 @@ def run_workflow(scenario, reference=None, period=None, submission=None, out_dir
     ref_vht = refcol("VHT"); ref_vht = ref_vht if _has_data(ref_vht) else None
     have_ref = bool(perf and (ref_flow or ref_vmt))
 
-    # ---------------- R5 TAP consistency ------------------------------------------------
-    if perf and have_ref:
-        mvol = _col(phdr, "volume", "vehicle_volume")
+    # ---------------- R5 TAP consistency (internal identities + vs reference) -----------
+    if perf:
+        mvol = _col(phdr, "vehicle_volume", "volume")
         mspd = _col(phdr, "speed_mph", "speed")
         mtime = _col(phdr, "travel_time")
         mdoc = _col(phdr, "doc", "voc")
-        xs_v = [_f(r, ref_flow) for r in perf] if ref_flow else []
-        ys_v = [_f(r, mvol) for r in perf] if mvol else []
-        prob = []
+        mvmt = _col(phdr, "VMT"); mvht = _col(phdr, "VHT")
+        mfree = _col(phdr, "free_speed_mph", "free_speed")
+        # --- internal identities (no reference needed): VMT/VHT recompute + speed sanity --
+        vmt_rep = vmt_man = vht_rep = vht_man = 0.0
+        spd_bad = nspd = 0
         for r in perf:
-            rf = _f(r, ref_flow); mv = _f(r, mvol)
-            if rf and mv and rf > 0 and abs(mv - rf) / rf > 0.5:
-                prob.append((r.get("from_node_id"), r.get("to_node_id"), round(rf, 1), round(mv, 1)))
-        r2v, slopev, nv = _r2_slope(xs_v, ys_v) if (xs_v and ys_v) else (None, None, 0)
+            vol = _f(r, mvol) or 0
+            L = _rget(r, lencol)
+            if L is not None and len_is_m:
+                L = L / 1609.344
+            if mvmt: vmt_rep += _f(r, mvmt, default=0) or 0
+            if L is not None: vmt_man += vol * L
+            tt = _f(r, mtime)
+            if mvht: vht_rep += _f(r, mvht, default=0) or 0
+            if tt is not None: vht_man += vol * tt / 60.0
+            sp = _f(r, mspd); fs = _rget(r, mfree)
+            if sp is not None:
+                nspd += 1
+                if sp < 0 or (fs and sp > fs * 1.05): spd_bad += 1
+        vmt_pct = abs(vmt_rep - vmt_man) / vmt_rep * 100 if vmt_rep else None
+        vht_pct = abs(vht_rep - vht_man) / vht_rep * 100 if vht_rep else None
+        internal_ok = ((vmt_pct is None or vmt_pct <= 1.0) and
+                       (vht_pct is None or vht_pct <= 1.0) and spd_bad == 0)
+        lines = [
+            f"- VMT recompute (sum vol·length): reported {vmt_rep:,.0f} vs {vmt_man:,.0f} "
+            f"-> {('%.3f%%' % vmt_pct) if vmt_pct is not None else 'n/a'} (gate <=1%)",
+            f"- VHT recompute (sum vol·time/60): reported {vht_rep:,.0f} vs {vht_man:,.0f} "
+            f"-> {('%.3f%%' % vht_pct) if vht_pct is not None else 'n/a'} (gate <=1%)",
+            f"- speed sanity (0 <= Vavg <= Vfree): {spd_bad}/{nspd} out of bounds",
+        ]
+        # --- comparison vs reference (when present) --------------------------------------
+        slopev = r2v = nv = None
+        nprob = 0
+        if have_ref and ref_flow:
+            xs_v = [_rget(r, ref_flow) for r in perf]
+            ys_v = [_f(r, mvol) for r in perf]
+            prob = []
+            for r in perf:
+                rf = _rget(r, ref_flow); mv = _f(r, mvol)
+                if rf and mv and rf > 0 and abs(mv - rf) / rf > 0.5:
+                    prob.append((r.get("from_node_id"), r.get("to_node_id"), round(rf, 1), round(mv, 1)))
+            nprob = len(prob)
+            r2v, slopev, nv = _r2_slope(xs_v, ys_v)
+            if prob:
+                _write_table(os.path.join(tab_dir, "problem_links_volume.csv"),
+                             ["from", "to", "ref_flow", "model_vol"], prob[:5000])
+            lines.append(f"- vs reference volume: through-origin slope **{slopev:.3f}**, "
+                         f"R²={r2v:.3f} (n={nv}); {nprob} links >50% off"
+                         if slopev else "- vs reference: insufficient overlap")
+        else:
+            lines.append("- vs reference: no reference columns (internal checks only)")
         figs = []
-        if ref_spee and mspd:
+        if mdoc and mspd:
             ok = _scatter(os.path.join(fig_dir, "vc_vs_speed.png"),
-                          [_f(r, mdoc) for r in perf] if mdoc else [],
-                          [_f(r, mspd) for r in perf],
+                          [_f(r, mdoc) for r in perf], [_f(r, mspd) for r in perf],
                           "model V/C", "model speed (mph)", "V/C vs speed")
             if ok: figs.append("figures/vc_vs_speed.png")
-        if ref_spee and mspd:
-            _write_table(os.path.join(tab_dir, "speed_obs_vs_model.csv"),
-                         ["from", "to", f"ref_{ref_spee}", "model_speed"],
-                         [(r.get("from_node_id"), r.get("to_node_id"),
-                           _f(r, ref_spee), _f(r, mspd)) for r in perf[:100000]])
-        if prob:
-            _write_table(os.path.join(tab_dir, "problem_links_volume.csv"),
-                         ["from", "to", "ref_flow", "model_vol"], prob)
-        status = "PASS" if (slopev and 0.9 <= slopev <= 1.1) else "WARN"
-        stage("05_consistency", "TAP assignment consistency (V/C, speed, duration)", status,
-              f"volume model/ref slope={slopev:.3f} R^2={r2v:.3f} (n={nv}); "
-              f"{len(prob)} links >50% volume diff." if slopev else "insufficient overlap.",
-              [f"- volume: through-origin slope **{slopev:.3f}**, R²={r2v:.3f}, n={nv}" if slopev else "- volume regression: insufficient data",
-               f"- problem links (>50% vol diff): {len(prob)}",
-               f"- figures: {figs or ('none (matplotlib off)' if not HAVE_MPL else 'none')}"],
-              ["tables/speed_obs_vs_model.csv", "tables/problem_links_volume.csv"] + figs)
+        ref_off = (slopev is not None and not (0.9 <= slopev <= 1.1))
+        status = "FAIL" if not internal_ok else ("WARN" if ref_off else "PASS")
+        gate = (f"VMT/VHT identities {'ok' if internal_ok else 'FAIL'} (<=1%); "
+                + (f"ref slope {slopev:.3f}" if slopev else "no reference"))
+        stage("05_consistency", "TAP consistency — identities & reference", status, gate,
+              lines, (["tables/problem_links_volume.csv"] if nprob else []) + figs)
     else:
-        stage("05_consistency", "TAP assignment consistency (V/C, speed, duration)", "SKIP",
-              "no link_performance.csv with reference columns (run the kernel + provide "
-              "reference, or --reference / --period).",
-              ["Provide a completed `link_performance.csv` and reference columns "
-               f"(`{TP}_FLOW`/`{TP}_SPEE`/… or `ref_volume`) to enable R5."], [])
+        stage("05_consistency", "TAP consistency — identities & reference", "SKIP",
+              "no link_performance.csv (run the kernel first).",
+              ["Run the assignment to enable R5 (VMT/VHT identities, speed sanity, reference)."], [])
 
     # ---------------- R6 VMT/VHT validation ---------------------------------------------
     if perf and (ref_vmt or ref_flow):
@@ -391,13 +430,15 @@ def run_workflow(scenario, reference=None, period=None, submission=None, out_dir
             d = agg.setdefault(k, dict(mvmt=0.0, mvht=0.0, rvmt=0.0, rvht=0.0))
             if mvmt: d["mvmt"] += _f(r, mvmt, default=0) or 0
             if mvht: d["mvht"] += _f(r, mvht, default=0) or 0
-            if ref_vmt: d["rvmt"] += _f(r, ref_vmt, default=0) or 0
-            if ref_vht: d["rvht"] += _f(r, ref_vht, default=0) or 0
+            if ref_vmt: d["rvmt"] += _rget(r, ref_vmt) or 0
+            if ref_vht: d["rvht"] += _rget(r, ref_vht) or 0
+        tot_r0 = sum(d["rvmt"] for d in agg.values()) or 1
         rows = []
         worst = 0.0
         for k, d in sorted(agg.items()):
             dv = (d["mvmt"] - d["rvmt"]) / d["rvmt"] * 100 if d["rvmt"] else None
-            if dv is not None:
+            # worst over MATERIAL groups only (>=1% of ref VMT) — tiny groups give ±100% noise
+            if dv is not None and d["rvmt"] >= 0.01 * tot_r0 and d["mvmt"] > 0:
                 worst = max(worst, abs(dv))
             rows.append((k, round(d["mvmt"], 1), round(d["rvmt"], 1),
                          round(dv, 2) if dv is not None else "",
