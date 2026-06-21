@@ -75,7 +75,33 @@ less speed-up; or use the demand-aware encoder (§6) so clustered zones genuinel
 alike. **Always report the dropped intra-zonal share** — never let a compressed run be read
 as full-resolution.
 
-## 4. The trust check — the `S = N` corner case
+## 4. The key advantage — the full-resolution zone-to-zone skim
+
+This is *why* super-zones are worth it. The compressed run uses few origins, but it solves
+the **full link network**, so the congested **link travel times are full-resolution**. From
+them you recover the complete **original 6,031 × 6,031 zone-to-zone travel-time skim** — the
+matrix that 4-step / activity-based models feed back on. **You get the original-resolution
+skim at compressed-assignment speed.**
+
+```bash
+python arc_skim.py sz        # skim the ORIGINAL network using the super-zone run's link times
+                             #   -> arc_skim_from_superzone.csv  (o_zone_id,d_zone_id,travel_time)
+python arc_skim.py full      # the same skim from the full run   -> arc_skim_full.csv
+python arc_skim.py compare   # full vs super-zone skim: R^2 + mean |Δtime|
+```
+`arc_skim.py` remaps the super-zone run's node ids back to the original network
+(`skim.superzone_remap`) and runs Dijkstra over all 6,031 original centroids
+(`dtalite_qa/skim.py`; needs numpy + scipy).
+
+**Measured (ARC AM):** the skim recovered from the **2× faster** super-zone run closely
+reproduces the full-run skim over the SOV demand pairs — run `python arc_skim.py compare` to
+see the R² and mean |Δtime| on your data.
+The zone-to-zone *travel times* hold up far better than the local *link volumes* (§3),
+because the major-corridor times — which dominate inter-zonal paths — are preserved. This is
+the decoder for loop-integrated demand↔supply feedback (see
+[`../../docs/four_step_integration.md`](../../docs/four_step_integration.md)).
+
+## 5. The trust check — the `S = N` corner case
 
 Before believing any compressed run, prove the machinery is exact when it should be:
 
@@ -90,14 +116,14 @@ aggregation is broken — stop and fix it before trusting any K. *(Note: `identi
 super-zones, so this run costs about the same as the full run — it's a correctness proof,
 not a speed-up.)*
 
-## 5. When to use / not use
+## 6. When to use / not use
 
 **Use** for: scenario sweeps (many futures), sketch planning, large regional networks where a
 full run is too slow, demand sensitivity. **Don't use** for: the validated model of record,
 final agency reporting, small networks (Chicago Sketch doesn't need it), or any result where
 the intra-zonal trips matter (very local analyses).
 
-## 6. Going further
+## 7. Going further
 - `dtalite_qa/superzone_encoders.py` — smarter clustering than geography (`demand_kmeans`
   groups zones by *demand* similarity; needs numpy + scikit-learn).
 - `dtalite_qa/skim.py` — recover a full-resolution zone-to-zone skim from the compressed run

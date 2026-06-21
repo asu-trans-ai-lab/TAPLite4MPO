@@ -142,3 +142,11 @@ python arc_superzone.py identity                   # S=N corner case — must re
 ```
 It covers the speed/accuracy trade-off (intra-super-zone demand is dropped — tune `K`), the
 `S=N` trust check, and when **not** to use it. Background: `docs/superzone_design_principles.md`.
+
+**The key advantage — recover the original zone-to-zone travel-time skim** even from the
+compressed run (the decoder for 4-step / ABM feedback):
+```bash
+python arc_skim.py sz        # original 6,031x6,031 skim from the super-zone run's link times
+python arc_skim.py full      # same skim from the full run
+python arc_skim.py compare   # R^2 — the 2x-faster run reproduces the full-resolution skim
+```

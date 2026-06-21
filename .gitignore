@@ -40,3 +40,5 @@ examples/**/results/
 build/
 examples/**/gmns_superzone/
 examples/**/gmns_identity/
+examples/arc_atlanta/arc_skim_*.csv
+examples/arc_atlanta/skim_run.log
