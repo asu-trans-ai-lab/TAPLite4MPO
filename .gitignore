@@ -34,3 +34,7 @@ nvta_run/results/
 examples/**/gmns_calibrated/
 examples/**/arc_super_*/
 examples/**/results/
+
+# Python build metadata
+*.egg-info/
+build/
