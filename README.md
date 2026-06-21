@@ -91,6 +91,10 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
   output, and the **CBI sister-project pipeline** (corridor speeds → QVDF params → kernel).
 - `docs/` — methodology notes (peak load factor, super-zone aggregation, 4-step
   integration, OD-compression operators).
+- `docs/IMAGE_PROMPTS.md` — copy-paste prompts for GPT image tools to generate the
+  easy-to-follow figures (Golden Path, the 3 gates, super-zones, the skim advantage).
+- `.claude/skills/taplite4mpo-pipeline/` — a Claude Code **skill** encoding the whole
+  pipeline (gates, stages, conventions, the ARC loop) for agent-assisted work in this repo.
 - `dtalite_qa/` — Python package: `guide`, `intake`, `workflow`, `validate`, `fill`, `inventory`,
   `accessibility`, `report`, `demand-bin`, `plf`, `adapt`, `run` (see `python -m dtalite_qa -h`).
 
