@@ -15,6 +15,15 @@ MTC, SANDAG, MWCOG, VDOT, ODOT).
 > The whole pipeline at a glance. Start with **[docs/GOLDEN_PATH_CHECKLIST.md](docs/GOLDEN_PATH_CHECKLIST.md)**.
 > (Figure generated from `docs/IMAGE_PROMPTS.md`.)
 
+> ### ⚙️ Which part solves the assignment?
+> The **C++ kernel** (`bin/DTALite.exe`, `kernel/src/TAPLite.cpp`) is the **solver** —
+> Frank–Wolfe equilibrium, the VDF library, OpenMP, the scale. The **`dtalite_qa` Python
+> package is QA/orchestration only**: it validates inputs, builds scenarios, and *invokes* the
+> kernel — **it does not compute the assignment.** So you **must build the kernel**
+> (`bash build.sh`); running only Python assigns nothing. This is not a pure-Python solver.
+> Full explanation, environment matrix, and how to call the kernel from Python:
+> **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 **Features**
 - Frank–Wolfe with an exact cost-based line search; **conjugate / bi-conjugate FW**
   (`assignment_method`) for faster convergence on congested networks.
@@ -36,12 +45,15 @@ MTC, SANDAG, MWCOG, VDOT, ODOT).
 
 ---
 
-## 1. Build
+## 1. Build the kernel (the solver — required)
 
+`bin/DTALite.exe` is the C++ engine that actually runs the assignment; the Python tools just
+drive it. Build it first:
 ```bash
 bash build.sh          # -> bin/DTALite.exe   (CMake + g++/MinGW, OpenMP, Release)
 ```
 Requires CMake, a C++17 compiler (g++/clang/MSVC), and OpenMP. Output: `bin/DTALite.exe`.
+(See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for why this is mandatory.)
 
 ## 2. Reproduce a run (open benchmark networks — no extra data needed)
 
@@ -66,6 +78,9 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
 ---
 
 ## 4. Documentation
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — **the C++ kernel solves; the Python
+  package orchestrates.** Which part runs what, the environment matrix, and how to call the
+  kernel from Python. Read it if you're unsure what's doing the assignment.
 - **[docs/GOLDEN_PATH_CHECKLIST.md](docs/GOLDEN_PATH_CHECKLIST.md)** — ⭐ **READ THIS FIRST.**
   The Golden Path: from agency files to a trusted assignment, in 6 stages, framed by three
   questions — *can I run? can I trust it? can I improve it?* Simple first, advanced later.

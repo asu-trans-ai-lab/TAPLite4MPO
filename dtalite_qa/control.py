@@ -51,6 +51,12 @@ def run(scenario, exe, out_dir=None, timeout=1800):
     result["ran"] = False
     if not result["ok"]:
         return result
+    if not exe or not os.path.exists(exe):
+        raise FileNotFoundError(
+            f"C++ kernel not found: {exe!r}.\n"
+            "dtalite_qa is the QA/orchestration layer — it does NOT solve the assignment; the\n"
+            "C++ kernel (DTALite.exe) is the solver. Build it with `bash build.sh` (-> bin/\n"
+            "DTALite.exe) and pass --exe bin/DTALite.exe.  See docs/ARCHITECTURE.md.")
     exe_local = os.path.join(out_dir, os.path.basename(exe))
     shutil.copy(exe, exe_local)
     p = subprocess.run([exe_local], cwd=out_dir, capture_output=True, text=True, timeout=timeout)
