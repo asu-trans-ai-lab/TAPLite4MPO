@@ -29,7 +29,13 @@
  ul.decl{list-style:none;padding:0;columns:1} ul.decl li{margin:7px 0;font-size:13.5px}
  .sev{color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px}
  .hint{color:#667;font-size:12px}
- @media(max-width:740px){.cols{grid-template-columns:1fr}}
+ .front{margin-bottom:6px} .lead{font-size:16px;color:#243}
+ .front h3{font-size:15px;margin:1.4em 0 .5em;color:#123a6b} .detailh{border-top:1px solid #dde3ea;padding-top:14px}
+ .gates{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+ .gcard{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;box-shadow:0 1px 3px #0001}
+ .gq{font-weight:600;font-size:15px} .gs{color:#667;font-size:12px;margin:2px 0 6px} .gd{font-size:12.5px;color:#445}
+ .ladder code{font-size:11.5px} .note{font-size:12.5px;color:#667}
+ @media(max-width:740px){.cols,.gates{grid-template-columns:1fr}}
  footer{max-width:980px;margin:0 auto;padding:8px 30px 34px;color:#778;font-size:12.5px}
 </style></head><body>
 <header><h1>TAPLite4MPO — MPO Onboarding Guide</h1>
@@ -39,6 +45,20 @@ the journey, declare your conventions, and let each stage check the last.</p></h
 <div class=bar><b>Progress</b><div class=pb><i id=pbi></i></div><span id=pct>0%</span>
 <a href=#stage0>0. GIS import &amp; field mapping</a><a href=#stage1>1. Declare the conventions</a><a href=#stage2>2. Convert &amp; log</a><a href=#stage3>3. Intake audit — resolve iteratively</a><a href=#stage4>4. Data-quality &amp; validation</a><a href=#stage5>5. Run the assignment</a><a href=#stage6>6. Traceable workflow R1–R6</a></div>
 <div class=wrap>
+    <section class=front>
+      <p class=lead>A shapefile + an OD matrix is <b>not yet an assignment model</b> — it can't
+      state the capacity convention, period, PLF, VDF, user classes, tolls, or validation
+      target. <b>TAPLite will not guess them.</b> Onboarding makes them explicit, converts to
+      GMNS, runs, and validates.</p>
+      <h3>The three questions</h3>
+      <div class=gates><div class=gcard style='border-top:4px solid #c0392b'><div class=gq style='color:#c0392b'>1 · Can I run?</div><div class=gs>blockers only</div><div class=gd>missing files · schema · topology · missing zones · undeclared conventions</div></div><div class=gcard style='border-top:4px solid #d68910'><div class=gq style='color:#d68910'>2 · Can I trust it?</div><div class=gs>is the answer right?</div><div class=gd>capacity convention · period &amp; PLF · VDF · demand unit · allowed-use · toll · validation target</div></div><div class=gcard style='border-top:4px solid #1e8449'><div class=gq style='color:#1e8449'>3 · Can I improve it?</div><div class=gs>go further</div><div class=gd>QVDF duration · path output · binary demand · super-zones · skims · dashboards</div></div></div>
+      <h3>Start small — the dataset ladder</h3>
+      <table class=ladder><tr><th>rung</th><th>example</th><th>teaches</th><th>location</th></tr>
+      <tr><td>✅ <b>1</b></td><td>Chicago Sketch</td><td>minimum runnable — BPR, one period</td><td><code>kernel/data_sets/03_chicago_sketch</code></td></tr><tr><td>✅ <b>2</b></td><td>Chicago Regional</td><td>scale — binary demand, convergence, super-zones</td><td><code>kernel/data_sets/04_chicago_regional</code></td></tr><tr><td>✅ <b>3</b></td><td>ARC Atlanta</td><td>agency reproduction — mapping, PLF, classes, validation</td><td><code>examples/arc_atlanta</code></td></tr><tr><td>⏳ <b>4</b></td><td>Chicago Downtown OSM</td><td>public quick start (OSM→GMNS)</td><td><code>planned</code></td></tr></table>
+      <p class=note>Full write-ups: <code>docs/GOLDEN_PATH_CHECKLIST.md</code> ·
+      <code>docs/DATASET_LADDER.md</code>. The detailed, gated journey follows ↓</p>
+      <h3 class=detailh>The full path in detail — 7 stages</h3>
+    </section>
         <section class=stage id=stage0>
           <h2><label><input type=checkbox data-n=0 onchange=prog()>
               <span class=ic>🗺️</span> Stage 0 — GIS import &amp; field mapping</label>

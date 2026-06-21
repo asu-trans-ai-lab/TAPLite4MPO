@@ -61,6 +61,11 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
 ---
 
 ## 4. Documentation
+- **[docs/GOLDEN_PATH_CHECKLIST.md](docs/GOLDEN_PATH_CHECKLIST.md)** — ⭐ **READ THIS FIRST.**
+  The Golden Path: from agency files to a trusted assignment, in 6 stages, framed by three
+  questions — *can I run? can I trust it? can I improve it?* Simple first, advanced later.
+- **[docs/DATASET_LADDER.md](docs/DATASET_LADDER.md)** — which example to start with
+  (Chicago Sketch → Chicago Regional → ARC Atlanta → OSM quick start).
 - **[docs/onboarding_guide.html](docs/onboarding_guide.html)** — **the visual onboarding guide**:
   open in a browser for the staged journey (GIS field-map → declare → convert → intake →
   quality → run → traceable workflow), each with its gate and a progress tracker. Generate
