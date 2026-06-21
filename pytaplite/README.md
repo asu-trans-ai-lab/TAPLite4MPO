@@ -28,11 +28,21 @@ bash build.sh             # build the kernel first -> bin/DTALite.exe  (REQUIRED
 - `find_kernel(exe=None) -> path` — locate the binary (raises with guidance if missing).
 - `Result` — `.links` (list of dicts), `.summary()`, `.to_pandas()`, `.log`, `.returncode`, `.run_dir`.
 
-## How it runs the kernel
-By default a **subprocess** (`DTALite.exe`). If the optional **native in-process binding**
-`pytaplite._native` is built (from [`../kernel/python/`](../kernel/python/)), it is used
-automatically — no CSV-launch round trip, useful for tight demand↔supply feedback loops.
-Either way **the C++ kernel does the assignment.**
+## How it runs the kernel (three paths, same solver)
+`pytaplite` picks the fastest available, in order:
+
+1. **ctypes shared library** — `DTALite.dll` / `libDTALite.so` / `libDTALite.dylib`, loaded
+   with `ctypes` (Python stdlib) and called via the C-ABI `DTA_AssignmentAPI()` **in-process**.
+   This is the **Path4GMNS / DTALite package pattern** ([jdlph/Path4GMNS](https://github.com/jdlph/Path4GMNS)).
+   Build it once: `bash kernel/python/build_shared.sh`.
+2. **pybind11 binding** `pytaplite._native` — an alternative in-process path
+   (`bash kernel/python/build_native.sh`).
+3. **subprocess** — launch `DTALite.exe` (always works; needs no library build).
+
+Either way **the C++ kernel does the assignment.** The two in-process paths share the
+kernel's global state, so they run **one assignment per process** (pytaplite uses a fresh
+`work_dir`; for many runs in a loop, prefer subprocess or `multiprocessing`). Pass
+`prefer_inproc=False` to force the subprocess path.
 
 > `pytaplite` is the runnable bridge; `dtalite_qa` is the QA/validation/workflow layer. Use
 > `dtalite_qa intake/check` to get a scenario READY, then `pytaplite.assign` to run it.

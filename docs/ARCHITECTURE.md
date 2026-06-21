@@ -80,23 +80,27 @@ r = pytaplite.assign("examples/arc_atlanta/gmns_calibrated")   # runs the C++ ke
 print(r.summary())        # {'links': ..., 'total_VMT': ..., 'returncode': 0}
 df = r.to_pandas()        # link_performance as a DataFrame
 ```
-It locates the binary, runs the assignment, and loads `link_performance.csv` back. By default
-it launches the kernel as a **subprocess**; if the native module below is built it switches to
-an **in-process** call automatically. See [`../pytaplite/`](../pytaplite/).
+It locates the binary, runs the assignment, and loads `link_performance.csv` back. It picks
+the fastest of three execution paths automatically (all call the same C++ kernel):
 
-**2. The native in-process binding — `pytaplite._native` (no file-launch round trip).**
-The kernel compiles either as the exe (`BUILD_EXE` → `main()`) or as a library
-(`AssignmentAPI()`), so a `pybind11` module wraps it directly. Build it once:
+**2. ctypes shared library — the Path4GMNS / DTALite pattern (in-process, no pybind11).**
+The kernel exports the C-ABI symbols `DTA_AssignmentAPI()` / `DTA_SimulationAPI()`
+(`extern "C"` in `kernel/src/TAPLite.h`), so it builds as a shared library that Python loads
+with stdlib **`ctypes`** — exactly how [Path4GMNS](https://github.com/jdlph/Path4GMNS) ships
+the `DTALite` engine:
 ```bash
-pip install pybind11
-bash kernel/python/build_native.sh        # -> pytaplite/_native.<py>.{pyd,so}
-#   (or kernel/python/CMakeLists.txt; on Windows build with the toolchain matching your Python)
+bash kernel/python/build_shared.sh    # -> pytaplite/DTALite.dll | libDTALite.so | libDTALite.dylib
 ```
-Then `pytaplite.assign(...)` calls `AssignmentAPI()` **in-process** (the GIL is released during
-the solve) — for tight demand↔supply feedback loops. **Caveat:** the kernel keeps global
-state, so it is **one assignment per process**; for many runs `pytaplite` falls back to
-subprocess (or use `multiprocessing`). The native module is optional and git-ignored; the
-subprocess path works without it.
+`pytaplite.assign(...)` then loads it and calls `DTA_AssignmentAPI()` **in-process**. (CMake's
+`add_library(DTALite SHARED ...)` target builds the same library.)
+
+**3. pybind11 binding — `pytaplite._native` (alternative in-process; releases the GIL).**
+`pip install pybind11 && bash kernel/python/build_native.sh`.
+
+**Caveat (both in-process paths):** the kernel keeps global state, so run **one assignment
+per process**; for many runs use a fresh `work_dir` per call, `multiprocessing`, or
+`prefer_inproc=False` to use the subprocess path. The shared lib / native module are optional
+and git-ignored; **subprocess works with no library build.**
 
 Lowest level — just launch the binary yourself (any language can):
 ```python

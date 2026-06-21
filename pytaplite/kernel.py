@@ -7,14 +7,51 @@ used automatically; otherwise the kernel is launched as a subprocess. Either way
 kernel does the assignment.
 """
 import csv
+import ctypes
 import os
+import platform
 import shutil
 import subprocess
 import tempfile
 
 __version__ = "0.1.0"
 
-# optional in-process binding (built separately from kernel/python/)
+# --- in-process kernel via a C-ABI shared library (the Path4GMNS / DTALite pattern) ---------
+# The kernel is built as DTALite.dll / libDTALite.so / libDTALite.dylib exporting the C symbol
+# DTA_AssignmentAPI(); we load it with ctypes (stdlib) and call it in-process. Build it with
+# kernel/python/build_shared.sh (or CMake `add_library(DTALite SHARED ...)`).
+_LIBNAME = {"Windows": "DTALite.dll", "Linux": "libDTALite.so", "Darwin": "libDTALite.dylib"}
+
+
+def _find_shared_lib(path=None):
+    name = _LIBNAME.get(platform.system(), "DTALite.dll")
+    cands = [path, os.environ.get("DTALITE_DLL")]
+    here = os.path.dirname(os.path.abspath(__file__))
+    for base in (here, os.path.join(here, ".."), os.path.join(here, "..", ".."), os.getcwd()):
+        cands += [os.path.join(base, name), os.path.join(base, "bin", name)]
+    for c in cands:
+        if c and os.path.exists(c):
+            return os.path.abspath(c)
+    return None
+
+
+_lib = None          # cached ctypes handle (None = not tried, False = unavailable)
+
+
+def _get_lib():
+    global _lib
+    if _lib is None:
+        p = _find_shared_lib()
+        try:
+            _lib = ctypes.CDLL(p) if p else False
+            if _lib:
+                _lib.DTA_AssignmentAPI.restype = None
+        except OSError:
+            _lib = False
+    return _lib or None
+
+
+# optional pybind11 binding (alternative in-process path; kernel/python/build_native.sh)
 try:
     from . import _native as _native_mod          # exposes run_in_dir(path) -> int
 except Exception:
@@ -91,7 +128,8 @@ def _read_links(run_dir):
         return list(csv.DictReader(f))
 
 
-def assign(scenario, exe=None, in_place=True, work_dir=None, timeout=3600, capture=True):
+def assign(scenario, exe=None, in_place=True, work_dir=None, timeout=3600, capture=True,
+           prefer_inproc=True):
     """Run a static assignment on a GMNS scenario folder with the C++ kernel.
 
     scenario : folder with node.csv, link.csv, demand*, settings.csv, mode_type.csv.
@@ -104,7 +142,6 @@ def assign(scenario, exe=None, in_place=True, work_dir=None, timeout=3600, captu
     scenario = os.path.abspath(scenario)
     if not os.path.isdir(scenario):
         raise FileNotFoundError(f"scenario folder not found: {scenario}")
-    kernel = find_kernel(exe)
 
     if in_place:
         run_dir = scenario
@@ -116,22 +153,31 @@ def assign(scenario, exe=None, in_place=True, work_dir=None, timeout=3600, captu
                 if os.path.isfile(src):
                     shutil.copy(src, os.path.join(run_dir, fn))
 
-    # native in-process call if available, else subprocess (both run the C++ solver)
-    if _native_mod is not None:
+    # Run the C++ solver. Prefer in-process: ctypes shared library (DTALite pattern) first,
+    # then the pybind11 binding; otherwise launch the exe as a subprocess. All three call the
+    # same kernel — the in-process paths skip the process-launch overhead.
+    lib = _get_lib() if prefer_inproc else None
+    if lib is not None or (prefer_inproc and _native_mod is not None):
         cwd = os.getcwd()
         try:
             os.chdir(run_dir)
-            rc = int(_native_mod.run_in_dir(run_dir))
-            log = "(native binding: pytaplite._native.run_in_dir)"
+            if lib is not None:
+                lib.DTA_AssignmentAPI()          # reads CSVs in cwd, writes link_performance.csv
+                rc, via = 0, "ctypes shared library (DTALite)"
+            else:
+                rc = int(_native_mod.run_in_dir(run_dir))
+                via = "pybind11 binding (_native)"
         finally:
             os.chdir(cwd)
+        log = f"(in-process: {via})"
     else:
+        kernel = find_kernel(exe)            # subprocess path: the exe is needed here
         exe_local = os.path.join(run_dir, os.path.basename(kernel))
         if os.path.abspath(exe_local) != os.path.abspath(kernel):
             shutil.copy(kernel, exe_local)
         p = subprocess.run([exe_local], cwd=run_dir, timeout=timeout,
                            capture_output=capture, text=True)
         rc = p.returncode
-        log = (p.stdout or "") + (p.stderr or "") if capture else ""
+        log = ((p.stdout or "") + (p.stderr or "")) if capture else "(subprocess)"
 
     return Result(run_dir, rc, log, _read_links(run_dir))

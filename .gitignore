@@ -48,3 +48,6 @@ pytaplite/_native*.pyd
 pytaplite/_native*.so
 kernel/python/build/
 *.egg-info/
+pytaplite/DTALite.dll
+pytaplite/libDTALite.so
+pytaplite/libDTALite.dylib

@@ -6794,12 +6794,16 @@ int mapmatchingAPI() {
 }
 
 
+// C-ABI exports for the shared library (DTALite.dll / .so / .dylib), loaded from Python via
+// ctypes — the Path4GMNS / DTALite package pattern. The extern "C" + PATH_ENGINE_API
+// (dllexport) declarations live in TAPLite.h; the kernel reads CSVs from the current working
+// directory and writes link_performance.csv there, so the caller sets the cwd before calling.
 void DTA_AssignmentAPI() {
-AssignmentAPI();
+	AssignmentAPI();
 }
 
 void DTA_SimulationAPI() {
-SimulationAPI();
+	SimulationAPI();
 }
 
 // Optional standalone executable entry point. Built only when BUILD_EXE is
