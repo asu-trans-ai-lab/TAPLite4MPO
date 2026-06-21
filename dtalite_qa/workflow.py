@@ -1,4 +1,4 @@
-"""Traceable staged workflow (R1-R7) — MAG -> TAPLite traceability, generalized to any MPO.
+"""Traceable staged workflow (R1-R6) — MAG -> TAPLite traceability, generalized to any MPO.
 
 Implements the staged, gated, report-emitting workflow from the MAG Traceable-Workflow
 spec. Every stage writes a numbered report + tables (+ figures when matplotlib is present)
@@ -11,7 +11,6 @@ tie them together so the whole conversion -> assignment -> validation chain is a
   R4 Period & PLF                    period length, PLF by FT, flat-PLF check
   R5 TAP consistency                 model vs reference: V/C, speed, time (needs run+ref)
   R6 VMT/VHT validation              model vs reference VMT/VHT by FT-AT, <=5% gate
-  R7 Rough emissions (MovesLite-mini) speed-bin factors -> CO2/NOx/VOC/PM2.5 from VMT/VHT
 
 CLI: python -m dtalite_qa workflow <scenario> [--reference <link_perf_with_ref.csv>]
                                    [--period PM] [--submission <file>] [--out <dir>]
@@ -115,23 +114,6 @@ def _scatter(path, xs, ys, xl, yl, title):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fig.tight_layout(); fig.savefig(path, dpi=150); _plt.close(fig)
     return True
-
-
-# ---- R7 emission factors (explicit, auditable; MovesLite-mini) -------------------------
-# speed bin (mph) -> grams/mile by pollutant (rough; swap for MOVES later w/o changing flow)
-EMIT_BINS = [(0, 25), (25, 45), (45, 100)]
-EMIT_FACT = {  # g/mi: (CO2, NOx, VOC, PM25)
-    (0, 25):  (520, 1.20, 0.45, 0.060),
-    (25, 45): (360, 0.70, 0.20, 0.035),
-    (45, 100):(410, 0.85, 0.22, 0.040),
-}
-
-
-def _bin_speed(mph):
-    for lo, hi in EMIT_BINS:
-        if lo <= mph < hi:
-            return (lo, hi)
-    return EMIT_BINS[-1]
 
 
 # ========================================================================================
@@ -431,44 +413,10 @@ def run_workflow(scenario, reference=None, period=None, submission=None, out_dir
               [f"- total model VMT {tot_m:,.0f} vs ref {tot_r:,.0f} -> **{tot_diff:.2f}%**" if tot_diff is not None else "- no ref VMT",
                f"- worst FT-AT group: {worst:.1f}%", f"- {len(rows)} FT-AT groups"],
               ["tables/vmt_vht_by_ft_at_taplite.csv"])
-        emit_src = rows  # reuse for R7
     else:
         stage("06_vmt_vht", "TAPLite VMT & VHT validation", "SKIP",
               "no link_performance.csv with reference VMT.",
               ["Provide a run + reference to enable R6."], [])
-        emit_src = None
-
-    # ---------------- R7 rough emissions (MovesLite-mini) -------------------------------
-    if perf:
-        mvmt = _col(phdr, "VMT"); mvht = _col(phdr, "VHT")
-        agg = {}
-        for r in perf:
-            k = None
-            # FT-AT via link map
-            k = None
-            d = agg.setdefault("_all", dict(vmt=0.0, vht=0.0))
-            if mvmt: d["vmt"] += _f(r, mvmt, default=0) or 0
-            if mvht: d["vht"] += _f(r, mvht, default=0) or 0
-        rows = []
-        for k, d in agg.items():
-            vmt, vht = d["vmt"], d["vht"]
-            mph = vmt / vht if vht else 30.0
-            b = _bin_speed(mph)
-            co2, nox, voc, pm = EMIT_FACT[b]
-            rows.append((k, round(vmt, 1), round(vht, 1), f"{b[0]}-{b[1]}",
-                         round(vmt * co2 / 1000, 1), round(vmt * nox / 1000, 2),
-                         round(vmt * voc / 1000, 2), round(vmt * pm / 1000, 3)))
-        _write_table(os.path.join(tab_dir, "emission_ft_at_rough.csv"),
-                     ["group", "VMT", "VHT", "speed_bin", "CO2_kg", "NOx_kg", "VOC_kg", "PM25_kg"], rows)
-        co2_t = sum(r[4] for r in rows) / 1000
-        stage("07_emissions", "Rough emission estimation (MovesLite-mini)", "PASS",
-              f"network speed-bin emissions: ~{co2_t:,.1f} t CO2 (rough, swappable factors).",
-              ["- explicit speed-bin g/mi factors (documented in workflow.py EMIT_FACT)",
-               f"- network total ~ {co2_t:,.1f} tonnes CO2"],
-              ["tables/emission_ft_at_rough.csv"])
-    else:
-        stage("07_emissions", "Rough emission estimation (MovesLite-mini)", "SKIP",
-              "no link_performance.csv (run the kernel first).", [], [])
 
     # ---------------- index + dashboard -------------------------------------------------
     worst = max((GATE_RANK[s["status"]] for s in stages), default=0)
@@ -518,5 +466,5 @@ def _write_dashboard(path, scenario, overall, stages):
  ul{{margin:8px 0 0;padding-left:18px}} li{{font-size:12px;color:#666}}
 </style></head><body>
 <header><h1>MAG-style traceable workflow — {scenario}</h1><div class="ov">{overall}</div>
-<div style="font-size:12px;opacity:.9;margin-top:4px">R1->R7 staged · each gated · reports/ tables/ figures/</div></header>
+<div style="font-size:12px;opacity:.9;margin-top:4px">R1->R6 staged · each gated · reports/ tables/ figures/</div></header>
 <div class="wrap">{''.join(cards)}</div></body></html>""")

@@ -3,7 +3,7 @@
 This is the front door for students and MPO users: the whole staged journey from a raw
 GIS hand-off to a validated, traceable assignment — what you provide, what you run, what
 you get, and the gate at each stage. It is generated from the live schema (the intake
-declarations, the R1-R7 workflow) so it never drifts from the tools.
+declarations, the R1-R6 workflow) so it never drifts from the tools.
 
 CLI:  python -m dtalite_qa guide [--out onboarding_guide.html]
 """
@@ -79,23 +79,22 @@ STAGES = [
          get=["link_performance.csv (volumes, V/C, speed, VMT/VHT, QVDF duration)"],
          body="Static user equilibrium (Frank-Wolfe / conjugate / bi-conjugate). "
               "QVDF also yields D/C-consistent congestion duration."),
-    dict(n=6, key="workflow", title="Traceable workflow R1–R7",
+    dict(n=6, key="workflow", title="Traceable workflow R1–R6",
          icon="📊", gate="all stages pass (VMT vs reference ≤ 5%, …)",
          provide=["the run output + a reference (counts / agency volumes)"],
          run=["python -m dtalite_qa workflow <scenario> [--reference …] [--period PM]"],
          get=["traceability/reports/00_traceability.md + tables/ + figures/ + dashboard"],
          body="The full auditable record: inventory → OD/allowed-use → capacity/VDF join → "
-              "PLF → consistency → VMT/VHT validation → emissions, each gated."),
+              "PLF → consistency → VMT/VHT validation, each gated."),
 ]
 
-R1_R7 = [
+R1_R6 = [
     ("R1", "Inventory & directionality", "directed AB/BA present; network by FT-AT"),
     ("R2", "OD & allowed-uses", "demand totals by class; allowed_use flags"),
     ("R3", "Capacity & VDF join", "100% capacity + α/β join rate"),
     ("R4", "Period & PLF", "PLF declared / not flat over a multi-hour period"),
     ("R5", "TAP consistency", "model-vs-reference volume slope ≈ 1; problem links"),
     ("R6", "VMT/VHT validation", "total VMT vs reference ≤ 5%, by FT-AT"),
-    ("R7", "Rough emissions", "speed-bin CO₂/NOx/VOC/PM₂.₅ from VMT/VHT"),
 ]
 
 
@@ -133,8 +132,8 @@ def render_html():
         if s["key"] == "declare":
             extra = f"<div class=ref><b>Declaration checklist</b><ul class=decl>{decl_rows}</ul></div>"
         if s["key"] == "workflow":
-            wf = "".join(f"<tr><td><b>{a}</b></td><td>{b}</td><td>{c}</td></tr>" for a, b, c in R1_R7)
-            extra = ("<div class=ref><b>R1–R7 stages &amp; gates</b><table>"
+            wf = "".join(f"<tr><td><b>{a}</b></td><td>{b}</td><td>{c}</td></tr>" for a, b, c in R1_R6)
+            extra = ("<div class=ref><b>R1–R6 stages &amp; gates</b><table>"
                      f"<tr><th>stage</th><th>focus</th><th>gate</th></tr>{wf}</table></div>")
         cards += f"""
         <section class=stage id=stage{s['n']}>
