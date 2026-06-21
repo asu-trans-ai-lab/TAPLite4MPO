@@ -13,11 +13,17 @@ restrictions, equilibrium convergence, and validation.
 
 ## 0. Read first — the ARC model documentation
 
-Before running, read **ARC's published Travel Demand Model documentation, "Section 7 —
-Trip Assignment"** (Atlanta Regional Commission). It defines the methodology this
-example reproduces: bi-conjugate Frank–Wolfe, relative gap `< 1e-4` for 3 successive
-iterations, the modified-BPR VDF, the generalized cost `time·VOT + toll + distance·op_cost`
-(passenger VOT $21.50, truck $36.00), and the validation targets.
+Before running, read ARC's published Travel Demand Model documentation,
+**[Section 7 — Trip Assignment](https://atlregional.github.io/ARC_Model/TripAssignment.html)**
+(Atlanta Regional Commission). It defines the methodology this example reproduces:
+bi-conjugate Frank–Wolfe, relative gap `< 1e-4` for 3 successive iterations, the
+modified-BPR VDF, the generalized cost `time·VOT + toll + distance·op_cost` (passenger
+VOT $21.50, truck $36.00), and the validation targets.
+
+- ARC Travel Demand Model docs (Section 7 — Trip Assignment):
+  <https://atlregional.github.io/ARC_Model/TripAssignment.html>
+- ARC Transportation Assessment (The Atlanta Region's Plan):
+  <https://documents.atlantaregional.com/The-Atlanta-Region-s-Plan/Transportation_Assessment.pdf>
 
 - A faithful extraction of those requirements (with the FACTYPE/ATYPE tables and the
   exact kernel mapping) is in **[`ARC_DTALite_kernel_requirements.md`](ARC_DTALite_kernel_requirements.md)**.
