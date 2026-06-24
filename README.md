@@ -63,6 +63,15 @@ This builds `pytaplite._native` from the bundled kernel source (falls back to su
 compiler). Multi-platform PyPI wheels (`pip install taplite4mpo`) are produced by cibuildwheel
 on a version tag — see **[RELEASE.md](RELEASE.md)**.
 
+Then call the kernel from Python:
+```python
+import pytaplite
+r = pytaplite.assign("kernel/data_sets/02_Sioux_Falls")   # runs the C++ kernel
+print(r.summary())                                         # links, VMT, VHT, returncode
+```
+Runnable demo: **[`examples/pytaplite_quickstart.py`](examples/pytaplite_quickstart.py)**
+(`python examples/pytaplite_quickstart.py`).
+
 ## 2. Reproduce a run (open benchmark networks — no extra data needed)
 
 ```bash
