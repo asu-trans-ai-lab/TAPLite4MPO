@@ -51,3 +51,8 @@ kernel/python/build/
 pytaplite/DTALite.dll
 pytaplite/libDTALite.so
 pytaplite/libDTALite.dylib
+
+# build / release artifacts
+dist/
+build/
+wheelhouse/

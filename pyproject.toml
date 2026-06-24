@@ -1,20 +1,56 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=64", "wheel", "pybind11>=2.10"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "taplite4mpo"
 version = "0.1.0"
-description = "Python layer for the TAPLite/DTALite C++ assignment kernel: dtalite_qa (validate, intake, workflow) + pytaplite (drive the kernel and load results). The C++ kernel is the solver."
+description = "Open C++ static traffic-assignment kernel (GMNS) for MPO/DOT models, with a Python QA/orchestration layer (dtalite_qa) and a kernel driver (pytaplite)."
+readme = "README.md"
 requires-python = ">=3.8"
-dependencies = []          # standard library only; pandas/numpy/scipy optional (see below)
+license = { text = "MIT" }
+authors = [
+  { name = "ASU Trans-AI Lab" },                # TODO: set maintainer name + email before release
+]
+keywords = [
+  "traffic-assignment", "transportation", "user-equilibrium", "frank-wolfe",
+  "gmns", "dtalite", "taplite", "mpo", "travel-demand-model", "vdf", "qvdf",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering",
+]
+dependencies = []          # core is stdlib-only; the C++ kernel is compiled in / shipped
 
 [project.optional-dependencies]
-data = ["pandas"]                       # pytaplite Result.to_pandas
-science = ["numpy", "scipy"]            # super-zone encoders + skim recovery
+data = ["pandas"]                      # pytaplite Result.to_pandas
+science = ["numpy", "scipy"]           # super-zone encoders + skim recovery
+gis = ["pyshp", "pandas"]              # example/provenance converters
+all = ["pandas", "numpy", "scipy", "pyshp"]
+
+[project.urls]
+Homepage = "https://github.com/asu-trans-ai-lab/TAPLite4MPO"
+Repository = "https://github.com/asu-trans-ai-lab/TAPLite4MPO"
+Documentation = "https://github.com/asu-trans-ai-lab/TAPLite4MPO/blob/main/docs/ARCHITECTURE.md"
+Issues = "https://github.com/asu-trans-ai-lab/TAPLite4MPO/issues"
 
 [project.scripts]
 dtalite-qa = "dtalite_qa.__main__:main"
 
 [tool.setuptools]
 packages = ["dtalite_qa", "pytaplite"]
+# ext_modules (the pybind11 _native binding) are declared in setup.py so the build can fall
+# back gracefully when no C++ compiler is present (pytaplite then uses subprocess).
+
+[tool.setuptools.package-data]
+dtalite_qa = ["templates/*.yml"]
+
+[tool.cibuildwheel]
+build = "cp38-* cp39-* cp310-* cp311-* cp312-*"
+skip = "*-musllinux_i686 *_i686 pp*"
+build-verbosity = 1

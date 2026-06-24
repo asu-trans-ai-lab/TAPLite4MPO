@@ -1,0 +1,19 @@
+# Files needed to BUILD the package from an sdist (the C++ kernel source + binding).
+include README.md LICENSE pyproject.toml setup.py
+include kernel/src/TAPLite.cpp kernel/src/TAPLite.h
+include kernel/python/binding.cpp kernel/python/CMakeLists.txt
+include kernel/python/build_native.sh kernel/python/build_shared.sh
+include kernel/CMakeLists.txt build.sh
+recursive-include dtalite_qa *.yml
+include docs/ARCHITECTURE.md docs/GOLDEN_PATH_CHECKLIST.md pytaplite/README.md
+
+# Keep the sdist small — exclude the large example / benchmark / agency data.
+prune examples
+prune test_networks
+prune kernel/data_sets
+prune nvta_run
+prune private
+prune .github
+global-exclude *.pyc
+global-exclude __pycache__/*
+global-exclude *.pyd *.so *.dll *.dylib *.egg-info

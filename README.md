@@ -55,6 +55,14 @@ bash build.sh          # -> bin/DTALite.exe   (CMake + g++/MinGW, OpenMP, Releas
 Requires CMake, a C++17 compiler (g++/clang/MSVC), and OpenMP. Output: `bin/DTALite.exe`.
 (See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for why this is mandatory.)
 
+### Install the Python packages
+```bash
+pip install .            # installs dtalite_qa + pytaplite; compiles the in-process kernel binding
+```
+This builds `pytaplite._native` from the bundled kernel source (falls back to subprocess if no
+compiler). Multi-platform PyPI wheels (`pip install taplite4mpo`) are produced by cibuildwheel
+on a version tag — see **[RELEASE.md](RELEASE.md)**.
+
 ## 2. Reproduce a run (open benchmark networks — no extra data needed)
 
 ```bash
