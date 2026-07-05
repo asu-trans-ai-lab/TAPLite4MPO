@@ -74,11 +74,11 @@ public:
     bool ReadSectionHeader(std::string s);
     bool ReadRecord_Section();
     std::vector<std::string> ParseLine(std::string line);
-    bool GetValueByFieldName(std::string field_name,
+    bool GetValueByFieldName(const std::string& field_name,
         std::string& value,
         bool required_field = true);
     template <class T>
-    bool GetValueByFieldName(std::string field_name,
+    bool GetValueByFieldName(const std::string& field_name,
         T& value,
         bool required_field = true,
         bool NonnegativeFlag = true);
@@ -204,18 +204,21 @@ std::vector<std::string> CDTACSVParser::ParseLine(std::string line)
     if (line.length() == 0)
         return SeperatedStrings;
 
-    std::istringstream ss(line);
-
     if (line.find_first_of('"') == std::string::npos)
     {
-        while (std::getline(ss, subStr, Delimiter))
+        // Fast path: manual comma scan, no istringstream (one heap alloc per line).
+        // Produces the same fields as getline + the trailing-empty fix-up below.
+        size_t start = 0;
+        while (true)
         {
-            SeperatedStrings.push_back(subStr);
-        }
-
-        if (line.at(line.length() - 1) == ',')
-        {
-            SeperatedStrings.push_back("");
+            size_t comma = line.find(Delimiter, start);
+            if (comma == std::string::npos)
+            {
+                SeperatedStrings.push_back(line.substr(start));
+                break;
+            }
+            SeperatedStrings.push_back(line.substr(start, comma - start));
+            start = comma + 1;
         }
     }
     else
@@ -282,7 +285,7 @@ std::vector<std::string> CDTACSVParser::ParseLine(std::string line)
     return SeperatedStrings;
 }
 
-bool CDTACSVParser::GetValueByFieldName(std::string field_name,
+bool CDTACSVParser::GetValueByFieldName(const std::string& field_name,
     std::string& value,
     bool required_field)
 {
@@ -324,62 +327,28 @@ bool CDTACSVParser::GetValueByFieldName(std::string field_name,
 // Peiheng, 03/22/21, to avoid implicit instantiations in flash_dta.cpp and main_api.cpp for this
 // template function only all the other non-inline functions are implemented in utils.cpp
 template <class T>
-bool CDTACSVParser::GetValueByFieldName(std::string field_name,
+bool CDTACSVParser::GetValueByFieldName(const std::string& field_name,
     T& value,
     bool required_field,
     bool NonnegativeFlag)
 {
-    if (FieldsIndices.find(field_name) == FieldsIndices.end())
-    {
-        if (required_field)
-        {
-            //cout << "[ERROR] Field " << field_name << " in file " << mFileName.c_str()
-            // << " does not exist. Please check the file." << '\n'; 
-        }
+    // Hot path (called ~10M times on large networks): single map lookup, no string
+    // copy, and strtod instead of istringstream -> no per-call heap allocation.
+    std::map<std::string, int>::const_iterator it = FieldsIndices.find(field_name);
+    if (it == FieldsIndices.end())
         return false;
-    }
-    else
-    {
-        if (LineFieldsValue.size() == 0)
-        {
-            return false;
-        }
-
-        int size = (int)(LineFieldsValue.size());
-        if (FieldsIndices[field_name] >= size)
-        {
-            return false;
-        }
-
-        std::string str_value = LineFieldsValue[FieldsIndices[field_name]];
-
-        if (str_value.length() <= 0)
-        {
-            return false;
-        }
-
-        std::istringstream ss(str_value);
-
-        T converted_value;
-        ss >> converted_value;
-
-        if (/*!ss.eof() || */ ss.fail())
-        {
-            return false;
-        }
-
-        // if (required_field)
-        //{
-        //     if(NonnegativeFlag)
-        //     {
-        //         if (converted_value < 0)
-        //             converted_value = 0;
-        //     }
-        // }
-
-        value = converted_value;
-        return true;
-    }
+    int idx = it->second;
+    if (idx < 0 || idx >= (int)LineFieldsValue.size())
+        return false;
+    const std::string& str_value = LineFieldsValue[idx];
+    if (str_value.empty())
+        return false;
+    char* endp = nullptr;
+    double d = strtod(str_value.c_str(), &endp);
+    if (endp == str_value.c_str())   // no numeric conversion (matches old ss.fail())
+        return false;
+    value = (T)d;
+    return true;
 }
 
 void ExitMessage(const char* format, ...)

@@ -139,3 +139,92 @@ def build_manifest(scenario, kernel_version=None, created=None):
         "units": UNITS,
         "files": files,
     }
+
+
+# ---------------------------------------------------------------------------
+# M1 (NeXTA-AI roadmap): per-RUN manifest + diff -- the contract that makes a
+# run reproducible and two runs comparable. build_run_manifest() is called after
+# a kernel run on the run folder; diff_manifests() names what changed and what
+# it did to the MOEs.
+# ---------------------------------------------------------------------------
+
+def _moe_from_link_performance(run_dir):
+    import csv as _csv
+    p = os.path.join(run_dir, "link_performance.csv")
+    if not os.path.exists(p):
+        return None
+    vmt = vht = 0.0
+    n = loaded = 0
+    with open(p, newline="", encoding="utf-8-sig") as f:
+        for r in _csv.DictReader(f):
+            try:
+                v = float(r.get("volume") or 0)
+                vm = float(r.get("VMT") or 0)
+                sp = float(r.get("speed_mph") or r.get("speed") or 0)
+            except ValueError:
+                continue
+            n += 1
+            if v > 0.5:
+                loaded += 1
+            vmt += vm
+            if sp > 0:
+                vht += vm / sp
+    return {"links": n, "loaded_links": loaded, "vmt": round(vmt, 1),
+            "vht": round(vht, 1),
+            "mean_speed_mph": round(vmt / vht, 2) if vht > 0 else None}
+
+
+def build_run_manifest(run_dir, scenario=None, exe=None, override=None,
+                       intake_gate=None, created=None):
+    """Everything needed to reproduce and compare this run."""
+    from . import report as _report
+    scenario = scenario or run_dir
+    man = build_manifest(run_dir, created=created)
+    man["kind"] = "run"
+    man["source_scenario"] = os.path.abspath(scenario)
+    if exe and os.path.exists(exe):
+        man["exe"] = {"path": os.path.abspath(exe), "sha256": _sha256(exe),
+                      "bytes": os.path.getsize(exe)}
+    # effective settings (single row)
+    sp = os.path.join(run_dir, "settings.csv")
+    if os.path.exists(sp):
+        hdr, rows = csvio.read(sp)
+        man["effective_settings"] = dict(rows[0]) if rows else {}
+    traj = _report.parse_gap(run_dir)
+    man["convergence"] = {"iterations": len(traj),
+                          "final_gap_pct": traj[-1]["gap_pct"] if traj else None,
+                          "final_vmt": traj[-1]["system_vmt"] if traj else None,
+                          "trace": traj[-8:]}
+    man["moe"] = _moe_from_link_performance(run_dir)
+    man["intake_gate"] = intake_gate
+    man["override"] = override
+    return man
+
+
+def diff_manifests(a, b):
+    """Compare two (run) manifests: changed inputs, changed settings, MOE deltas."""
+    out = {"files": {}, "settings": {}, "moe": {}, "convergence": {}}
+    fa, fb = a.get("files", {}), b.get("files", {})
+    for name in sorted(set(fa) | set(fb)):
+        ha = fa.get(name, {}).get("sha256")
+        hb = fb.get(name, {}).get("sha256")
+        if ha != hb:
+            out["files"][name] = ("added" if ha is None else
+                                  "removed" if hb is None else "changed")
+    sa, sb = a.get("effective_settings", {}) or {}, b.get("effective_settings", {}) or {}
+    for k in sorted(set(sa) | set(sb)):
+        if sa.get(k) != sb.get(k):
+            out["settings"][k] = {"a": sa.get(k), "b": sb.get(k)}
+    ma, mb = a.get("moe") or {}, b.get("moe") or {}
+    for k in sorted(set(ma) | set(mb)):
+        va, vb = ma.get(k), mb.get(k)
+        if isinstance(va, (int, float)) and isinstance(vb, (int, float)) and va:
+            out["moe"][k] = {"a": va, "b": vb, "pct": round((vb - va) / va * 100, 2)}
+        elif va != vb:
+            out["moe"][k] = {"a": va, "b": vb}
+    ca, cb = a.get("convergence") or {}, b.get("convergence") or {}
+    for k in ("final_gap_pct", "final_vmt", "iterations"):
+        if ca.get(k) != cb.get(k):
+            out["convergence"][k] = {"a": ca.get(k), "b": cb.get(k)}
+    out["identical"] = not (out["files"] or out["settings"] or out["moe"] or out["convergence"])
+    return out

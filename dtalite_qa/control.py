@@ -9,6 +9,7 @@ This is the stable entry point for automated/batch use: a scenario that passes
 prepare() has explicit defaults, sorted links, no dangling references, and a
 known accessibility profile before a single iteration runs.
 """
+import json
 import os
 import shutil
 import subprocess
@@ -18,6 +19,42 @@ from . import validate as _validate
 from . import fill as _fill
 from . import inventory as _inventory
 from . import accessibility as _accessibility
+
+# input files whose modification invalidates a previous intake audit
+_INTAKE_INPUTS = ("link.csv", "node.csv", "settings.csv", "mode_type.csv",
+                  "demand.csv", "submission.yml")
+
+
+def check_intake_gate(scenario, override=None):
+    """WP-06: the intake gate is ENFORCED at the run boundary, not advisory.
+
+    Returns (ok, status, reason). ok=False blocks the run unless `override`
+    (a non-empty who/why string) is given — the override is reported back so the
+    caller can record it in the run manifest.
+      - no intake_issues.json  -> BLOCKED ('intake has not been run')
+      - gate != READY          -> BLOCKED (undeclared conventions)
+      - audit older than any input file -> STALE (re-run intake)
+    """
+    p = os.path.join(scenario, "intake_issues.json")
+    if not os.path.exists(p):
+        st = ("ABSENT", "intake has not been run: python -m dtalite_qa intake <scenario>")
+    else:
+        try:
+            gate = json.load(open(p, encoding="utf-8")).get("gate", "BLOCKED")
+        except (ValueError, OSError):
+            gate = "BLOCKED"
+        if gate != "READY":
+            st = ("BLOCKED", "intake gate is not READY -- resolve the BLOCKER issues "
+                             "(open intake_dashboard.html) and re-run intake")
+        else:
+            audit_t = os.path.getmtime(p)
+            newer = [f for f in _INTAKE_INPUTS
+                     if os.path.exists(os.path.join(scenario, f))
+                     and os.path.getmtime(os.path.join(scenario, f)) > audit_t + 1]
+            st = (("STALE", f"inputs changed after the intake audit ({', '.join(newer)}); "
+                            "re-run intake") if newer else ("READY", ""))
+    ok = st[0] == "READY" or bool(override)
+    return ok, st[0], st[1]
 
 
 def prepare(scenario, out_dir=None, do_fill=True):
@@ -43,11 +80,23 @@ def prepare(scenario, out_dir=None, do_fill=True):
     return result
 
 
-def run(scenario, exe, out_dir=None, timeout=1800):
+def run(scenario, exe, out_dir=None, timeout=1800, override=None, enforce_intake=True):
     """prepare() then run the kernel on the normalized scenario. Returns result
-    with added keys: returncode, log, ran(bool)."""
+    with added keys: returncode, log, ran(bool), intake_gate, override.
+
+    The intake gate is enforced (WP-06): an un-audited / BLOCKED / stale scenario
+    refuses to run unless `override` (who/why string) is provided; the override is
+    recorded in the result (and the run manifest)."""
+    result = {"scenario": scenario, "ran": False, "ok": False}
+    if enforce_intake:
+        ok, status, reason = check_intake_gate(scenario, override=override)
+        result["intake_gate"] = status
+        result["override"] = override or None
+        if not ok:
+            result["gate_refusal"] = reason
+            return result
     out_dir = out_dir or tempfile.mkdtemp(prefix="dtalite_run_")
-    result = prepare(scenario, out_dir=out_dir, do_fill=True)
+    result.update(prepare(scenario, out_dir=out_dir, do_fill=True))
     result["ran"] = False
     if not result["ok"]:
         return result

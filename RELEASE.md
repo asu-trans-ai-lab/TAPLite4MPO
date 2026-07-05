@@ -1,4 +1,62 @@
-# Releasing `taplite4mpo` to PyPI
+# Releasing `taplite4mpo`
+
+Two audiences: **(A)** users learning the pipeline (start below), and **(B)** maintainers
+cutting a PyPI release (§0 onward).
+
+---
+
+## What's in this release — for users
+
+### ⭐ New: the onboarding & handoff folder
+[`HANDOFF/`](HANDOFF/) is the front door for a new engineer (and for partner staff onboarding
+a new agency model). It gives the **order to read the docs, the runs to reproduce, and the
+issues to understand**:
+- [`HANDOFF/README.md`](HANDOFF/README.md) — the reading path + reproduction path + the
+  "which agency taught us this" issue index.
+- [`HANDOFF/BPR_AND_VDF_CONFIG_RULES.md`](HANDOFF/BPR_AND_VDF_CONFIG_RULES.md) — the one-page
+  **BPR / VDF / capacity / PLF configuration-rules card** (which `vdf_type`, which α/β, per-lane
+  vs total capacity, `φ = L·PLF`, the 8-line setup checklist).
+- [`HANDOFF/REPRODUCE_THE_ISSUES.md`](HANDOFF/REPRODUCE_THE_ISSUES.md) — a **hands-on lab**:
+  trip each classic failure on the open networks and watch `intake` catch it.
+
+### Lessons learned — the error-source document
+[`docs/CONVERSION_ERRORS_CATALOG.md`](docs/CONVERSION_ERRORS_CATALOG.md) is the canonical
+"every way an MPO hand-off goes wrong" reference — symptom → cause → fix → *which agency*, with
+a master table and a fixed order-to-check. **The one principle:** onboarding is *model-meaning*
+conversion, not file-format conversion, and **TAPLite never guesses** capacity/period/PLF/
+units/demand-kind/zones/VDF — a wrong run is a convention mismatch, not a solver bug.
+
+### How to use super-zones (accelerate without losing corridors)
+Super-zones **merge zones that respond alike** so the assignment solves far fewer origin
+shortest-path trees, while keeping the **full link network** — corridor volumes and the
+full-resolution zone-to-zone skim are preserved. Use it for scenario sweeps and sketch
+planning, **never as the model of record**. Runnable recipe (after a trusted full run):
+```bash
+cd examples/arc_atlanta
+python arc_superzone.py 1500                       # ~1,431 super-zones (4.2x fewer origins)
+cp ../../bin/DTALite.exe gmns_superzone/ && ( cd gmns_superzone && ./DTALite.exe )
+python arc_superzone.py validate gmns_superzone    # %RMSE vs ARC reference
+python arc_superzone.py identity                   # S=N corner case: MUST reproduce full exactly
+python arc_skim.py sz                              # full-resolution skim from the fast run (R^2=0.9985)
+```
+Guides: [`examples/arc_atlanta/SUPERZONE.md`](examples/arc_atlanta/SUPERZONE.md) (the run) and
+[`docs/superzone_design_principles.md`](docs/superzone_design_principles.md) (the P0–P10 rules,
+including the **`S=N` correctness gate**). Measured on ARC: ~**2× faster**, corridor %RMSE
+9–10%, and the recovered skim R²=0.9985 — trade local-street detail (the dropped intra-super
+trips, always report the share) for corridor-level speed.
+
+### Agency data stays private (with worked case studies)
+Real agency networks/matrices are restricted and are **never committed** — `.gitignore` keeps
+`private/*` out of Git (only READMEs tracked). Each agency model gets its own **private
+subfolder** with a case-study README documenting its conventions and issues. The first is
+[`private/SCAG/README.md`](private/README.md) — the SCAG RTP24 build (network done, tier-2 zone
+correspondence resolved, piecewise VDF, and the open "missing volume" demand question), mapped
+entry-by-entry to the error catalog. Reproduce private runs by pointing scripts at your own
+copy of the data (same pattern as `nvta_run/`, README §6).
+
+---
+
+## Releasing to PyPI (maintainers)
 
 The package ships the **Python layers** (`dtalite_qa`, `pytaplite`) and the **C++ kernel
 source**; the in-process `pytaplite._native` extension is compiled at build time. The kernel

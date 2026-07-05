@@ -28,7 +28,8 @@ MTC, SANDAG, MWCOG, VDOT, ODOT).
 - Frank–Wolfe with an exact cost-based line search; **conjugate / bi-conjugate FW**
   (`assignment_method`) for faster convergence on congested networks.
 - **VDF library:** BPR, modified-BPR (linear term), conical (Spiess), QVDF (queue),
-  BPR2, INRETS, Akcelik, SANDAG signal-delay (`vdf_type` 0–6).
+  BPR2, INRETS, Akcelik, SANDAG signal-delay, SCAG piecewise-BPR, SCAG ramp-meter
+  (`vdf_type` 0–8).
 - **QVDF congestion duration** — a D/C-consistent queue output (`P`, severe-congestion
   duration, queue speeds), calibrated from corridor speeds by the **CBI sister project**.
 - Multiclass: per-mode demand, **VOT**, **PCE**, occupancy, per-mode toll + distance
@@ -38,8 +39,9 @@ MTC, SANDAG, MWCOG, VDOT, ODOT).
 
 > **Start with the flagship example → [`examples/arc_atlanta/`](examples/arc_atlanta/):**
 > a complete end-to-end MPO run — reproduce the Atlanta Regional Commission's AM highway
-> assignment and **validate it against ARC's own count benchmark** (region %RMSE 23 %,
-> target ~38 %). It shows every MPO feature wired up, with a clean ARC-requirement →
+> assignment and **validate it against ARC's own count benchmark** (region %RMSE 22 %,
+> target ~38 %; re-baselined 2026-07 from 23 % after the Dijkstra-default and gap-metric
+> kernel updates). It shows every MPO feature wired up, with a clean ARC-requirement →
 > kernel-setting mapping. Background: [`docs/mpo_spec/`](docs/mpo_spec/) (the design spec
 > + multi-agency survey).
 
@@ -95,6 +97,15 @@ python test_networks/run_regression.py   # builds & checks BPR/conic/QVDF, multi
 ---
 
 ## 4. Documentation
+- **[HANDOFF/](HANDOFF/)** — ⭐ **new engineer? start here.** The onboarding & handoff folder:
+  the ordered reading path, the runs to reproduce, the "which agency taught us this" issue
+  index, a **[BPR/VDF/PLF config-rules card](HANDOFF/BPR_AND_VDF_CONFIG_RULES.md)**, and a
+  **[hands-on lab](HANDOFF/REPRODUCE_THE_ISSUES.md)** that trips each classic conversion error
+  on the open networks so you learn to recognize it.
+- **[docs/CONVERSION_ERRORS_CATALOG.md](docs/CONVERSION_ERRORS_CATALOG.md)** — the
+  **lessons-learned / error-source** reference: every way an MPO hand-off goes wrong
+  (capacity, PLF, units, demand, zones, VDF, truncation, allowed-use, count basis, build),
+  symptom → cause → fix → *which agency*.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — **the C++ kernel solves; the Python
   package orchestrates.** Which part runs what, the environment matrix, and how to call the
   kernel from Python. Read it if you're unsure what's doing the assignment.

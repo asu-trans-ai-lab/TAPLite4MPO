@@ -40,10 +40,15 @@ python arc_validate_run.py gmns_calibrated
 ```
 *Avoids the mistake:* "I converted the shapefile but the conventions were guessed."
 
-### Rung 4 — Chicago Downtown OSM (planned)
-Public-data onboarding via osm2gmns + gmns-ready, then a TAPLite-ready teaching scenario.
+### Rung 4 — Tempe OSM (built)
+Public-data onboarding: `tempe.osm.pbf` → **osm2gmns** → grid zones + connectors +
+gravity demand → TAPLite (converges in ~0.5 s) → **gmns-ready** `quick_check`
+(0 inaccessible OD) → `assignment_map.html` via `dtalite_qa/vizmap.py`.
+Scripts: `test_networks/data_Tempe_network/step1_osm2gmns.py` → `step2_zones_demand_run.py`
+(kernel repo; being folded into this deliverable — WP-07). Known upstream tool issues +
+student fixes: `docs/OSM_ECOSYSTEM_ISSUES.md`.
 **This is a demo, not an agency-validated model** unless observed counts and lookup tables
-are added. *(Not built yet — see the missing-items list in the Golden Path.)*
+are added.
 
 ---
 

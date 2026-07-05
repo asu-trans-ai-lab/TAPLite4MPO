@@ -27,6 +27,7 @@ import os
 import statistics
 
 from . import csvio
+from . import convlog as _convlog
 
 # ---- the declaration contract: things a shapefile/matrix can't carry -------------------
 # sev: BLOCKER (cannot assign correctly without it) | DECISION (must choose; risky default)
@@ -126,6 +127,23 @@ def run_intake(scenario, submission=None, out_dir=None):
         issues.append(dict(severity=sev, field=key, message=msg, why=why, resolution=fix))
 
     step(f"intake scenario: {scenario}")
+
+    # ingest the converter's own step log (if it wrote one)
+    cl = _convlog.load(scenario)
+    if cl:
+        step(f"ingested conversion_log.json from converter '{cl.get('converter','?')}'"
+             f"{(' (source ' + cl['source'] + ')') if cl.get('source') else ''}")
+        for e in cl.get("entries", []):
+            if e["kind"] == "MAP":
+                note(f"map {e['field']} <- {e['source']}" + (f" ({e['note']})" if e.get("note") else ""))
+            elif e["kind"] == "ASSUME":
+                note(f"converter assumed {e['key']} = {e['value']}" + (f" ({e['why']})" if e.get("why") else ""))
+            elif e["kind"] == "WARN":
+                issue("DECISION", "conversion", f"converter warning: {e['msg']}",
+                      "Flagged during conversion.", "Review against the source data.")
+    else:
+        note("no conversion_log.json — converter did not emit a step log (recommended).")
+
     sub_path = submission or os.path.join(scenario, "submission.yml")
     decl = parse_submission(sub_path)
     if decl:
