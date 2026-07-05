@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taplite4mpo"
-version = "0.2.0"
+version = "0.3.0"
 description = "Open C++ static traffic-assignment kernel (GMNS) for MPO/DOT models, with a Python QA/orchestration layer (dtalite_qa) and a kernel driver (pytaplite)."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -31,7 +31,8 @@ dependencies = []          # core is stdlib-only; the C++ kernel is compiled in 
 data = ["pandas"]                      # pytaplite Result.to_pandas
 science = ["numpy", "scipy"]           # super-zone encoders + skim recovery
 gis = ["pyshp", "pandas"]              # example/provenance converters
-all = ["pandas", "numpy", "scipy", "pyshp"]
+runconfig = ["pyyaml"]                 # `taplite run <config.yml>` (falls back to a stdlib parser)
+all = ["pandas", "numpy", "scipy", "pyshp", "pyyaml"]
 
 [project.urls]
 Homepage = "https://github.com/asu-trans-ai-lab/TAPLite4MPO"
@@ -41,6 +42,7 @@ Issues = "https://github.com/asu-trans-ai-lab/TAPLite4MPO/issues"
 
 [project.scripts]
 dtalite-qa = "dtalite_qa.__main__:main"
+taplite = "dtalite_qa.taplite_cli:main"
 
 [tool.setuptools]
 packages = ["dtalite_qa", "pytaplite"]

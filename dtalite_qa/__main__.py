@@ -65,6 +65,10 @@ def main(argv=None):
     sp = sub.add_parser("report")
     sp.add_argument("run_dir", help="folder with link_performance.csv (+ link.csv, summary log)")
     sp.add_argument("--out", default=None, help="path prefix; writes <prefix>.json and <prefix>.md")
+    sp = sub.add_parser("report-html")
+    sp.add_argument("run_dir", help="finished run folder (link_performance.csv + manifest.json)")
+    sp.add_argument("--out", default=None, help="output .html (default: <run_dir>/report.html)")
+    sp.add_argument("--name", default=None, help="project name in the report header")
     sp = sub.add_parser("plf")
     sp.add_argument("scenario", help="inventory VDF_plf and flag a flat PLF")
     sp.add_argument("--period", default=None, help="MAG period profile for recommendations: AM/MD/PM/NT")
@@ -287,6 +291,12 @@ def main(argv=None):
             print(f"run manifest: {mp}")
             return 0 if result["returncode"] == 0 else 1
         return 1
+
+    if args.cmd == "report-html":
+        from . import report_html as _report_html
+        out = _report_html.build_report(args.run_dir, out_html=args.out, project_name=args.name)
+        print(f"self-contained HTML report -> {out}")
+        return 0
 
     if args.cmd == "diff":
         a = json.load(open(args.manifest_a, encoding="utf-8"))
