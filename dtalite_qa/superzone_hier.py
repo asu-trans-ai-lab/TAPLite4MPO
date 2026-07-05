@@ -1,33 +1,37 @@
 """Hierarchical super-zone network construction (faithful, corner-case-exact).
 
-Builds a new GMNS scenario where each ORIGINAL zone is demoted to a regular
-THROUGH node and a smaller set of SUPER-ZONE centroids is prepended, each linked
-to its member original zone nodes by zero-cost connectors. Demand is keyed to
-super-zones.
+Builds a new GMNS scenario where each ORIGINAL zone centroid is REMOVED and its
+connector links are REWIRED -- with their original attributes (length, fftt,
+capacity, ...) -- to a smaller set of SUPER-ZONE centroids prepended at ids 1..S.
+Demand is keyed to super-zones. A super-zone therefore attaches to the network at
+exactly the union of its member zones' attachment nodes, at the member
+connectors' original costs.
+
+Why bypass-and-delete (NOT demote-to-through): an earlier construction demoted
+original centroids to regular through nodes and linked supers to them with
+zero-cost connectors. That opens PHANTOM SHORTCUTS -- paths cutting through a
+former centroid via two of its connectors -- on any network whose centroid
+connectors can shortcut the streets. Chicago's topology masked this; a dense
+147k-node grid network failed the S=N corner case badly (VMT -12%, slope 4.6).
+With rewiring, S=N is exact BY CONSTRUCTION on every topology: the network is
+identical up to renaming each centroid to its own super-zone.
 
 Kernel facts this relies on (TAPLite.cpp):
   * a zone is a node with zone_id == node_id; no_zones = max(zone_id).
   * auto FirstThruNode (first_through_node_id = -1) = first node with zone_id==0.
   * a node is passable (through) iff seq >= FirstThruNode or it is the origin.
+  * parallel links between the same node pair are legal (adjacency scans all
+    outgoing links), so overlapping member connectors need no merging.
 
 Node numbering (compact -> no_zones = S):
-  super-zones : 1 .. S        (zone_id = node_id)   <- the only centroids
-  original    : S+1 .. S+N    (zone_id = 0)         <- all become through nodes
-With FirstThruNode auto = S+1, a trip routes super -> member-node -> network
-(the member node, now through, may be traversed). One super-zone per original
-zone reproduces the full assignment exactly.
+  super-zones                 : 1 .. S   (zone_id = node_id)  <- the only centroids
+  original non-centroid nodes : S+1 ..   (zone_id = 0)        <- through, unchanged
 """
 import bisect
 import math
 import os
 
 from . import csvio
-
-
-# zero-cost connector attributes (transparent: travel_time = fftt + alpha*... = 0)
-_CONN = dict(length=0.0, vdf_length_mi=0.0, lanes=1, capacity=999999, free_speed=60,
-             vdf_free_speed_mph=60, vdf_type=0, vdf_alpha=0, vdf_beta=1, vdf_plf=1,
-             vdf_fftt=0.0, cutoff_speed=45, allowed_use="", link_type=9)
 
 
 def cluster_grid(zone_xy, k_target):
@@ -94,51 +98,55 @@ def build(scenario, out_dir, k_target=None, zone2super=None):
         scoords = {s: zone_xy[next(z for z in zone2super if zone2super[z] == s)]
                    for s in set(zone2super.values())}
     S = max(zone2super.values())
-    old2new = {old: S + i + 1 for i, old in enumerate(order)}   # originals shift after supers
-    rep.append(f"zones {len(zone_xy)} -> super-zones {S}; nodes {len(order)} -> {S+len(order)}; FirstThruNode auto = {S+1}")
+    # originals EXCLUDING centroids shift after supers; centroids are deleted
+    order_nc = [nid for nid in order if nid not in zone_xy]
+    old2new = {old: S + i + 1 for i, old in enumerate(order_nc)}
+    rep.append(f"zones {len(zone_xy)} -> super-zones {S} (centroids rewired+removed); "
+               f"nodes {len(order)} -> {S + len(order_nc)}; FirstThruNode auto = {S+1}")
 
-    # --- node.csv: super-zones (1..S) then originals (S+1..) ---
+    # --- node.csv: super-zones (1..S) then non-centroid originals (S+1..) ---
     out_nrows = []
     for s in range(1, S + 1):
         x, y = scoords[s]
         out_nrows.append({"node_id": s, "zone_id": s, "x_coord": x, "y_coord": y})
     nx_by_id = {csvio.inum(r.get("node_id")): r for r in nrows}
-    for old in order:
+    for old in order_nc:
         r = nx_by_id[old]
         out_nrows.append({"node_id": old2new[old], "zone_id": 0,
                           "x_coord": r.get("x_coord"), "y_coord": r.get("y_coord")})
     csvio.write(csvio.path(out_dir, "node.csv"),
                 ["node_id", "zone_id", "x_coord", "y_coord"], out_nrows)
 
-    # --- link.csv: remapped originals + super->member connectors ---
-    # Pass ALL original columns through (datasets differ in case/naming, e.g. VDF_plf
-    # vs vdf_plf); only remap from/to. Connector attributes are written into whatever
-    # columns exist, matched case-insensitively.
+    # --- link.csv: remap; links touching a centroid are REWIRED to its super ---
+    # Pass ALL original columns through (datasets differ in case/naming); only the
+    # endpoints change. Connector attributes (length/fftt/capacity/...) are KEPT,
+    # so entering the network via a super-zone costs exactly what the member
+    # zone's own connector cost. Self-loops (both ends in the same super) drop.
     lhdr, lrows = csvio.read(csvio.path(scenario, "link.csv"))
     if "link_id" not in lhdr:
         lhdr = ["link_id"] + lhdr
-    lower2col = {c.lower(): c for c in lhdr}
     out_lrows = []
+    nrewired = nself = 0
     for r in lrows:
+        f = csvio.inum(r.get("from_node_id")); t = csvio.inum(r.get("to_node_id"))
+        fc = f in zone_xy; tc = t in zone_xy
+        nf = zone2super[f] if fc else old2new.get(f)
+        nt = zone2super[t] if tc else old2new.get(t)
+        if nf is None or nt is None:
+            continue                            # endpoint absent from node.csv
+        if nf == nt:
+            nself += 1; continue                # collapsed into one super: drop
+        if fc or tc:
+            nrewired += 1
         o = {c: r.get(c, "") for c in lhdr}
-        o["from_node_id"] = old2new[csvio.inum(r.get("from_node_id"))]
-        o["to_node_id"] = old2new[csvio.inum(r.get("to_node_id"))]
+        o["from_node_id"] = nf
+        o["to_node_id"] = nt
         out_lrows.append(o)
-    cid = 900000000
-    nconn = 0
-    for z, s in zone2super.items():
-        for a, b in ((s, old2new[z]), (old2new[z], s)):     # bidirectional, zero cost
-            row = {c: "" for c in lhdr}
-            row["link_id"], row["from_node_id"], row["to_node_id"] = cid, a, b
-            for k, v in _CONN.items():
-                col = lower2col.get(k)
-                if col:
-                    row[col] = v
-            out_lrows.append(row); cid += 1; nconn += 1
     # sort by from-node internal seq (= node.csv order = new id order)
     out_lrows.sort(key=lambda r: (csvio.inum(r["from_node_id"]), csvio.inum(r["to_node_id"])))
     csvio.write(csvio.path(out_dir, "link.csv"), lhdr, out_lrows)
-    rep.append(f"links {len(lrows)} + {nconn} super-connectors = {len(out_lrows)}")
+    rep.append(f"links {len(lrows)} -> {len(out_lrows)} ({nrewired:,} connector links "
+               f"rewired to supers, {nself:,} intra-super self-loops dropped)")
 
     # --- demand: key to super-zones, drop intra-super ---
     _, mts = csvio.read(csvio.path(scenario, "mode_type.csv")) if csvio.exists(scenario, "mode_type.csv") else (None, [])

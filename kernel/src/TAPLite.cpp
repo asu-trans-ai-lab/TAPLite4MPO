@@ -38,6 +38,8 @@
 #include <omp.h>
 #include <chrono>  // for high_resolution_clock
 #include <deque>
+#include <queue>
+#include <utility>
 #include <iomanip> // For std::setw and std::setfill
 #include <unordered_map>  // For hash table (unordered_map)
 
@@ -257,6 +259,7 @@ int g_has_movement_restrictions = 0;
 int*** g_MinPathPredLink_link = NULL;
 
 
+double Link_Travel_Time(int k, double* Volume);
 double Link_GenCost(int k, double* Volume);
 double LinkCost_Integral(int k, double* Volume);
 double Link_GenCostDer(int k, double* Volume);
@@ -313,10 +316,32 @@ int g_base_demand_mode = 1;
 // 0 = off (pure BPR/conic/QVDF). Set via settings.csv 'added_delay_per_mile'
 // (MAG uses 1.4 min/mile on all facility types: "1.4*L + Tc").
 double g_added_delay_per_mile = 0.0;
+// SCAG piecewise BPR (VDF_type==7): the BPR exponent below capacity (x/C <= 1).
+// SCAG's Validation Report fixes it at 4.0 globally; the calibrated per-link
+// VDF_Beta (5/6/8) applies only above capacity. Constant, not a setting.
+const double SCAG_UNCONGESTED_BETA = 4.0;
 // Relative-gap stopping criterion: stop Frank-Wolfe once the gap (%) falls below
 // this. 0 = off (run the full number_of_iterations). Set via settings.csv
 // 'convergence_gap_pct'.
 double g_convergence_gap_pct = 0.0;
+// link_performance output detail (settings 'link_output'): 2 = full CSV (default:
+// per-link QVDF queue model + per-5-min speed profile + all columns), 1 = COMPACT
+// CSV (link_id/from/to/volume/doc/travel_time/speed/VMT), 3 = BINARY (same compact
+// fields, packed .bin -- fastest), 0 = none.
+int g_link_performance_output = 2;
+// Skip the OD-accessibility post-processing (OutputODPerformance +
+// GenerateAggregatedPerformanceAndAccessibility) -- the dominant cost on large
+// networks. settings 'accessibility_output' (default 1 = on; 0 = fast verify runs).
+int g_accessibility_output = 1;
+// In FULL output mode, run the expensive per-link Link_QueueVDF speed profile ONLY
+// for freeway links (link_type==1) carrying volume >= this threshold; other links
+// get zeroed QVDF columns. settings 'qvdf_volume_threshold' (default 0 = all links).
+double g_qvdf_volume_threshold = 0.0;
+// Shortest-path algorithm (settings 'sp_algorithm'): 1 = binary-heap Dijkstra
+// label-setting (DEFAULT -- equal-or-faster everywhere, ~20-50x faster on large
+// networks; correct since all VDFs give non-negative link costs); 0 = D'Esopo-Pape
+// deque label-correcting (legacy). Same FirstThruNode/mode/turn rules either way.
+int g_sp_algorithm = 1;
 // Number of CONSECUTIVE iterations the gap must stay below convergence_gap_pct
 // before stopping (ARC: gap < 1e-4 for 3 successive iters). Default 1 = stop on
 // the first iteration below the gap (previous behavior).
@@ -365,6 +390,80 @@ double*** MDDiffODflow;  // D^c - D^b
 double*** targetMDODflow; // for ODME
 
 double*** MDRouteCost;
+
+// ---- P0 efficiency trio (see github_taplite/docs/EFFICIENCY_STUDY.md) ----
+// L1 warm start: settings.csv 'warm_start_times' = path to a prior run's
+// link_performance CSV (compact or full) or link_performance.bin (DTLP,
+// link_output=3). Congested Travel_time is preloaded by EXTERNAL link id right
+// before the FIRST FindMinCostRoutes, so iteration-0 all-or-nothing routes on
+// congested instead of free-flow times. Only the STARTING POINT changes --
+// every later iteration recomputes costs from volumes normally, so the
+// equilibrium is unchanged. Default empty = off (bit-identical cold start).
+std::string g_warm_start_times_file;
+// ---- P1/P2 increments (see EFFICIENCY_STUDY.md P1/P2) ----
+// L2 warm start from FLOWS (settings 'warm_start_flows', default "" = off):
+// restore MainVolume + per-mode volumes from a DTLR link_flows.bin snapshot of
+// a prior run on the SAME demand and skip the iteration-0 all-or-nothing, so
+// Frank-Wolfe continues from the prior run's point. Guarded by a 16-byte
+// demand fingerprint stored in the snapshot: on mismatch the kernel warns
+// LOUDLY and demotes to L1 behavior (the snapshot flows only seed congested
+// TIMES, then a normal cold AoN start) -- never a silent restart from
+// incompatible flows.
+std::string g_warm_start_flows_file;
+// settings 'flow_snapshot' (default 0): 1 = write link_flows.bin (DTLR) at the
+// end of the run. Also written automatically when link_output=3.
+int g_flow_snapshot = 0;
+// settings 'column_output' (default 0) -- LEVELED:
+//   0 = off (default; bit-identical to the pre-feature kernel).
+//   1 = DTAC v1: the LAST-iteration shortest path per (mode,o,d) only --
+//       route_assignment parity, light (no in-memory pool, no per-iteration
+//       accumulation cost).
+//   2 = DTAC v2: the FULL theta-share column set (the L3 store, RECOMMENDED
+//       for the warm-start/rerun recipe). The in-memory pool accumulates the
+//       path SET across Frank-Wolfe iterations -- each iteration's
+//       all-or-nothing paths enter with the FW step weight (the same lambda
+//       cascade computeTheta() applies to route_assignment.csv), duplicate
+//       paths per (mode,o,d) merged by summing shares; per-path float theta
+//       (shares per OD sum to 1) + demand fingerprint on disk. A PARALLEL
+//       mechanism to the 5D linkIndices route store (route_output), untouched.
+//   3+ = reserved (future per-iteration/full trace); warns and behaves as 2.
+int g_column_output = 0;
+// L3 warm start from COLUMNS (settings 'warm_start_columns', default "" = off):
+// load a DTAC column store, scatter theta x CURRENT OD volume to
+// MainVolume/mode_MainVolume (demand may DIFFER from the stored fingerprint --
+// that is the point: theta over a path set is a demand-invariant routing
+// policy), drop paths crossing deleted/now-banned links (theta renormalized,
+// counted + warned), fall back to a one-shot all-or-nothing on warm times for
+// OD pairs with no stored column, then continue normal Frank-Wolfe from
+// iteration 1 (self-healing). With number_of_iterations=0 this is pure
+// freeze/replay. A fresh-shortest-path TRUE relative gap is ALWAYS reported so
+// replay output is never mistaken for equilibrium.
+std::string g_warm_start_columns_file;
+// settings 'column_adjust_sweeps' (default 0): after loading columns, N
+// fixed-policy gradient-projection sweeps that shift share between the STORED
+// paths of each (mode, origin, destination) toward the cheaper stored path
+// under current costs (costs recomputed between sweeps), WITHOUT any new
+// shortest-path call. The per-sweep gap is the RESTRICTED gap (stored paths
+// only); the mandatory fresh-SP TRUE gap is printed afterwards.
+int g_column_adjust_sweeps = 0;
+// SP-equivalence auto-detect (always on, exact): g_rep_mode[m] is the
+// representative mode whose shortest-path tree mode m consumes. Two modes are
+// SP-equivalent iff their mode_allowed_use masks AND per-link
+// mode_AdditionalCost vectors are identical on EVERY link (PCE/occupancy never
+// enter routing, so they never force a dedicated tree). rep==m computes its
+// own tree; members reuse it -- Minpath on identical inputs is deterministic,
+// so results are bit-identical, redundant solves are just skipped. A value of
+// 0 (never grouped) is treated as "own tree" for safety.
+int g_rep_mode[MAX_MODE_TYPES] = { 0 };
+int g_sp_scratch_row[MAX_MODE_TYPES] = { 0 };  // CostTo scratch row per mode within a processor block
+int g_sp_scratch_rows = 1;                     // rows per processor: 1 shared + 1 per shared-tree representative
+// Zero-demand-origin skip (per mode): Minpath is not called for a (mode,
+// origin) whose SP group carries no demand out of the origin, and the
+// MDRouteCost row is BIGM-filled directly (exactly what the full destination
+// loop would have produced with zero demand).
+char** g_mode_origin_active = NULL;   // [mode][orig] 1 iff any MDODflow[m][O][D] > 0.000001
+char** g_tree_origin_active = NULL;   // [rep mode][orig] 1 iff any member mode of the SP group is active
+
 /* Local Declarations */
 /* void FW(void); Should there be a function for fw, or should it be included in main? */
 static void Init(int input_number_of_modes, int input_no_zones);
@@ -422,16 +521,101 @@ public:
 
 vector<Node> g_node_vector;
 
+// Pre-allocated per-thread SSSP scratch, reused across ALL Minpath calls so no
+// malloc/free or fresh allocation happens per shortest-path computation. Sized once
+// (InitSPScratch) after the network is read; indexed by omp_get_thread_num().
+static std::vector<std::vector<int>> g_sp_QueueNext;                    // Pape deque
+static std::vector<std::vector<int>> g_sp_PrevLink;                     // arriving link
+static std::vector<std::vector<std::pair<double, int>>> g_sp_heap;      // Dijkstra heap
+static int g_sp_nnodes = 0;
+
+void InitSPScratch()
+{
+	// scratch is indexed by omp_get_thread_num(), so size by the OpenMP thread count
+	// (>= any concurrent thread id, independent of g_number_of_processors).
+	int nthreads = omp_get_max_threads();
+	if (nthreads < 1)
+		nthreads = 1;
+	g_sp_QueueNext.assign(nthreads, std::vector<int>(no_nodes + 1, INVALID));
+	g_sp_PrevLink.assign(nthreads, std::vector<int>(no_nodes + 1, INVALID));
+	g_sp_heap.assign(nthreads, std::vector<std::pair<double, int>>());
+	for (int t = 0; t < nthreads; t++)
+		g_sp_heap[t].reserve(2048);
+	g_sp_nnodes = no_nodes;
+}
+
+// Min-heap comparator for the reusable Dijkstra heap (smallest cost on top).
+static inline bool g_sp_heap_gt(const std::pair<double, int>& a, const std::pair<double, int>& b)
+{
+	return a.first > b.first;
+}
+
+// Label-setting SSSP: binary-heap Dijkstra (lazy deletion) on pre-allocated scratch.
+// Same FirstThruNode gating / mode_allowed_use / movement-restriction rules as the
+// deque Minpath (settings sp_algorithm=1). Each node settled once; correct for
+// non-negative link costs (BPR/conic/QVDF all >= 0).
+int Minpath_Dijkstra(int mode, int Orig, int* PredLink, double* CostTo)
+{
+	int tid = omp_get_thread_num();
+	int* PrevLink = g_sp_PrevLink[tid].data();
+	std::vector<std::pair<double, int>>& heap = g_sp_heap[tid];
+	heap.clear();
+
+	for (int node = 1; node <= no_nodes; node++)
+	{
+		CostTo[node] = BIGM;
+		PredLink[node] = INVALID;
+		PrevLink[node] = INVALID;
+	}
+	int origin = g_map_external_node_id_2_node_seq_no[Orig];
+	CostTo[origin] = 0.0;
+	heap.push_back(std::make_pair(0.0, origin));
+
+	while (!heap.empty())
+	{
+		std::pop_heap(heap.begin(), heap.end(), g_sp_heap_gt);
+		std::pair<double, int> top = heap.back();
+		heap.pop_back();
+		int now = top.second;
+		if (top.first > CostTo[now])
+			continue;                         // stale heap entry
+		if (!(now >= FirstThruNode || now == origin))
+			continue;                         // do not scan through a centroid/zone
+		for (int k = FirstLinkFrom[now]; k <= LastLinkFrom[now]; k++)
+		{
+			if (Link[k].mode_allowed_use[mode] == 0)
+				continue;
+			if (PrevLink[now] != INVALID && Link[PrevLink[now]].b_withmovement_restrictions == true)
+			{
+				if (IsMovementRestricted(PrevLink[now], k))
+					continue;
+			}
+			int NewNode = Link[k].internal_to_node_id;
+			double NewCost = CostTo[now] + Link[k].Travel_time + Link[k].mode_AdditionalCost[mode];
+			if (CostTo[NewNode] > NewCost)
+			{
+				CostTo[NewNode] = NewCost;
+				PredLink[NewNode] = k;
+				PrevLink[NewNode] = k;
+				heap.push_back(std::make_pair(NewCost, NewNode));
+				std::push_heap(heap.begin(), heap.end(), g_sp_heap_gt);
+			}
+		}
+	}
+	return 0;
+}
+
 int Minpath(int mode, int Orig, int* PredLink, double* CostTo)
 {
+	if (g_sp_algorithm == 1)
+		return Minpath_Dijkstra(mode, Orig, PredLink, CostTo);
 	int node, now, NewNode, k, Return2Q_Count = 0;
 	double NewCost;
-	int* QueueNext;
 	int QueueFirst, QueueLast;
-	int* PrevLink;
 
-	QueueNext = (int*)Alloc_1D(no_nodes, sizeof(int));
-	PrevLink = (int*)Alloc_1D(no_nodes, sizeof(int));
+	int tid = omp_get_thread_num();
+	int* QueueNext = g_sp_QueueNext[tid].data();   // pre-allocated, reused (no malloc)
+	int* PrevLink = g_sp_PrevLink[tid].data();
 
 	for (node = 1; node <= no_nodes; node++)
 	{
@@ -509,9 +693,6 @@ int Minpath(int mode, int Orig, int* PredLink, double* CostTo)
 		if (QueueLast == now)
 			QueueLast = INVALID;
 	}
-
-	free(QueueNext);
-	free(PrevLink);
 
 	return (Return2Q_Count);
 }
@@ -640,7 +821,12 @@ double FindMinCostRoutes(int*** MinPathPredLink)
 	// g_number_of_processors instead of no_zones removes the O(zones x nodes)
 	// growth with the OD count (the legacy accessibility code uses the same
 	// processor-indexed scratch trick). Each parallel iteration p owns row p.
-	CostTo = (double**)Alloc_2D(g_number_of_processors, no_nodes, sizeof(double));
+	// With SP-equivalence groups (g_rep_mode) a representative's cost row must
+	// additionally stay valid until its member modes have consumed it within the
+	// same origin iteration, so each processor owns g_sp_scratch_rows rows:
+	// row 0 is the shared immediate-consumption scratch, plus one retained row
+	// per representative that shares its tree (g_sp_scratch_row[m]).
+	CostTo = (double**)Alloc_2D(g_number_of_processors * g_sp_scratch_rows, no_nodes, sizeof(double));
 	StatusMessage("Minpath", "Starting the minpath calculations.");
 	double* system_least_travel_time_org_zone = (double*)Alloc_1D(no_zones, sizeof(double));
 
@@ -664,28 +850,54 @@ double FindMinCostRoutes(int*** MinPathPredLink)
 			if (g_mode_type_vector[m].dedicated_shortest_path == 0)  // skip the shortest path computing
 				continue;
 
-			if (g_has_movement_restrictions)
-				Minpath_TR(m, Orig, MinPathPredLink[m][Orig], g_MinPathPredLink_link[m][Orig], CostTo[p]);
-			else
-				Minpath(m, Orig, MinPathPredLink[m][Orig], CostTo[p]);
+			int rep = (g_rep_mode[m] >= 1) ? g_rep_mode[m] : m;   // SP-equivalence group representative
+			double* cost_row = CostTo[p * g_sp_scratch_rows + g_sp_scratch_row[m]];
+
+			if (rep == m)   // representative: computes the tree (SP-equivalent members reuse it)
+			{
+				// zero-demand-origin skip: no SP when neither this mode nor any
+				// member of its SP group has demand out of this origin. Exact:
+				// the destination loop below then BIGM-fills the row, which is
+				// precisely what the full loop produces with zero demand.
+				if (g_tree_origin_active == NULL || g_tree_origin_active[m][Orig])
+				{
+					if (g_has_movement_restrictions)
+						Minpath_TR(m, Orig, MinPathPredLink[m][Orig], g_MinPathPredLink_link[m][Orig], cost_row);
+					else
+						Minpath(m, Orig, MinPathPredLink[m][Orig], cost_row);
+				}
+			}
+			// else: SP-equivalent member -- rep (< m) already filled cost_row and
+			// MinPathPredLink[rep][Orig] for this origin; identical inputs make
+			// Minpath deterministic, so reuse is bit-identical.
+
 			if (MDRouteCost != NULL)
 			{
+				if (g_mode_origin_active != NULL && !g_mode_origin_active[m][Orig])
+				{
+					// no demand for (m, Orig): the loop below would leave every
+					// destination at BIGM (no MDODflow gate passes), so write
+					// that directly without consulting cost_row (possibly stale).
+					for (int Dest = 1; Dest <= no_zones; Dest++)
+						MDRouteCost[m][Orig][Dest] = BIGM;
+				}
+				else
 				for (int Dest = 1; Dest <= no_zones; Dest++)
 				{
 					MDRouteCost[m][Orig][Dest] = BIGM; // initialization
 
 					if (MDODflow[m][Orig][Dest] > 0.000001)
 					{
-						if (CostTo[p][Dest] < 0.0)
+						if (cost_row[Dest] < 0.0)
 							ExitMessage("Negative cost %lg from Origin %d to Destination %d.",
-								(double)CostTo[p][Dest], Orig, Dest);
+								(double)cost_row[Dest], Orig, Dest);
 
 						// CostTo is coded as internal node id
 						int  internal_node_id_for_destination_zone  = g_map_external_node_id_2_node_seq_no[Dest];
 
-						if (CostTo[p][internal_node_id_for_destination_zone] <= BIGM - 1)  // feasible cost
+						if (cost_row[internal_node_id_for_destination_zone] <= BIGM - 1)  // feasible cost
 						{
-							MDRouteCost[m][Orig][Dest] = CostTo[p][internal_node_id_for_destination_zone];
+							MDRouteCost[m][Orig][Dest] = cost_row[internal_node_id_for_destination_zone];
 
 							system_least_travel_time_org_zone[Orig] += MDRouteCost[m][Orig][Dest] * MDODflow[m][Orig][Dest] * g_mode_type_vector[m].pce;
 
@@ -710,7 +922,7 @@ double FindMinCostRoutes(int*** MinPathPredLink)
 
 
 	// free(CostTo);
-	Free_2D((void**)CostTo, g_number_of_processors, no_nodes);
+	Free_2D((void**)CostTo, g_number_of_processors * g_sp_scratch_rows, no_nodes);
 	free(system_least_travel_time_org_zone);
 	StatusMessage("Minpath", "Found all minpath.");
 	return system_least_travel_time;
@@ -1370,10 +1582,13 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 					//double total_FFTT = 0;
 
 					int _trace_hops = 0;
-					// mode slot holding this OD's predecessor tree (dedicated SP modes
-					// share mode 1's tree). prev_k drives the link-state back-trace when
+					// mode slot holding this OD's predecessor tree (legacy
+					// dedicated_shortest_path=0 modes share mode 1's tree;
+					// SP-equivalent modes share their group representative's tree,
+					// g_rep_mode). prev_k drives the link-state back-trace when
 					// turn restrictions are active.
-					int mpred = (g_mode_type_vector[m].dedicated_shortest_path == 0) ? 1 : m;
+					int mpred = (g_mode_type_vector[m].dedicated_shortest_path == 0)
+						? 1 : ((g_rep_mode[m] >= 1) ? g_rep_mode[m] : m);
 					int prev_k = INVALID;
 					while (CurrentNode != internal_node_for_origin_node)
 					{
@@ -1394,7 +1609,7 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 								printf("  CYCLE Orig=%d Dest=%d chain(node<-predlink->fromnode,cost):", Orig, Dest);
 								for (int hh = 0; hh < 50 && cn != internal_node_for_origin_node; hh++)
 								{
-									int kk = (g_mode_type_vector[m].dedicated_shortest_path == 0) ? MinPathPredLink[1][Orig][cn] : MinPathPredLink[m][Orig][cn];
+									int kk = MinPathPredLink[mpred][Orig][cn];
 									printf(" n%d<-L%d", cn, kk);
 									if (kk <= 0 || kk > number_of_links) { printf("(bad)"); break; }
 									printf("(tt=%.3f,from=%d)", Link[kk].Travel_time, Link[kk].internal_from_node_id);
@@ -2255,7 +2470,18 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 
 
 
-					if(no_zones <1000 || (no_zones>=1000 && od_volume >=1.0))
+					// Route-output volume floor: on large-zone networks (>=1000)
+					// only OD pairs with volume >= floor are written (file-size
+					// guard). Overridable via env TAPLITE_ROUTE_VOL_MIN so
+					// matrix-operator extraction (OD->path->link) can request
+					// full coverage. Default 1.0 preserves prior behavior.
+					static double route_vol_min = -1.0;
+					if (route_vol_min < 0.0)
+					{
+						const char* ev = getenv("TAPLITE_ROUTE_VOL_MIN");
+						route_vol_min = (ev != NULL) ? atof(ev) : 1.0;
+					}
+					if(no_zones <1000 || (no_zones>=1000 && od_volume >= route_vol_min))
 					{
 					// (Optional) Remove trailing semicolon from linkIDsStr if needed.
 					std::string cleanedLinkIDsStr = rd.linkIDsStr;
@@ -3162,6 +3388,10 @@ void read_settings_file()
 			parser_settings.GetValueByFieldName("demand_format", g_demand_format);
 			parser_settings.GetValueByFieldName("added_delay_per_mile", g_added_delay_per_mile);
 			parser_settings.GetValueByFieldName("convergence_gap_pct", g_convergence_gap_pct);
+			parser_settings.GetValueByFieldName("link_output", g_link_performance_output, false, false);
+			parser_settings.GetValueByFieldName("accessibility_output", g_accessibility_output, false, false);
+			parser_settings.GetValueByFieldName("qvdf_volume_threshold", g_qvdf_volume_threshold, false, false);
+			parser_settings.GetValueByFieldName("sp_algorithm", g_sp_algorithm, false, false);
 			parser_settings.GetValueByFieldName("convergence_consecutive", g_convergence_consecutive);
 			parser_settings.GetValueByFieldName("relative_gap_standard", g_relative_gap_standard);
 			parser_settings.GetValueByFieldName("assignment_method", g_assignment_method);
@@ -3169,10 +3399,31 @@ void read_settings_file()
 			parser_settings.GetValueByFieldName("odme_vmt", g_ODME_obs_VMT);
 			parser_settings.GetValueByFieldName("route_output", shortest_path_log_flag);
 			parser_settings.GetValueByFieldName("vehicle_output", vehicle_log_flag);
+			parser_settings.GetValueByFieldName("warm_start_times", g_warm_start_times_file, false);
+			parser_settings.GetValueByFieldName("warm_start_flows", g_warm_start_flows_file, false);
+			parser_settings.GetValueByFieldName("flow_snapshot", g_flow_snapshot, false, false);
+			parser_settings.GetValueByFieldName("column_output", g_column_output, false, false);
+			// Leveled: 0 off, 1 = DTAC v1 last-iteration paths, 2 = DTAC v2
+			// theta-share columns (L3), 3+ reserved -> behaves as 2 with a warning.
+			if (g_column_output >= 3)
+			{
+				printf("WARNING: column_output=%d is reserved for a future per-iteration trace level; treating it as 2 (DTAC v2 theta-share columns).\n",
+					g_column_output);
+				g_column_output = 2;
+			}
+			parser_settings.GetValueByFieldName("warm_start_columns", g_warm_start_columns_file, false);
+			parser_settings.GetValueByFieldName("column_adjust_sweeps", g_column_adjust_sweeps, false, false);
 
-			
-
-			
+			// L3 freeze/replay: number_of_iterations=0 normally means
+			// accessibility-only mode, but with warm_start_columns it means PURE
+			// REPLAY -- scatter the stored columns, run the (optional) adjustment
+			// sweeps, report the TRUE gap, write all normal outputs -- so keep
+			// the full assignment path alive.
+			if (TotalAssignIterations == 0 && !g_warm_start_columns_file.empty())
+			{
+				g_accessibility_only_mode = 0;
+				printf("warm_start_columns + number_of_iterations=0: FREEZE/REPLAY mode (no FW iterations; scatter + adjust sweeps + TRUE-gap report + normal outputs).\n");
+			}
 
 			break;
 		}
@@ -3321,8 +3572,1462 @@ void InitializeLinkIndices(int num_modes, int no_zones, int max_routes)
 	printf("Memmory creation time for 5D link path matrix: %lld hours %lld minutes %lld seconds %lld ms\n", hours.count(), minutes.count(), seconds.count(), milliseconds.count());
 }
 
+// SP-equivalence auto-detect (exact, always on): after all inputs are read,
+// group modes whose routing problems are IDENTICAL -- same mode_allowed_use
+// permission and same mode_AdditionalCost on every link. Members reuse the
+// representative's shortest-path tree in FindMinCostRoutes /
+// All_or_Nothing_Assign instead of recomputing it (bit-identical results,
+// redundant Minpath calls skipped). PCE/occupancy do not enter routing and
+// never split a group. Legacy manual dedicated_shortest_path=0 (hardcoded
+// "reuse mode 1") is left untouched and excluded from auto-grouping.
+static void BuildSPModeGroups()
+{
+	for (int m = 1; m <= number_of_modes; m++)
+	{
+		g_rep_mode[m] = m;
+		g_sp_scratch_row[m] = 0;
+	}
+
+	for (int m = 2; m <= number_of_modes; m++)
+	{
+		if (g_mode_type_vector[m].dedicated_shortest_path == 0)
+			continue;  // legacy manual reuse of mode 1; keep its existing code path
+
+		for (int r = 1; r < m; r++)
+		{
+			if (g_mode_type_vector[r].dedicated_shortest_path == 0 || g_rep_mode[r] != r)
+				continue;  // representative candidates only
+
+			bool same = true;
+			for (int k = 1; k <= number_of_links && same; k++)
+			{
+				if (Link[k].mode_allowed_use[r] != Link[k].mode_allowed_use[m] ||
+					Link[k].mode_AdditionalCost[r] != Link[k].mode_AdditionalCost[m])
+					same = false;
+			}
+
+			if (same)
+			{
+				g_rep_mode[m] = r;
+				break;
+			}
+		}
+	}
+
+	// CostTo scratch rows: row 0 is the shared immediate-consumption scratch;
+	// each representative whose tree is shared by members gets a private
+	// retained row so the member modes can consume it later in the mode loop.
+	g_sp_scratch_rows = 1;
+	for (int r = 1; r <= number_of_modes; r++)
+	{
+		if (g_rep_mode[r] != r)
+			continue;
+		bool has_member = false;
+		for (int m = r + 1; m <= number_of_modes; m++)
+			if (g_rep_mode[m] == r)
+				has_member = true;
+		if (has_member)
+		{
+			g_sp_scratch_row[r] = g_sp_scratch_rows++;
+			for (int m = r + 1; m <= number_of_modes; m++)
+				if (g_rep_mode[m] == r)
+					g_sp_scratch_row[m] = g_sp_scratch_row[r];
+		}
+	}
+
+	// always log the grouping -- silent cleverness loses trust
+	if (number_of_modes > 1)
+	{
+		std::string msg = "SP tree groups:";
+		for (int r = 1; r <= number_of_modes; r++)
+		{
+			if (g_mode_type_vector[r].dedicated_shortest_path == 0 || g_rep_mode[r] != r)
+				continue;
+			msg += " {" + g_mode_type_vector[r].mode_type;
+			for (int m = r + 1; m <= number_of_modes; m++)
+				if (g_rep_mode[m] == r)
+					msg += "," + g_mode_type_vector[m].mode_type;
+			msg += "} -> " + g_mode_type_vector[r].mode_type + ";";
+		}
+		for (int m = 1; m <= number_of_modes; m++)
+			if (g_mode_type_vector[m].dedicated_shortest_path == 0)
+				msg += " {" + g_mode_type_vector[m].mode_type + "} -> " + g_mode_type_vector[1].mode_type + " (manual dedicated_shortest_path=0);";
+		printf("%s\n", msg.c_str());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "%s\n", msg.c_str());
+	}
+}
+
+// Zero-demand-origin skip: precompute, per (mode, origin), whether any
+// destination carries demand (> 0.000001, the same gate FindMinCostRoutes
+// uses), and per SP-group representative whether any member mode is active.
+// FindMinCostRoutes then skips the Minpath call for inactive trees and
+// BIGM-fills the MDRouteCost row for inactive modes -- exactly what the full
+// computation produces when the demand row is zero.
+static void BuildOriginActivity()
+{
+	if (MDODflow == NULL)
+		return;
+
+	g_mode_origin_active = (char**)Alloc_2D(number_of_modes, no_zones, sizeof(char));
+	g_tree_origin_active = (char**)Alloc_2D(number_of_modes, no_zones, sizeof(char));
+
+	long long active_pairs = 0, total_pairs = 0;
+	for (int m = 1; m <= number_of_modes; m++)
+	{
+		for (int Orig = 1; Orig <= no_zones; Orig++)
+		{
+			char active = 0;
+			for (int Dest = 1; Dest <= no_zones; Dest++)
+			{
+				if (MDODflow[m][Orig][Dest] > 0.000001)
+				{
+					active = 1;
+					break;
+				}
+			}
+			g_mode_origin_active[m][Orig] = active;
+			total_pairs++;
+			if (active)
+				active_pairs++;
+		}
+	}
+
+	for (int m = 1; m <= number_of_modes; m++)
+	{
+		int rep = (g_rep_mode[m] >= 1) ? g_rep_mode[m] : m;
+		for (int Orig = 1; Orig <= no_zones; Orig++)
+			if (g_mode_origin_active[m][Orig])
+				g_tree_origin_active[rep][Orig] = 1;
+	}
+
+	printf("zero-demand-origin skip: %lld of %lld (mode, origin) pairs active\n",
+		active_pairs, total_pairs);
+	if (summary_log_file != NULL)
+		fprintf(summary_log_file, "zero-demand-origin skip: %lld of %lld (mode, origin) pairs active\n",
+			active_pairs, total_pairs);
+}
+
+// L1 warm start (settings 'warm_start_times', default empty = off): preload
+// congested Travel_time from a prior run's link_performance file -- compact or
+// full CSV (link_id + travel_time columns) or the DTLP binary written by
+// link_output=3 -- matching by EXTERNAL link id, never row order. GenCost is
+// recomposed exactly as Link_GenCost does (mode_AdditionalCost[1] +
+// Travel_time); Minpath itself reads Travel_time + mode_AdditionalCost[mode],
+// which is static, so nothing else needs refreshing. Called after the initial
+// UpdateLinkCost and before the first FindMinCostRoutes: the first
+// all-or-nothing routes on congested times, then every later iteration
+// recomputes costs from volumes normally -- only the starting point changes,
+// the equilibrium does not. Missing/unreadable file = loud warning, cold start.
+static void ApplyWarmStartTimes()
+{
+	if (g_warm_start_times_file.empty())
+		return;
+
+	std::map<int, int> ext_link_id_2_k;
+	for (int k = 1; k <= number_of_links; k++)
+		ext_link_id_2_k[Link[k].external_link_id] = k;
+
+	int matched = 0, records = 0;
+
+	// binary DTLP? (header magic 0x504C5444, int32 version, int32 n_links;
+	// per link: int32 link_id, from, to; float volume, doc, travel_time, speed, vmt)
+	FILE* f = NULL;
+	fopen_s(&f, g_warm_start_times_file.c_str(), "rb");
+	if (f == NULL)
+	{
+		printf("WARNING: warm_start_times file '%s' cannot be opened; starting cold.\n",
+			g_warm_start_times_file.c_str());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_times file '%s' cannot be opened; starting cold.\n",
+				g_warm_start_times_file.c_str());
+		return;
+	}
+
+	int magic = 0;
+	bool is_dtlp = (fread(&magic, sizeof(int), 1, f) == 1 && magic == 0x504C5444);
+	if (is_dtlp)
+	{
+		int version = 0, n_links_in = 0;
+		if (fread(&version, sizeof(int), 1, f) == 1 && fread(&n_links_in, sizeof(int), 1, f) == 1)
+		{
+			for (int i = 0; i < n_links_in; i++)
+			{
+				int ids[3];
+				float vals[5];
+				if (fread(ids, sizeof(int), 3, f) != 3 || fread(vals, sizeof(float), 5, f) != 5)
+					break;
+				records++;
+				std::map<int, int>::iterator it = ext_link_id_2_k.find(ids[0]);
+				if (it != ext_link_id_2_k.end() && vals[2] > 0.0f)
+				{
+					int k = it->second;
+					Link[k].Travel_time = vals[2];
+					Link[k].GenCost = Link[k].mode_AdditionalCost[1] + Link[k].Travel_time;
+					matched++;
+				}
+			}
+		}
+		fclose(f);
+	}
+	else
+	{
+		fclose(f);
+		// CSV: both compact and full link_performance formats carry
+		// link_id + travel_time columns; match by header name.
+		CDTACSVParser parser_warm;
+		if (!parser_warm.OpenCSVFile(g_warm_start_times_file, false))
+		{
+			printf("WARNING: warm_start_times file '%s' is not a DTLP .bin and cannot be parsed as CSV; starting cold.\n",
+				g_warm_start_times_file.c_str());
+			if (summary_log_file != NULL)
+				fprintf(summary_log_file, "WARNING: warm_start_times file '%s' unreadable; starting cold.\n",
+					g_warm_start_times_file.c_str());
+			return;
+		}
+		while (parser_warm.ReadRecord())
+		{
+			int link_id = -1;
+			double tt = -1;
+			if (!parser_warm.GetValueByFieldName("link_id", link_id, false) ||
+				!parser_warm.GetValueByFieldName("travel_time", tt, false))
+				continue;
+			records++;
+			std::map<int, int>::iterator it = ext_link_id_2_k.find(link_id);
+			if (it != ext_link_id_2_k.end() && tt > 0.0)
+			{
+				int k = it->second;
+				Link[k].Travel_time = tt;
+				Link[k].GenCost = Link[k].mode_AdditionalCost[1] + Link[k].Travel_time;
+				matched++;
+			}
+		}
+		parser_warm.CloseCSVFile();
+	}
+
+	printf("warm_start_times: preloaded congested times on %d of %d links (%d records read from '%s', %s)\n",
+		matched, number_of_links, records, g_warm_start_times_file.c_str(), is_dtlp ? "DTLP binary" : "CSV");
+	if (summary_log_file != NULL)
+		fprintf(summary_log_file, "warm_start_times: preloaded congested times on %d of %d links (%d records read from '%s', %s)\n",
+			matched, number_of_links, records, g_warm_start_times_file.c_str(), is_dtlp ? "DTLP binary" : "CSV");
+	if (matched == 0)
+	{
+		printf("WARNING: warm_start_times matched 0 links (id mismatch?); effectively a cold start.\n");
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_times matched 0 links (id mismatch?); effectively a cold start.\n");
+	}
+}
+
+// ---- P1: L2 warm start from FLOWS + DTLR flow snapshot ----
+// 16-byte demand fingerprint over the CURRENT OD table (MDODflow): {total
+// demand, positive-cell count, min zone id, max zone id touched by demand}
+// folded into 4 floats. Deterministic: fixed mode/origin/destination loop
+// order with a double accumulator, so identical demand inputs always fold to
+// identical bytes. Written into every DTLR snapshot; a warm_start_flows file
+// whose fingerprint differs from the current OD table triggers the loud L1
+// demotion in ApplyWarmStartFlows.
+static void ComputeDemandFingerprint(float fp[4])
+{
+	double sum = 0.0, cnt = 0.0;
+	int min_zone = 0, max_zone = 0;
+	if (MDODflow != NULL)
+	{
+		for (int m = 1; m <= number_of_modes; m++)
+			for (int Orig = 1; Orig <= no_zones; Orig++)
+				for (int Dest = 1; Dest <= no_zones; Dest++)
+				{
+					double v = MDODflow[m][Orig][Dest];
+					if (v > 0.0)
+					{
+						sum += v;
+						cnt += 1.0;
+						int lo = (Orig < Dest) ? Orig : Dest;
+						int hi = (Orig > Dest) ? Orig : Dest;
+						if (min_zone == 0 || lo < min_zone) min_zone = lo;
+						if (hi > max_zone) max_zone = hi;
+					}
+				}
+	}
+	fp[0] = (float)sum;
+	fp[1] = (float)cnt;
+	fp[2] = (float)min_zone;
+	fp[3] = (float)max_zone;
+}
+
+// DTLR flow snapshot writer (settings 'flow_snapshot'=1, or automatic with
+// link_output=3): link_flows.bin. Header: int32 magic 0x524C5444 ('DTLR'),
+// int32 version=1, int32 n_links, int32 n_modes, then the 16-byte demand
+// fingerprint (4 floats). Per link: int32 external_link_id; double MainVolume;
+// number_of_modes doubles of per-mode (pce-free) volume. Input format for
+// settings 'warm_start_flows'.
+static void WriteFlowSnapshotDTLR(const char* filename, double* MainVolume)
+{
+	FILE* f = NULL;
+	fopen_s(&f, filename, "wb");
+	if (f == NULL)
+	{
+		printf("WARNING: flow_snapshot: cannot open '%s' for writing; snapshot skipped.\n", filename);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: flow_snapshot: cannot open '%s' for writing; snapshot skipped.\n", filename);
+		return;
+	}
+	int hdr[4] = { 0x524C5444 /*'DTLR'*/, 1, number_of_links, number_of_modes };
+	fwrite(hdr, sizeof(int), 4, f);
+	float fp[4];
+	ComputeDemandFingerprint(fp);
+	fwrite(fp, sizeof(float), 4, f);
+	for (int k = 1; k <= number_of_links; k++)
+	{
+		fwrite(&Link[k].external_link_id, sizeof(int), 1, f);
+		fwrite(&MainVolume[k], sizeof(double), 1, f);
+		for (int m = 1; m <= number_of_modes; m++)
+			fwrite(&Link[k].mode_MainVolume[m], sizeof(double), 1, f);
+	}
+	fclose(f);
+	printf("flow_snapshot: wrote %s (DTLR v1, %d links, %d modes, demand fingerprint [%.6g, %.0f, %.0f, %.0f])\n",
+		filename, number_of_links, number_of_modes, fp[0], fp[1], fp[2], fp[3]);
+	if (summary_log_file != NULL)
+		fprintf(summary_log_file, "flow_snapshot: wrote %s (DTLR v1, %d links, %d modes, demand fingerprint [%.6g, %.0f, %.0f, %.0f])\n",
+			filename, number_of_links, number_of_modes, fp[0], fp[1], fp[2], fp[3]);
+}
+
+// L2 warm start from FLOWS (settings 'warm_start_flows', default "" = off).
+// Reads a DTLR snapshot and, when its demand fingerprint matches the CURRENT
+// OD table exactly, restores MainVolume + Link.mode_MainVolume by EXTERNAL
+// link id and returns true: the caller then skips the iteration-0
+// all-or-nothing entirely and Frank-Wolfe continues from the restored point
+// (a convex combination of AoN assignments of the same demand, so a valid FW
+// iterate). On ANY incompatibility -- unreadable file, wrong magic, mode-count
+// mismatch, or demand-fingerprint mismatch -- it warns LOUDLY and demotes to
+// L1 behavior: the snapshot flows are used ONLY to derive congested times
+// (Link_Travel_Time at the snapshot volumes, GenCost recomposed as in
+// ApplyWarmStartTimes), MainVolume is left at its cold initialization, and it
+// returns false so the normal cold AoN start runs. Never fails the run.
+static bool ApplyWarmStartFlows(double* MainVolume)
+{
+	if (g_warm_start_flows_file.empty())
+		return false;
+
+	FILE* f = NULL;
+	fopen_s(&f, g_warm_start_flows_file.c_str(), "rb");
+	if (f == NULL)
+	{
+		printf("WARNING: warm_start_flows file '%s' cannot be opened; starting cold.\n",
+			g_warm_start_flows_file.c_str());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_flows file '%s' cannot be opened; starting cold.\n",
+				g_warm_start_flows_file.c_str());
+		return false;
+	}
+
+	int hdr[4] = { 0, 0, 0, 0 };
+	float fp_in[4] = { 0, 0, 0, 0 };
+	if (fread(hdr, sizeof(int), 4, f) != 4 || hdr[0] != 0x524C5444 ||
+		fread(fp_in, sizeof(float), 4, f) != 4)
+	{
+		printf("WARNING: warm_start_flows file '%s' is not a DTLR flow snapshot (magic mismatch); starting cold.\n",
+			g_warm_start_flows_file.c_str());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_flows file '%s' is not a DTLR flow snapshot; starting cold.\n",
+				g_warm_start_flows_file.c_str());
+		fclose(f);
+		return false;
+	}
+	int n_links_in = hdr[2];
+	int n_modes_in = hdr[3];
+
+	float fp_now[4];
+	ComputeDemandFingerprint(fp_now);
+	bool fp_match = (fp_now[0] == fp_in[0] && fp_now[1] == fp_in[1] &&
+		fp_now[2] == fp_in[2] && fp_now[3] == fp_in[3]);
+	bool modes_match = (n_modes_in == number_of_modes);
+	bool restore = fp_match && modes_match;
+
+	if (!fp_match)
+	{
+		printf("WARNING: warm_start_flows '%s' demand fingerprint [%.6g, %.0f, %.0f, %.0f] does NOT match the current OD table [%.6g, %.0f, %.0f, %.0f].\n"
+			"         FALLING BACK to L1: snapshot flows seed congested TIMES only; a normal cold all-or-nothing start follows.\n",
+			g_warm_start_flows_file.c_str(), fp_in[0], fp_in[1], fp_in[2], fp_in[3],
+			fp_now[0], fp_now[1], fp_now[2], fp_now[3]);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_flows demand fingerprint mismatch (file [%.6g, %.0f, %.0f, %.0f] vs current [%.6g, %.0f, %.0f, %.0f]); demoted to L1 times-only warm start.\n",
+				fp_in[0], fp_in[1], fp_in[2], fp_in[3], fp_now[0], fp_now[1], fp_now[2], fp_now[3]);
+	}
+	if (!modes_match)
+	{
+		printf("WARNING: warm_start_flows '%s' has %d modes but the current run has %d; demoted to L1 times-only warm start.\n",
+			g_warm_start_flows_file.c_str(), n_modes_in, number_of_modes);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_flows mode-count mismatch (%d vs %d); demoted to L1 times-only warm start.\n",
+				n_modes_in, number_of_modes);
+	}
+
+	std::map<int, int> ext_link_id_2_k;
+	for (int k = 1; k <= number_of_links; k++)
+		ext_link_id_2_k[Link[k].external_link_id] = k;
+
+	// L1-demotion path accumulates snapshot volumes here (cold MainVolume kept).
+	std::vector<double> snap_vol;
+	if (!restore)
+	{
+		snap_vol.resize(number_of_links + 1);
+		for (int k = 1; k <= number_of_links; k++)
+			snap_vol[k] = MainVolume[k];
+	}
+
+	int matched = 0, records = 0, unmatched_file = 0;
+	std::vector<double> mode_vol(n_modes_in + 1, 0.0);
+	std::vector<char> link_matched(number_of_links + 1, 0);
+	for (int i = 0; i < n_links_in; i++)
+	{
+		int ext_id = 0;
+		double vol = 0.0;
+		if (fread(&ext_id, sizeof(int), 1, f) != 1 || fread(&vol, sizeof(double), 1, f) != 1)
+			break;
+		bool ok = true;
+		for (int m = 1; m <= n_modes_in; m++)
+			if (fread(&mode_vol[m], sizeof(double), 1, f) != 1) { ok = false; break; }
+		if (!ok)
+			break;
+		records++;
+		std::map<int, int>::iterator it = ext_link_id_2_k.find(ext_id);
+		if (it == ext_link_id_2_k.end())
+		{
+			if (vol > 0.0)
+				unmatched_file++;
+			continue;
+		}
+		int k = it->second;
+		matched++;
+		link_matched[k] = 1;
+		if (restore)
+		{
+			MainVolume[k] = vol;
+			for (int m = 1; m <= number_of_modes; m++)
+				Link[k].mode_MainVolume[m] = mode_vol[m];
+		}
+		else
+			snap_vol[k] = vol;
+	}
+	fclose(f);
+
+	if (matched == 0)
+	{
+		printf("WARNING: warm_start_flows matched 0 of %d snapshot links (id mismatch?); starting cold.\n", records);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_flows matched 0 of %d snapshot links; starting cold.\n", records);
+		return false;
+	}
+	if (unmatched_file > 0)
+	{
+		printf("WARNING: warm_start_flows: %d snapshot links carrying volume have no matching link in this network (network edited?); their flow is dropped.\n",
+			unmatched_file);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_flows: %d snapshot links with volume unmatched in this network; flow dropped.\n",
+				unmatched_file);
+	}
+
+	if (restore)
+	{
+		int unmatched_net = 0;
+		for (int k = 1; k <= number_of_links; k++)
+			if (!link_matched[k])
+				unmatched_net++;
+		if (unmatched_net > 0)
+			printf("WARNING: warm_start_flows: %d network links absent from the snapshot keep their cold initialization.\n", unmatched_net);
+		printf("warm_start_flows: restored flows on %d of %d links from '%s' (%d records, fingerprint match); iteration-0 all-or-nothing will be SKIPPED.\n",
+			matched, number_of_links, g_warm_start_flows_file.c_str(), records);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "warm_start_flows: restored flows on %d of %d links from '%s' (%d records, fingerprint match); iteration-0 AoN skipped.\n",
+				matched, number_of_links, g_warm_start_flows_file.c_str(), records);
+		if (shortest_path_log_flag)
+		{
+			printf("WARNING: warm_start_flows + route_output: iteration-0 paths are not stored, so route_assignment.csv prob shares cover post-warm-start iterations only.\n");
+			if (summary_log_file != NULL)
+				fprintf(summary_log_file, "WARNING: warm_start_flows + route_output: route_assignment prob shares cover post-warm-start iterations only.\n");
+		}
+		return true;
+	}
+
+	// L1 demotion: derive congested times at the snapshot volumes; volumes untouched.
+	for (int k = 1; k <= number_of_links; k++)
+	{
+		Link_Travel_Time(k, snap_vol.data());  // writes Link[k].Travel_time
+		Link[k].GenCost = Link[k].mode_AdditionalCost[1] + Link[k].Travel_time;
+	}
+	printf("warm_start_flows (L1 fallback): congested times derived from %d matched snapshot links; cold all-or-nothing start.\n", matched);
+	if (summary_log_file != NULL)
+		fprintf(summary_log_file, "warm_start_flows (L1 fallback): congested times derived from %d matched snapshot links; cold AoN start.\n", matched);
+	return false;
+}
+
+// ---- P2 increment 1: DTAC binary column store (settings 'column_output'=1) ----
+// route_columns.bin stores, per (mode, origin, destination) with positive
+// demand and a feasible route, the LAST-ITERATION shortest path -- i.e. the
+// FINAL all-or-nothing direction whose Frank-Wolfe step produced the reported
+// volumes -- as an external-link-id sequence, back-traced from MinPathPredLink
+// exactly like All_or_Nothing_Assign / route_assignment.csv (same mpred /
+// prev_k walk, same hop-cap guards). ROUTE_ASSIGNMENT PARITY ONLY: increment 1
+// does NOT store the full multi-path column set with theta shares (that is
+// increment 2 / the L3 warm start), so replaying these single paths against
+// the OD table reproduces the final AoN direction, not the FW-blended volumes.
+// Layout: header {int32 magic 0x43415444 'DTAC', int32 version=1,
+// int32 n_modes, int32 n_zones}; then for each mode m=1..n_modes and origin
+// O=1..n_zones (row-major, every (m,O) present) one sparse-CSR block:
+// {int32 n_dest; int32 dest_zone_id[n_dest]; int32 offsets[n_dest+1];
+// int32 external_link_ids[offsets[n_dest]]} with links in origin->destination
+// order. Reader/verifier: dtalite_qa/columns.py.
+static void WriteColumnsDTAC(const char* filename, int*** MinPathPredLink)
+{
+	FILE* f = NULL;
+	fopen_s(&f, filename, "wb");
+	if (f == NULL)
+	{
+		printf("WARNING: column_output=1 but '%s' cannot be opened for writing; column store skipped.\n", filename);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: column_output=1 but '%s' cannot be opened; column store skipped.\n", filename);
+		return;
+	}
+	int hdr[4] = { 0x43415444 /*'DTAC'*/, 1, number_of_modes, no_zones };
+	fwrite(hdr, sizeof(int), 4, f);
+
+	long long total_paths = 0, total_links = 0, skipped = 0;
+	std::vector<int> dests, offsets, links_out, path;
+	for (int m = 1; m <= number_of_modes; m++)
+	{
+		// mode slot holding this mode's predecessor tree: legacy
+		// dedicated_shortest_path=0 modes share mode 1's tree; SP-equivalent
+		// modes share their group representative's (g_rep_mode) -- identical
+		// to the All_or_Nothing_Assign back-trace.
+		int mpred = (g_mode_type_vector[m].dedicated_shortest_path == 0)
+			? 1 : ((g_rep_mode[m] >= 1) ? g_rep_mode[m] : m);
+		int cost_mode = (g_mode_type_vector[m].dedicated_shortest_path == 0) ? 1 : m;
+		for (int Orig = 1; Orig <= no_zones; Orig++)
+		{
+			dests.clear();
+			offsets.clear();
+			links_out.clear();
+			offsets.push_back(0);
+			bool orig_ok = (g_map_external_node_id_2_node_seq_no.find(Orig) != g_map_external_node_id_2_node_seq_no.end()
+				&& TotalOFlow[Orig] >= 0.00001 && zone_outbound_link_size[Orig] != 0);
+			if (orig_ok)
+			{
+				int internal_origin = g_map_external_node_id_2_node_seq_no[Orig];
+				for (int Dest = 1; Dest <= no_zones; Dest++)
+				{
+					if (Dest == Orig)
+						continue;
+					if (MDODflow[m][Orig][Dest] <= 0.0)
+						continue;
+					if (MDRouteCost[cost_mode][Orig][Dest] >= BIGM - 1)  // infeasible
+						continue;
+
+					path.clear();
+					int CurrentNode = g_map_external_node_id_2_node_seq_no[Dest];
+					int prev_k = INVALID;
+					int _trace_hops = 0;
+					int _hop_cap = g_has_movement_restrictions ? (number_of_links + 2) : (no_nodes + 2);
+					bool ok = true;
+					while (CurrentNode != internal_origin)
+					{
+						if (++_trace_hops > _hop_cap) { ok = false; break; }
+						int k;
+						if (g_has_movement_restrictions)
+							k = (prev_k == INVALID) ? MinPathPredLink[mpred][Orig][CurrentNode]
+							: g_MinPathPredLink_link[mpred][Orig][prev_k];
+						else
+							k = MinPathPredLink[mpred][Orig][CurrentNode];
+						if (k <= 0 || k > number_of_links) { ok = false; break; }
+						path.push_back(k);
+						CurrentNode = Link[k].internal_from_node_id;
+						prev_k = k;
+						if (CurrentNode <= 0 || CurrentNode > no_nodes) { ok = false; break; }
+					}
+					if (!ok || path.empty())
+					{
+						skipped++;
+						continue;
+					}
+					dests.push_back(Dest);
+					for (int i = (int)path.size() - 1; i >= 0; --i)  // reverse: origin -> destination
+						links_out.push_back(Link[path[i]].external_link_id);
+					offsets.push_back((int)links_out.size());
+				}
+			}
+			int n_dest = (int)dests.size();
+			fwrite(&n_dest, sizeof(int), 1, f);
+			if (n_dest > 0)
+			{
+				fwrite(dests.data(), sizeof(int), n_dest, f);
+				fwrite(offsets.data(), sizeof(int), n_dest + 1, f);
+				fwrite(links_out.data(), sizeof(int), links_out.size(), f);
+			}
+			total_paths += n_dest;
+			total_links += (long long)links_out.size();
+		}
+	}
+	fclose(f);
+	printf("column_output: wrote %s (DTAC v1, increment 1: last-iteration AoN path per OD) -- %lld paths, %lld link entries, %lld back-traces skipped\n",
+		filename, total_paths, total_links, skipped);
+	if (summary_log_file != NULL)
+		fprintf(summary_log_file, "column_output: wrote %s (DTAC v1, increment 1) -- %lld paths, %lld link entries, %lld skipped\n",
+			filename, total_paths, total_links, skipped);
+}
+
+// ---- P2 increment 2 (L3 full): theta-share column pool ----------------------
+// In-memory sparse-CSR-style pool of the path SET per (mode, origin,
+// destination). This is a PARALLEL mechanism to the 5D linkIndices route store
+// (route_output) -- that store is untouched. The pool is active when
+// column_output=1 (accumulation across FW iterations) and/or warm_start_columns
+// is set (loaded columns for scatter / adjustment sweeps).
+//
+// Theta bookkeeping uses the exact cascade computeTheta() applies to
+// route_assignment.csv: after a FW step of size lambda every stored share is
+// scaled by (1-lambda) and the new all-or-nothing path enters with share
+// lambda. The scaling is done in O(1) through the global multiplier g_col_mult
+// (effective theta = raw_theta * g_col_mult); duplicate paths merge by summing.
+struct ColPath
+{
+	std::vector<int> links;   // INTERNAL link ids, origin -> destination order
+	double raw_theta;
+};
+struct ColOD
+{
+	int dest;
+	std::vector<ColPath> paths;
+};
+static std::vector<std::vector<ColOD>> g_col_pool;  // row = (m-1)*no_zones + (Orig-1), ColODs sorted by dest
+static bool g_col_pool_active = false;
+static double g_col_mult = 1.0;
+
+static inline std::vector<ColOD>& ColPoolRow(int m, int Orig)
+{
+	return g_col_pool[(size_t)(m - 1) * no_zones + (Orig - 1)];
+}
+
+// find (or insert, keeping the row sorted by dest) the ColOD of a destination
+static ColOD* ColPoolFind(std::vector<ColOD>& row, int Dest, bool insert)
+{
+	std::vector<ColOD>::iterator it = std::lower_bound(row.begin(), row.end(), Dest,
+		[](const ColOD& a, int d) { return a.dest < d; });
+	if (it != row.end() && it->dest == Dest)
+		return &(*it);
+	if (!insert)
+		return NULL;
+	it = row.insert(it, ColOD());
+	it->dest = Dest;
+	return &(*it);
+}
+
+static void InitColumnPool()
+{
+	g_col_pool.assign((size_t)number_of_modes * no_zones, std::vector<ColOD>());
+	g_col_mult = 1.0;
+	g_col_pool_active = true;
+}
+
+static void FreeColumnPool()
+{
+	std::vector<std::vector<ColOD>>().swap(g_col_pool);
+	g_col_pool_active = false;
+	g_col_mult = 1.0;
+}
+
+// fold g_col_mult into the raw thetas so raw == effective (used before the
+// adjustment sweeps, which edit thetas in place, and on underflow guard)
+static void ColPoolFlatten()
+{
+	if (g_col_mult == 1.0)
+		return;
+	for (size_t r = 0; r < g_col_pool.size(); r++)
+		for (size_t d = 0; d < g_col_pool[r].size(); d++)
+			for (size_t j = 0; j < g_col_pool[r][d].paths.size(); j++)
+				g_col_pool[r][d].paths[j].raw_theta *= g_col_mult;
+	g_col_mult = 1.0;
+}
+
+// Back-trace the current shortest path (m-tree slot 'mpred', Orig -> Dest) from
+// MinPathPredLink into 'path' (internal link ids, origin->destination order).
+// Same mpred / g_rep_mode sharing, same link-state walk under turn restrictions
+// and the same hop-cap guards as All_or_Nothing_Assign. false = malformed tree.
+static bool TraceMinPath(int mpred, int Orig, int Dest, int*** MinPathPredLink, std::vector<int>& path)
+{
+	path.clear();
+	int internal_origin = g_map_external_node_id_2_node_seq_no[Orig];
+	int CurrentNode = g_map_external_node_id_2_node_seq_no[Dest];
+	int prev_k = INVALID;
+	int hops = 0;
+	int hop_cap = g_has_movement_restrictions ? (number_of_links + 2) : (no_nodes + 2);
+	while (CurrentNode != internal_origin)
+	{
+		if (++hops > hop_cap)
+			return false;
+		int k;
+		if (g_has_movement_restrictions)
+			k = (prev_k == INVALID) ? MinPathPredLink[mpred][Orig][CurrentNode]
+			: g_MinPathPredLink_link[mpred][Orig][prev_k];
+		else
+			k = MinPathPredLink[mpred][Orig][CurrentNode];
+		if (k <= 0 || k > number_of_links)
+			return false;
+		path.push_back(k);
+		CurrentNode = Link[k].internal_from_node_id;
+		prev_k = k;
+		if (CurrentNode <= 0 || CurrentNode > no_nodes)
+			return false;
+	}
+	if (path.empty())
+		return false;
+	std::reverse(path.begin(), path.end());
+	return true;
+}
+
+// Fold the CURRENT shortest-path trees into the column pool with FW step
+// weight 'lambda'. Called right after the line search of every iteration
+// (lambda = the step actually taken) and after the iteration-0 all-or-nothing
+// (lambda = 1.0). No-op unless column accumulation is on (column_output=1).
+static void ColumnPoolUpdate(double lambda, int*** MinPathPredLink)
+{
+	if (!g_col_pool_active || g_column_output < 2)
+		return;
+	if (lambda <= 0.0)
+		return;   // zero step: shares unchanged, the new AoN direction carries no mass
+
+	if (lambda >= 1.0 - 1e-12)
+	{
+		// full step: every previous share vanishes exactly
+		for (size_t r = 0; r < g_col_pool.size(); r++)
+			g_col_pool[r].clear();
+		g_col_mult = 1.0;
+		lambda = 1.0;
+	}
+	else
+	{
+		g_col_mult *= (1.0 - lambda);
+		if (g_col_mult < 1e-200)
+			ColPoolFlatten();  // underflow guard (rare)
+	}
+	double new_raw = lambda / g_col_mult;
+
+#pragma omp parallel for
+	for (int p = 0; p < g_number_of_processors; p++)
+	{
+		std::vector<int> path;
+		for (size_t i = 0; i < Processor_origin_zones[p].size(); i++)
+		{
+			int Orig = Processor_origin_zones[p][i];
+			if (TotalOFlow[Orig] < 0.00001 || zone_outbound_link_size[Orig] == 0)
+				continue;
+			for (int m = 1; m <= number_of_modes; m++)
+			{
+				int mpred = (g_mode_type_vector[m].dedicated_shortest_path == 0)
+					? 1 : ((g_rep_mode[m] >= 1) ? g_rep_mode[m] : m);
+				int cost_mode = (g_mode_type_vector[m].dedicated_shortest_path == 0) ? 1 : m;
+				std::vector<ColOD>& row = ColPoolRow(m, Orig);
+				for (int Dest = 1; Dest <= no_zones; Dest++)
+				{
+					if (Dest == Orig)
+						continue;
+					if (MDODflow[m][Orig][Dest] <= 0.0)
+						continue;
+					if (MDRouteCost[cost_mode][Orig][Dest] >= BIGM - 1)  // infeasible
+						continue;
+					if (!TraceMinPath(mpred, Orig, Dest, MinPathPredLink, path))
+						continue;
+					ColOD* od = ColPoolFind(row, Dest, true);
+					bool merged = false;
+					for (size_t j = 0; j < od->paths.size(); j++)
+						if (od->paths[j].links == path)
+						{
+							od->paths[j].raw_theta += new_raw;
+							merged = true;
+							break;
+						}
+					if (!merged)
+					{
+						od->paths.push_back(ColPath());
+						od->paths.back().links = path;
+						od->paths.back().raw_theta = new_raw;
+					}
+				}
+			}
+		}
+	}
+}
+
+// DTAC v2 writer (settings 'column_output'=1, increment 2 / L3 full): the FULL
+// column set with theta shares. Layout: header {int32 magic 0x43415444 'DTAC',
+// int32 version=2, int32 n_modes, int32 n_zones}, then the 16-byte demand
+// fingerprint (4 floats, ComputeDemandFingerprint); then for each mode
+// m=1..n_modes and origin O=1..n_zones (row-major, every (m,O) present) one
+// block: {int32 n_dest; int32 dest_zone_id[n_dest]; int32 path_offsets[n_dest+1]
+// (path_offsets[0]==0, n_paths = path_offsets[n_dest]); float theta[n_paths];
+// int32 link_offsets[n_paths+1]; int32 external_link_ids[link_offsets[n_paths]]
+// origin->destination order}. Thetas per (mode,O,D) sum to 1: they are
+// renormalized at write (the pre-normalization drift is reported -- it is fp
+// noise for a cold full run, and a REAL, loudly-warned share deficit when the
+// run was warm-started from flows so pre-warm-start iterations have no paths).
+static void WriteColumnsDTACv2(const char* filename)
+{
+	FILE* f = NULL;
+	fopen_s(&f, filename, "wb");
+	if (f == NULL)
+	{
+		printf("WARNING: column_output=1 but '%s' cannot be opened for writing; column store skipped.\n", filename);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: column_output=1 but '%s' cannot be opened; column store skipped.\n", filename);
+		return;
+	}
+	int hdr[4] = { 0x43415444 /*'DTAC'*/, 2, number_of_modes, no_zones };
+	fwrite(hdr, sizeof(int), 4, f);
+	float fp[4];
+	ComputeDemandFingerprint(fp);
+	fwrite(fp, sizeof(float), 4, f);
+
+	long long total_ods = 0, total_paths = 0, total_links = 0, dropped_tiny = 0;
+	double max_sum_dev = 0.0;   // max |sum(theta)-1| before renormalization
+	std::vector<int> dests, path_offsets, link_offsets, links_out;
+	std::vector<float> thetas;
+	for (int m = 1; m <= number_of_modes; m++)
+	{
+		for (int Orig = 1; Orig <= no_zones; Orig++)
+		{
+			dests.clear(); path_offsets.clear(); link_offsets.clear();
+			links_out.clear(); thetas.clear();
+			path_offsets.push_back(0);
+			link_offsets.push_back(0);
+			std::vector<ColOD>& row = ColPoolRow(m, Orig);
+			for (size_t d = 0; d < row.size(); d++)
+			{
+				ColOD& od = row[d];
+				double sum = 0.0;
+				for (size_t j = 0; j < od.paths.size(); j++)
+					sum += od.paths[j].raw_theta * g_col_mult;
+				if (sum <= 0.0 || od.paths.empty())
+					continue;
+				double dev = fabs(sum - 1.0);
+				if (dev > max_sum_dev)
+					max_sum_dev = dev;
+				int n_written = 0;
+				for (size_t j = 0; j < od.paths.size(); j++)
+				{
+					double eff = od.paths[j].raw_theta * g_col_mult / sum;  // renormalized
+					if (eff < 1e-7)   // negligible share: drop (mass goes to the kept paths on the reader side via sum-to-1)
+					{
+						dropped_tiny++;
+						continue;
+					}
+					thetas.push_back((float)eff);
+					for (size_t i = 0; i < od.paths[j].links.size(); i++)
+						links_out.push_back(Link[od.paths[j].links[i]].external_link_id);
+					link_offsets.push_back((int)links_out.size());
+					n_written++;
+				}
+				if (n_written == 0)
+				{
+					// all shares tiny (cannot happen with sum>0 unless fp weirdness): keep the largest
+					size_t jbest = 0;
+					for (size_t j = 1; j < od.paths.size(); j++)
+						if (od.paths[j].raw_theta > od.paths[jbest].raw_theta)
+							jbest = j;
+					thetas.push_back(1.0f);
+					for (size_t i = 0; i < od.paths[jbest].links.size(); i++)
+						links_out.push_back(Link[od.paths[jbest].links[i]].external_link_id);
+					link_offsets.push_back((int)links_out.size());
+					n_written = 1;
+				}
+				dests.push_back(od.dest);
+				path_offsets.push_back((int)thetas.size());
+			}
+			int n_dest = (int)dests.size();
+			fwrite(&n_dest, sizeof(int), 1, f);
+			if (n_dest > 0)
+			{
+				fwrite(dests.data(), sizeof(int), n_dest, f);
+				fwrite(path_offsets.data(), sizeof(int), n_dest + 1, f);
+				fwrite(thetas.data(), sizeof(float), thetas.size(), f);
+				fwrite(link_offsets.data(), sizeof(int), thetas.size() + 1, f);
+				fwrite(links_out.data(), sizeof(int), links_out.size(), f);
+			}
+			total_ods += n_dest;
+			total_paths += (long long)thetas.size();
+			total_links += (long long)links_out.size();
+		}
+	}
+	fclose(f);
+	printf("column_output: wrote %s (DTAC v2, theta-share column set) -- %lld OD pairs, %lld paths, %lld link entries; %lld negligible paths (<1e-7) dropped; max |sum(theta)-1| before renormalization = %.3g; demand fingerprint [%.6g, %.0f, %.0f, %.0f]\n",
+		filename, total_ods, total_paths, total_links, dropped_tiny, max_sum_dev, fp[0], fp[1], fp[2], fp[3]);
+	if (summary_log_file != NULL)
+		fprintf(summary_log_file, "column_output: wrote %s (DTAC v2) -- %lld OD pairs, %lld paths, %lld link entries; %lld tiny dropped; max |sum(theta)-1| pre-norm = %.3g\n",
+			filename, total_ods, total_paths, total_links, dropped_tiny, max_sum_dev);
+	if (max_sum_dev > 1e-3)
+	{
+		printf("WARNING: column_output: theta shares deviated from 1 by up to %.3g before renormalization -- expected when the run was warm-started (pre-warm iterations carry no stored paths); shares cover the stored iterations only.\n", max_sum_dev);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: column theta shares deviated from 1 by up to %.3g pre-normalization (warm start?).\n", max_sum_dev);
+	}
+}
+
+// L3 warm start from COLUMNS (settings 'warm_start_columns', default "" = off).
+// Loads a DTAC column store (v1 single-path or v2 theta-share), keeps it in the
+// in-memory pool, and scatters theta x CURRENT OD volume onto
+// MainVolume/mode_MainVolume. The CURRENT demand may DIFFER from the stored
+// fingerprint -- that is the point (rescale mode): theta over a path set is a
+// demand-invariant routing policy. Both fingerprints and the coverage % are
+// printed. Paths crossing links that no longer exist, are banned for the mode,
+// break the node chain, or violate a movement restriction are DROPPED with
+// theta renormalized over the survivors (counted + warned). OD pairs with
+// positive demand but no usable stored column fall back to a one-shot
+// all-or-nothing on the warm times implied by the scattered flows (those paths
+// join the pool with theta=1). Returns true when the scatter happened: the
+// caller then skips the iteration-0 all-or-nothing and Frank-Wolfe continues
+// from iteration 1 (self-healing). On unreadable/incompatible input it warns
+// LOUDLY and returns false (cold start) -- never fails the run.
+static bool ApplyWarmStartColumns(double* MainVolume, int*** MDMinPathPredLink)
+{
+	if (g_warm_start_columns_file.empty())
+		return false;
+
+	auto col_load_t0 = std::chrono::high_resolution_clock::now();  // SETUP: DTAC file read + pool build
+
+	FILE* f = NULL;
+	fopen_s(&f, g_warm_start_columns_file.c_str(), "rb");
+	if (f == NULL)
+	{
+		printf("WARNING: warm_start_columns file '%s' cannot be opened; starting cold.\n",
+			g_warm_start_columns_file.c_str());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_columns file '%s' cannot be opened; starting cold.\n",
+				g_warm_start_columns_file.c_str());
+		return false;
+	}
+	int hdr[4] = { 0, 0, 0, 0 };
+	if (fread(hdr, sizeof(int), 4, f) != 4 || hdr[0] != 0x43415444 /*'DTAC'*/)
+	{
+		printf("WARNING: warm_start_columns file '%s' is not a DTAC column store (magic mismatch); starting cold.\n",
+			g_warm_start_columns_file.c_str());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_columns file '%s' not DTAC; starting cold.\n",
+				g_warm_start_columns_file.c_str());
+		fclose(f);
+		return false;
+	}
+	int version = hdr[1], n_modes_in = hdr[2], n_zones_in = hdr[3];
+	if (version != 1 && version != 2)
+	{
+		printf("WARNING: warm_start_columns '%s' has unknown DTAC version %d (this kernel reads v1/v2); starting cold.\n",
+			g_warm_start_columns_file.c_str(), version);
+		fclose(f);
+		return false;
+	}
+	if (n_modes_in != number_of_modes)
+	{
+		printf("WARNING: warm_start_columns '%s' stores %d modes but the current run has %d -- mode semantics unknown; starting cold.\n",
+			g_warm_start_columns_file.c_str(), n_modes_in, number_of_modes);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_columns mode-count mismatch (%d vs %d); starting cold.\n",
+				n_modes_in, number_of_modes);
+		fclose(f);
+		return false;
+	}
+	float fp_in[4] = { 0, 0, 0, 0 };
+	bool has_fp = (version >= 2);
+	if (has_fp && fread(fp_in, sizeof(float), 4, f) != 4)
+	{
+		printf("WARNING: warm_start_columns '%s' truncated in the header; starting cold.\n",
+			g_warm_start_columns_file.c_str());
+		fclose(f);
+		return false;
+	}
+	float fp_now[4];
+	ComputeDemandFingerprint(fp_now);
+	if (has_fp)
+	{
+		bool fp_match = (fp_in[0] == fp_now[0] && fp_in[1] == fp_now[1] &&
+			fp_in[2] == fp_now[2] && fp_in[3] == fp_now[3]);
+		printf("warm_start_columns: stored demand fingerprint [%.6g, %.0f, %.0f, %.0f], CURRENT [%.6g, %.0f, %.0f, %.0f] -- %s (columns are rescaled to the CURRENT demand: theta is a demand-invariant policy, so a difference is expected and allowed).\n",
+			fp_in[0], fp_in[1], fp_in[2], fp_in[3], fp_now[0], fp_now[1], fp_now[2], fp_now[3],
+			fp_match ? "MATCH" : "DIFFER");
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "warm_start_columns: stored fp [%.6g, %.0f, %.0f, %.0f] vs current [%.6g, %.0f, %.0f, %.0f] (%s; rescale mode).\n",
+				fp_in[0], fp_in[1], fp_in[2], fp_in[3], fp_now[0], fp_now[1], fp_now[2], fp_now[3],
+				fp_match ? "match" : "differ");
+	}
+	else
+		printf("warm_start_columns: DTAC v1 file (no stored demand fingerprint, single path per OD, theta=1); current demand fingerprint [%.6g, %.0f, %.0f, %.0f].\n",
+			fp_now[0], fp_now[1], fp_now[2], fp_now[3]);
+	if (n_zones_in != no_zones)
+		printf("WARNING: warm_start_columns: stored n_zones %d != current %d; matching by zone id, out-of-range zones skipped.\n",
+			n_zones_in, no_zones);
+
+	std::unordered_map<int, int> ext_link_id_2_k;
+	ext_link_id_2_k.reserve((size_t)number_of_links * 2);
+	for (int k = 1; k <= number_of_links; k++)
+		ext_link_id_2_k[Link[k].external_link_id] = k;
+
+	if (!g_col_pool_active)
+		InitColumnPool();
+	ColPoolFlatten();
+
+	long long paths_read = 0, paths_kept = 0, paths_dropped = 0, ods_renormalized = 0;
+	long long stored_ods_read = 0, stored_ods_no_demand = 0;
+	bool truncated = false;
+	std::vector<int> dest_buf, poff_buf, loff_buf, link_buf;
+	std::vector<float> theta_buf;
+	std::vector<int> path_internal;
+	for (int m = 1; m <= n_modes_in && !truncated; m++)
+	{
+		for (int Orig = 1; Orig <= n_zones_in && !truncated; Orig++)
+		{
+			int n_dest = 0;
+			if (fread(&n_dest, sizeof(int), 1, f) != 1) { truncated = true; break; }
+			if (n_dest < 0 || n_dest > n_zones_in) { truncated = true; break; }
+			if (n_dest == 0)
+				continue;
+			dest_buf.resize(n_dest);
+			if (fread(dest_buf.data(), sizeof(int), n_dest, f) != (size_t)n_dest) { truncated = true; break; }
+			int n_paths_blk = 0;
+			if (version == 1)
+			{
+				// v1 block: offsets[n_dest+1] then links; one path per dest, theta=1
+				poff_buf.resize(n_dest + 1);
+				if (fread(poff_buf.data(), sizeof(int), n_dest + 1, f) != (size_t)(n_dest + 1)) { truncated = true; break; }
+				n_paths_blk = n_dest;
+				theta_buf.assign(n_dest, 1.0f);
+				loff_buf = poff_buf;                 // link offsets == v1 offsets
+				for (int j = 0; j <= n_dest; j++)
+					poff_buf[j] = j;                 // path offsets: 1 path per dest
+			}
+			else
+			{
+				poff_buf.resize(n_dest + 1);
+				if (fread(poff_buf.data(), sizeof(int), n_dest + 1, f) != (size_t)(n_dest + 1)) { truncated = true; break; }
+				n_paths_blk = poff_buf[n_dest];
+				if (n_paths_blk < 0) { truncated = true; break; }
+				theta_buf.resize(n_paths_blk);
+				loff_buf.resize(n_paths_blk + 1);
+				if (n_paths_blk > 0 && fread(theta_buf.data(), sizeof(float), n_paths_blk, f) != (size_t)n_paths_blk) { truncated = true; break; }
+				if (fread(loff_buf.data(), sizeof(int), n_paths_blk + 1, f) != (size_t)(n_paths_blk + 1)) { truncated = true; break; }
+			}
+			int n_links_blk = loff_buf.empty() ? 0 : loff_buf[n_paths_blk];
+			if (n_links_blk < 0) { truncated = true; break; }
+			link_buf.resize(n_links_blk);
+			if (n_links_blk > 0 && fread(link_buf.data(), sizeof(int), n_links_blk, f) != (size_t)n_links_blk) { truncated = true; break; }
+
+			if (Orig > no_zones ||
+				g_map_external_node_id_2_node_seq_no.find(Orig) == g_map_external_node_id_2_node_seq_no.end())
+				continue;   // origin zone gone from this network
+			int internal_origin = g_map_external_node_id_2_node_seq_no[Orig];
+			std::vector<ColOD>& row = ColPoolRow(m, Orig);
+			for (int d = 0; d < n_dest; d++)
+			{
+				int Dest = dest_buf[d];
+				stored_ods_read++;
+				if (Dest <= 0 || Dest > no_zones || Dest == Orig ||
+					g_map_external_node_id_2_node_seq_no.find(Dest) == g_map_external_node_id_2_node_seq_no.end())
+					continue;
+				if (MDODflow[m][Orig][Dest] <= 0.0)
+				{
+					stored_ods_no_demand++;
+					continue;   // stored policy for an OD the current demand does not use
+				}
+				int internal_dest = g_map_external_node_id_2_node_seq_no[Dest];
+				ColOD* od = NULL;
+				int kept_here = 0, dropped_here = 0;
+				for (int j = poff_buf[d]; j < poff_buf[d + 1]; j++)
+				{
+					paths_read++;
+					path_internal.clear();
+					bool ok = (loff_buf[j + 1] > loff_buf[j]);
+					int prev_k = INVALID, chain_node = internal_origin;
+					for (int i = loff_buf[j]; ok && i < loff_buf[j + 1]; i++)
+					{
+						std::unordered_map<int, int>::iterator it = ext_link_id_2_k.find(link_buf[i]);
+						if (it == ext_link_id_2_k.end()) { ok = false; break; }        // link no longer exists
+						int k = it->second;
+						if (Link[k].mode_allowed_use[m] == 0) { ok = false; break; }   // now banned for the mode
+						if (Link[k].internal_from_node_id != chain_node) { ok = false; break; }  // broken chain
+						if (g_has_movement_restrictions && prev_k != INVALID &&
+							Link[prev_k].b_withmovement_restrictions && IsMovementRestricted(prev_k, k))
+						{
+							ok = false; break;                                          // now-banned movement
+						}
+						path_internal.push_back(k);
+						chain_node = Link[k].internal_to_node_id;
+						prev_k = k;
+					}
+					if (ok && chain_node != internal_dest)
+						ok = false;
+					if (!ok)
+					{
+						paths_dropped++;
+						dropped_here++;
+						continue;
+					}
+					if (od == NULL)
+						od = ColPoolFind(row, Dest, true);
+					bool merged = false;
+					for (size_t jj = 0; jj < od->paths.size(); jj++)
+						if (od->paths[jj].links == path_internal)
+						{
+							od->paths[jj].raw_theta += (double)theta_buf[j];
+							merged = true;
+							break;
+						}
+					if (!merged)
+					{
+						od->paths.push_back(ColPath());
+						od->paths.back().links = path_internal;
+						od->paths.back().raw_theta = (double)theta_buf[j];
+					}
+					paths_kept++;
+					kept_here++;
+				}
+				if (kept_here > 0 && dropped_here > 0)
+					ods_renormalized++;   // survivors renormalized at scatter time (theta/sum)
+			}
+		}
+	}
+	fclose(f);
+	if (truncated)
+		printf("WARNING: warm_start_columns '%s' is truncated/corrupt; using the %lld paths read so far.\n",
+			g_warm_start_columns_file.c_str(), paths_kept);
+	if (paths_dropped > 0)
+	{
+		printf("WARNING: warm_start_columns: DROPPED %lld of %lld stored paths (deleted links / mode bans / broken chains / banned movements); theta renormalized over the survivors for %lld OD pairs.\n",
+			paths_dropped, paths_read, ods_renormalized);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_columns dropped %lld of %lld stored paths; theta renormalized for %lld ODs.\n",
+				paths_dropped, paths_read, ods_renormalized);
+	}
+	if (paths_kept == 0)
+	{
+		printf("WARNING: warm_start_columns: NO usable stored path matches this network/demand; starting cold.\n");
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: warm_start_columns: 0 usable paths; starting cold.\n");
+		return false;
+	}
+
+	{
+		std::chrono::duration<double> load_dur = std::chrono::high_resolution_clock::now() - col_load_t0;
+		printf("phase timing: DTAC column load + pool build (SETUP) = %.2f s\n", load_dur.count());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "phase timing: DTAC column load + pool build (SETUP) = %.2f s\n", load_dur.count());
+	}
+	auto col_scatter_t0 = std::chrono::high_resolution_clock::now();  // COMPUTE: scatter + uncovered AoN
+
+	// ---- scatter theta x CURRENT OD volume + find uncovered OD pairs ----
+	for (int k = 1; k <= number_of_links; k++)
+		for (int m = 1; m <= number_of_modes; m++)
+			Link[k].mode_MainVolume[m] = Link[k].mode_Base_demand_volume[m];
+	// (MainVolume[] already holds Base_demand_volume from the cold initialization)
+
+	long long covered_pairs = 0, uncovered_pairs = 0, unroutable_pairs = 0;
+	double covered_demand = 0.0, uncovered_demand = 0.0, unroutable_demand = 0.0;
+	std::vector<int> unc_m, unc_o, unc_d;    // uncovered OD list for the one-shot AoN
+	for (int m = 1; m <= number_of_modes; m++)
+	{
+		for (int Orig = 1; Orig <= no_zones; Orig++)
+		{
+			bool orig_ok = (g_map_external_node_id_2_node_seq_no.find(Orig) != g_map_external_node_id_2_node_seq_no.end()
+				&& TotalOFlow[Orig] >= 0.00001 && zone_outbound_link_size[Orig] != 0);
+			std::vector<ColOD>& row = ColPoolRow(m, Orig);
+			for (int Dest = 1; Dest <= no_zones; Dest++)
+			{
+				if (Dest == Orig)
+					continue;
+				double T = MDODflow[m][Orig][Dest];
+				if (T <= 0.0)
+					continue;
+				if (!orig_ok)
+				{
+					unroutable_pairs++;
+					unroutable_demand += T;
+					continue;   // same ODs All_or_Nothing_Assign drops
+				}
+				ColOD* od = ColPoolFind(row, Dest, false);
+				double sum = 0.0;
+				if (od != NULL)
+					for (size_t j = 0; j < od->paths.size(); j++)
+						sum += od->paths[j].raw_theta;
+				if (od == NULL || sum <= 0.0)
+				{
+					uncovered_pairs++;
+					uncovered_demand += T;
+					unc_m.push_back(m); unc_o.push_back(Orig); unc_d.push_back(Dest);
+					continue;
+				}
+				covered_pairs++;
+				covered_demand += T;
+				double pce = g_mode_type_vector[m].pce;
+				for (size_t j = 0; j < od->paths.size(); j++)
+				{
+					double share = od->paths[j].raw_theta / sum;
+					od->paths[j].raw_theta = share;      // store renormalized theta
+					double flow = share * T;
+					if (flow <= 0.0)
+						continue;
+					for (size_t i = 0; i < od->paths[j].links.size(); i++)
+					{
+						int k = od->paths[j].links[i];
+						MainVolume[k] += flow * pce;
+						Link[k].mode_MainVolume[m] += flow;
+					}
+				}
+			}
+		}
+	}
+
+	double total_demand = covered_demand + uncovered_demand + unroutable_demand;
+	printf("warm_start_columns: coverage %lld of %lld routable OD pairs (%.2f%%), %.1f of %.1f trips (%.2f%%); %lld stored ODs carried no current demand (skipped); %lld OD pairs (%.1f trips) have no stored column.\n",
+		covered_pairs, covered_pairs + uncovered_pairs,
+		100.0 * covered_pairs / fmax(1.0, (double)(covered_pairs + uncovered_pairs)),
+		covered_demand, total_demand,
+		100.0 * covered_demand / fmax(1e-9, total_demand),
+		stored_ods_no_demand, uncovered_pairs, uncovered_demand);
+	if (summary_log_file != NULL)
+		fprintf(summary_log_file, "warm_start_columns: coverage %lld/%lld OD pairs (%.2f%% of trips); %lld uncovered pairs -> one-shot AoN.\n",
+			covered_pairs, covered_pairs + uncovered_pairs,
+			100.0 * covered_demand / fmax(1e-9, total_demand), uncovered_pairs);
+	if (unroutable_pairs > 0)
+		printf("warm_start_columns: %lld OD pairs (%.1f trips) from zones with no outbound link are dropped (same as all-or-nothing).\n",
+			unroutable_pairs, unroutable_demand);
+
+	// ---- one-shot all-or-nothing on warm times for the uncovered OD pairs ----
+	if (!unc_m.empty())
+	{
+		if (covered_demand > 0.0)
+			UpdateLinkCost(MainVolume);   // warm times implied by the scattered flows
+		printf("warm_start_columns: routing %lld uncovered OD pairs with a one-shot all-or-nothing on warm times...\n",
+			(long long)unc_m.size());
+		FindMinCostRoutes(MDMinPathPredLink);
+		long long infeasible = 0;
+		std::vector<int> path;
+		for (size_t u = 0; u < unc_m.size(); u++)
+		{
+			int m = unc_m[u], Orig = unc_o[u], Dest = unc_d[u];
+			int mpred = (g_mode_type_vector[m].dedicated_shortest_path == 0)
+				? 1 : ((g_rep_mode[m] >= 1) ? g_rep_mode[m] : m);
+			int cost_mode = (g_mode_type_vector[m].dedicated_shortest_path == 0) ? 1 : m;
+			if (MDRouteCost[cost_mode][Orig][Dest] >= BIGM - 1 ||
+				!TraceMinPath(mpred, Orig, Dest, MDMinPathPredLink, path))
+			{
+				infeasible++;
+				continue;
+			}
+			double T = MDODflow[m][Orig][Dest];
+			double pce = g_mode_type_vector[m].pce;
+			for (size_t i = 0; i < path.size(); i++)
+			{
+				MainVolume[path[i]] += T * pce;
+				Link[path[i]].mode_MainVolume[m] += T;
+			}
+			ColOD* od = ColPoolFind(ColPoolRow(m, Orig), Dest, true);
+			od->paths.push_back(ColPath());
+			od->paths.back().links = path;
+			od->paths.back().raw_theta = 1.0;
+		}
+		if (infeasible > 0)
+			printf("WARNING: warm_start_columns: %lld uncovered OD pairs are infeasible on the current network (demand dropped, same as all-or-nothing).\n",
+				infeasible);
+	}
+
+	{
+		std::chrono::duration<double> scatter_dur = std::chrono::high_resolution_clock::now() - col_scatter_t0;
+		printf("phase timing: column scatter + uncovered one-shot AoN (COMPUTE) = %.2f s\n", scatter_dur.count());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "phase timing: column scatter + uncovered one-shot AoN (COMPUTE) = %.2f s\n", scatter_dur.count());
+	}
+	printf("warm_start_columns: restored %lld paths from '%s' (DTAC v%d); iteration-0 all-or-nothing will be SKIPPED; Frank-Wolfe continues from the scattered flows.\n",
+		paths_kept, g_warm_start_columns_file.c_str(), version);
+	if (summary_log_file != NULL)
+		fprintf(summary_log_file, "warm_start_columns: restored %lld paths (DTAC v%d); iteration-0 AoN skipped.\n",
+			paths_kept, version);
+	return true;
+}
+
+// Exact link-cost derivative dTravel_time/dVolume at the current volumes via a
+// forward difference on the ACTUAL VDF (any vdf_type) -- same pattern as
+// ApplyConjugateFW. Link_Travel_Time mutates Link[k].Travel_time, so restore it.
+static double ColLinkTTDer(int k, double* MainVolume)
+{
+	double v = MainVolume[k];
+	double keep_tt = Link[k].Travel_time;
+	double t0 = Link_Travel_Time(k, MainVolume);
+	double dv = fmax(1.0, fabs(v) * 1e-4);
+	MainVolume[k] = v + dv;
+	double t1 = Link_Travel_Time(k, MainVolume);
+	MainVolume[k] = v;
+	Link[k].Travel_time = keep_tt;
+	return fmax(0.0, (t1 - t0) / dv);
+}
+
+// restricted gap over the STORED paths at the current Link.Travel_time (read-only)
+static double ColRestrictedGap(void)
+{
+	double total_cost = 0.0, least_cost = 0.0;
+	for (int m = 1; m <= number_of_modes; m++)
+	{
+		double pce = g_mode_type_vector[m].pce;
+		for (int Orig = 1; Orig <= no_zones; Orig++)
+		{
+			std::vector<ColOD>& row = ColPoolRow(m, Orig);
+			for (size_t d = 0; d < row.size(); d++)
+			{
+				ColOD& od = row[d];
+				double T = MDODflow[m][Orig][od.dest];
+				if (T <= 0.0 || od.paths.empty())
+					continue;
+				double c_best = 1e30;
+				for (size_t j = 0; j < od.paths.size(); j++)
+				{
+					double cj = 0.0;
+					for (size_t i = 0; i < od.paths[j].links.size(); i++)
+					{
+						int k = od.paths[j].links[i];
+						cj += Link[k].Travel_time + Link[k].mode_AdditionalCost[m];
+					}
+					total_cost += od.paths[j].raw_theta * T * pce * cj;
+					if (cj < c_best)
+						c_best = cj;
+				}
+				least_cost += T * pce * c_best;
+			}
+		}
+	}
+	return (total_cost - least_cost) /
+		fmax(0.1, g_relative_gap_standard ? total_cost : least_cost) * 100.0;
+}
+
+// Fixed-policy gradient-projection adjustment (settings 'column_adjust_sweeps',
+// default 0): N sweeps over the loaded column pool that shift share from
+// costlier stored paths to the CHEAPEST stored path of each (mode, origin,
+// destination) under current costs, WITHOUT any new shortest-path call. The
+// flow shift per path is the classic GP (Newton) step min(movable flow,
+// cost difference / sum of exact link-cost derivatives over the two paths'
+// non-shared links). Sweeps are GAUSS-SEIDEL: after each OD's shift the
+// travel times of the touched links are re-evaluated from the actual VDF, so
+// later ODs see fresh costs (a frozen-cost simultaneous sweep overshoots and
+// diverges -- verified). The printed per-sweep gap is the RESTRICTED gap
+// (best of the STORED paths as the benchmark) -- it is NOT the true
+// equilibrium gap; the caller always prints the fresh-shortest-path TRUE gap
+// afterwards. Sweeps are serial (panel recommendation: shared-link write
+// hazards). Returns the final system-wide travel time (UpdateLinkCost applied
+// after the last sweep).
+static double RunColumnAdjustSweeps(double* MainVolume)
+{
+	ColPoolFlatten();
+	std::vector<int> stamp(number_of_links + 1, 0);
+	int stamp_cnt = 0;
+	double system_wide = 0.0;
+	for (int sweep = 1; sweep <= g_column_adjust_sweeps; sweep++)
+	{
+		auto sweep_t0 = std::chrono::high_resolution_clock::now();
+		double rgap_before = ColRestrictedGap();
+		long long shifts = 0;
+		double moved_flow = 0.0;
+		for (int m = 1; m <= number_of_modes; m++)
+		{
+			double pce = g_mode_type_vector[m].pce;
+			for (int Orig = 1; Orig <= no_zones; Orig++)
+			{
+				std::vector<ColOD>& row = ColPoolRow(m, Orig);
+				for (size_t d = 0; d < row.size(); d++)
+				{
+					ColOD& od = row[d];
+					double T = MDODflow[m][Orig][od.dest];
+					int nP = (int)od.paths.size();
+					if (T <= 0.0 || nP < 2)
+						continue;
+					// path costs under the CURRENT (Gauss-Seidel-fresh) link costs
+					double c_best = 1e30;
+					int jbest = 0;
+					std::vector<double> c(nP);
+					for (int j = 0; j < nP; j++)
+					{
+						double cj = 0.0;
+						for (size_t i = 0; i < od.paths[j].links.size(); i++)
+						{
+							int k = od.paths[j].links[i];
+							cj += Link[k].Travel_time + Link[k].mode_AdditionalCost[m];
+						}
+						c[j] = cj;
+						if (cj < c_best) { c_best = cj; jbest = j; }
+					}
+					ColPath& best = od.paths[jbest];
+					stamp_cnt++;
+					for (size_t i = 0; i < best.links.size(); i++)
+						stamp[best.links[i]] = stamp_cnt;
+					bool touched = false;
+					for (int j = 0; j < nP; j++)
+					{
+						if (j == jbest)
+							continue;
+						double theta_j = od.paths[j].raw_theta;
+						double diff = c[j] - c_best;
+						if (theta_j <= 0.0 || diff <= 1e-12)
+							continue;
+						// exact derivative sum over the two paths' NON-SHARED links
+						double s = 0.0;
+						for (size_t i = 0; i < od.paths[j].links.size(); i++)
+							if (stamp[od.paths[j].links[i]] != stamp_cnt)
+								s += ColLinkTTDer(od.paths[j].links[i], MainVolume);
+						for (size_t i = 0; i < best.links.size(); i++)
+						{
+							int k = best.links[i];
+							bool on_j = false;
+							for (size_t ii = 0; ii < od.paths[j].links.size(); ii++)
+								if (od.paths[j].links[ii] == k) { on_j = true; break; }
+							if (!on_j)
+								s += ColLinkTTDer(k, MainVolume);
+						}
+						double f_j = theta_j * T;
+						double dflow = (s * pce > 1e-12) ? fmin(f_j, diff / (s * pce)) : f_j;
+						if (dflow <= 0.0)
+							continue;
+						od.paths[j].raw_theta -= dflow / T;
+						best.raw_theta += dflow / T;
+						for (size_t i = 0; i < od.paths[j].links.size(); i++)
+						{
+							MainVolume[od.paths[j].links[i]] -= dflow * pce;
+							Link[od.paths[j].links[i]].mode_MainVolume[m] -= dflow;
+						}
+						for (size_t i = 0; i < best.links.size(); i++)
+						{
+							MainVolume[best.links[i]] += dflow * pce;
+							Link[best.links[i]].mode_MainVolume[m] += dflow;
+						}
+						shifts++;
+						moved_flow += dflow;
+						touched = true;
+					}
+					if (touched)
+					{
+						// Gauss-Seidel freshness: re-evaluate travel time on every
+						// link whose volume just changed (Link_Travel_Time writes
+						// Link[k].Travel_time), so subsequent ODs price correctly.
+						for (size_t j2 = 0; j2 < od.paths.size(); j2++)
+							for (size_t i = 0; i < od.paths[j2].links.size(); i++)
+								Link_Travel_Time((int)od.paths[j2].links[i], MainVolume);
+					}
+				}
+			}
+		}
+		system_wide = UpdateLinkCost(MainVolume);   // full cost re-sync between sweeps
+		double rgap_after = ColRestrictedGap();
+		std::chrono::duration<double> sweep_dur = std::chrono::high_resolution_clock::now() - sweep_t0;
+		printf("column_adjust sweep %d: RESTRICTED gap (STORED paths only, NOT the true equilibrium gap) %f %% -> %f %%, %lld share shifts, %.1f trips moved, %.2f s\n",
+			sweep, rgap_before, rgap_after, shifts, moved_flow, sweep_dur.count());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "column_adjust sweep %d: RESTRICTED gap (stored paths only) %f %% -> %f %%, %lld shifts, %.1f trips moved, %.2f s\n",
+				sweep, rgap_before, rgap_after, shifts, moved_flow, sweep_dur.count());
+	}
+	return system_wide;
+}
+
 int AssignmentAPI()
 {
+	auto api_setup_t0 = std::chrono::high_resolution_clock::now();  // SETUP timer (parse + reads + allocations)
 
 	fopen_s(&summary_log_file, "summary_log_file.txt", "w");
 
@@ -3382,7 +5087,9 @@ int AssignmentAPI()
 
 	Init(number_of_modes, no_zones);
 
-	if(g_accessibility_only_mode ==0) 
+	InitSPScratch();   // pre-allocate reusable per-thread shortest-path scratch buffers
+
+	if(g_accessibility_only_mode ==0)
 		 InitializeLinkIndices(number_of_modes, no_zones, TotalAssignIterations);
 
 	for (int i = 1; i <= no_nodes; i++)
@@ -3415,9 +5122,11 @@ int AssignmentAPI()
 			ComputeAccessibilityAndODCosts_v2("od_performance.csv");
 		}
 
-			return 0; 
+			return 0;
 		}
 
+	BuildSPModeGroups();    // exact SP-equivalence mode grouping (allowed_use + AdditionalCost)
+	BuildOriginActivity();  // per-(mode, origin) zero-demand skip tables
 
 	int iteration_no = 0;
 	int gap_below_count = 0;   // consecutive iterations with gap < convergence_gap_pct
@@ -3436,13 +5145,60 @@ int AssignmentAPI()
 	// Record the start time
 	auto start = std::chrono::high_resolution_clock::now();
 
+	// SETUP vs COMPUTE accounting (print-only): everything from AssignmentAPI
+	// entry to here is input parse + demand read + allocations. The DTAC column
+	// file load (warm_start_columns) is also SETUP and prints its own timer
+	// inside ApplyWarmStartColumns.
+	{
+		std::chrono::duration<double> setup_dur = start - api_setup_t0;
+		printf("phase timing: SETUP (network+demand parse, allocations) = %.2f s\n", setup_dur.count());
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "phase timing: SETUP (network+demand parse, allocations) = %.2f s\n", setup_dur.count());
+	}
+
 	for (int k = 1; k <= number_of_links; k++)
 	{
-		MainVolume[k] = Link[k].Base_demand_volume;  // assign the base volume  to main volume 
+		MainVolume[k] = Link[k].Base_demand_volume;  // assign the base volume  to main volume
 	}
 
 	system_wide_travel_time = UpdateLinkCost(MainVolume);  // set up the cost first using FFTT
 
+	ApplyWarmStartTimes();  // L1 warm start (no-op when settings 'warm_start_times' is empty)
+
+	// P2 increment 2: activate the column pool when column_output>=2 (DTAC v2
+	// theta-share level) so every FW iteration's AoN paths are folded in with
+	// the theta cascade. Level 1 (DTAC v1, last-iteration paths) needs no pool.
+	if (g_column_output >= 2)
+	{
+		InitColumnPool();
+		if (g_assignment_method > 0)
+			printf("WARNING: column_output with assignment_method=%d (CFW/BFW): theta shares use the plain-FW lambda cascade (same approximation route_assignment.csv uses); exact only for plain FW.\n",
+				g_assignment_method);
+		if (g_base_demand_mode == 1 && baselinkvolume_loaded_flag == 1)
+			printf("WARNING: column_output with base_demand_mode base volumes: theta shares cover the OD-table part of the flow only; base link volumes are not path-decomposed.\n");
+	}
+
+	// P2 L3 warm start from COLUMNS: takes precedence over warm_start_flows.
+	bool columns_restored = false;
+	if (!g_warm_start_columns_file.empty())
+	{
+		if (!g_warm_start_flows_file.empty())
+			printf("WARNING: both warm_start_columns and warm_start_flows are set; columns take precedence (warm_start_flows is used only if the column load fails).\n");
+		if (g_base_demand_mode == 1 && baselinkvolume_loaded_flag == 1)
+			printf("WARNING: warm_start_columns with base_demand_mode base volumes: columns scatter the FULL OD table on top of the base link volumes -- the diff-assignment contract is NOT applied.\n");
+		columns_restored = ApplyWarmStartColumns(MainVolume, MDMinPathPredLink);
+	}
+
+	// P1 L2 warm start: restore flows from a DTLR snapshot (no-op/false when
+	// 'warm_start_flows' is empty; false with L1-style times seeding when the
+	// snapshot's demand fingerprint does not match the current OD table).
+	bool flows_restored = columns_restored ? false : ApplyWarmStartFlows(MainVolume);
+	bool sp_trees_computed = false;  // MDMinPathPredLink validity (for column_output)
+
+	if (g_link_performance_output == 1)
+		fprintf(link_performance_file,
+			"iteration_no,link_id,from_node_id,to_node_id,volume,doc,travel_time,speed_mph,VMT\n");
+	else
 	fprintf(link_performance_file,
 		"iteration_no,link_id,from_node_id,to_node_id,volume,ref_volume,base_demand_volume,obs_volume,background_volume,"
 		"link_capacity,lane_capacity,D,doc,vdf_fftt,travel_time,vdf_alpha,vdf_beta,vdf_plf,speed_mph,speed_kmph,VMT,VHT,PMT,PHT,VHT_QVDF,PHT_QVDF,geometry,");
@@ -3460,6 +5216,7 @@ int AssignmentAPI()
 	fprintf(logfile, "\n");
 
 
+	if (g_link_performance_output != 1) {
 	for (int m = 1; m <= number_of_modes; m++)
 		fprintf(link_performance_file, "mod_vol_%s,", g_mode_type_vector[m].mode_type.c_str());
 
@@ -3477,9 +5234,13 @@ int AssignmentAPI()
 	}
 
 	fprintf(link_performance_file, "\n");
+	}
 
-	system_least_travel_time = FindMinCostRoutes(MDMinPathPredLink);
 	double gap;
+	if (!flows_restored && !columns_restored)
+	{
+	system_least_travel_time = FindMinCostRoutes(MDMinPathPredLink);
+	sp_trees_computed = true;
 	if(system_wide_travel_time>0)
 	{
 		gap = (system_wide_travel_time - system_least_travel_time) /
@@ -3490,19 +5251,67 @@ int AssignmentAPI()
 		int ii = 0;
 	}
 
-	printf("iter No = %d, sys. TT =  %lf, least TT =  %lf, gap = %f %%\n", iteration_no,
-		system_wide_travel_time, system_least_travel_time, gap);
-	fprintf(summary_log_file, "iter No = %d, sys. TT =  %lf, least TT =  %lf, gap = %f %%\n", iteration_no,
-		system_wide_travel_time, system_least_travel_time, gap);
+	{
+		std::chrono::duration<double> el = std::chrono::high_resolution_clock::now() - start;
+		printf("iter No = %d, sys. TT =  %lf, least TT =  %lf, gap = %f %%, elapsed = %.2f s\n", iteration_no,
+			system_wide_travel_time, system_least_travel_time, gap, el.count());
+		fprintf(summary_log_file, "iter No = %d, sys. TT =  %lf, least TT =  %lf, gap = %f %%, elapsed = %.2f s\n", iteration_no,
+			system_wide_travel_time, system_least_travel_time, gap, el.count());
+	}
 	}
 
 
 
 	All_or_Nothing_Assign(iteration_no, MDDiffODflow, MDMinPathPredLink, MainVolume);  // here we use MDDiffODflow as our OD search direction of D^c - D^b,
 
+	ColumnPoolUpdate(1.0, MDMinPathPredLink);  // iteration-0 paths enter the pool with share 1 (no-op unless column_output=1)
+
+	}
+	else if (flows_restored)
+	{
+		// P1 L2: MainVolume + per-mode volumes restored from the DTLR snapshot;
+		// the iteration-0 all-or-nothing is skipped and FW continues from here.
+		printf("warm_start_flows: iteration-0 all-or-nothing skipped; Frank-Wolfe continues from the restored flows.\n");
+		fprintf(summary_log_file, "warm_start_flows: iteration-0 AoN skipped; FW continues from restored flows.\n");
+		if (g_column_output >= 2)
+			printf("WARNING: warm_start_flows + column_output: the restored flows carry no path information, so column theta shares cover post-warm-start iterations only (renormalized at write, warned there too).\n");
+	}
 
 
 	system_wide_travel_time = UpdateLinkCost(MainVolume);
+
+	// P2 L3: fixed-policy adjustment sweeps + the MANDATORY fresh-shortest-path
+	// TRUE-gap report -- never let freeze/replay output masquerade as
+	// equilibrium. (With number_of_iterations=0 this is the whole run.)
+	if (columns_restored)
+	{
+		if (g_column_adjust_sweeps > 0)
+			system_wide_travel_time = RunColumnAdjustSweeps(MainVolume);
+		// Both gaps, clearly labeled, ALWAYS (also in freeze/replay with 0 sweeps):
+		// restricted = equilibration within the STORED path sets only; true = fresh
+		// shortest paths over the full route space. Never let the restricted number
+		// masquerade as equilibrium.
+		double restricted_gap = ColRestrictedGap();
+		system_least_travel_time = FindMinCostRoutes(MDMinPathPredLink);
+		sp_trees_computed = true;
+		double true_gap = (system_wide_travel_time - system_least_travel_time) /
+			fmax(0.1, g_relative_gap_standard ? system_wide_travel_time : system_least_travel_time) * 100;
+		printf("warm_start_columns: RESTRICTED gap (STORED paths only, NOT an equilibrium claim) = %f %%; TRUE relative gap (fresh shortest paths, full route space) = %f %% (sys. TT = %.1f, least TT = %.1f).\n",
+			restricted_gap, true_gap, system_wide_travel_time, system_least_travel_time);
+		fprintf(summary_log_file, "warm_start_columns: RESTRICTED gap (stored paths only) = %f %%; TRUE relative gap (fresh SP) = %f %% (sys TT %.1f, least TT %.1f).\n",
+			restricted_gap, true_gap, system_wide_travel_time, system_least_travel_time);
+		if (g_ODME_mode == 1)
+			printf("WARNING: odme_mode=1 with warm_start_columns: ODME walks the route_output store (linkIndices), which covers post-warm-start iterations only in this run; ODME proceeds on that basis.\n");
+		if (shortest_path_log_flag)
+			printf("WARNING: warm_start_columns + route_output: route_assignment.csv prob shares cover post-warm-start iterations only (the loaded columns live in the DTAC pool, not the route store).\n");
+	}
+	else if (g_column_adjust_sweeps > 0)
+	{
+		printf("WARNING: column_adjust_sweeps=%d but no columns were loaded (warm_start_columns empty or failed); sweeps skipped.\n",
+			g_column_adjust_sweeps);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "WARNING: column_adjust_sweeps=%d ignored (no columns loaded).\n", g_column_adjust_sweeps);
+	}
 
 	if (g_tap_log_file == 1)
 	{
@@ -3540,8 +5349,9 @@ int AssignmentAPI()
 	Lambda = 1;
 	for (iteration_no = 1; iteration_no < TotalAssignIterations; iteration_no++)
 	{
-		system_least_travel_time = FindMinCostRoutes(MDMinPathPredLink);  // the one right before the assignment iteration 
-		
+		system_least_travel_time = FindMinCostRoutes(MDMinPathPredLink);  // the one right before the assignment iteration
+		sp_trees_computed = true;
+
 		gap = (system_wide_travel_time - system_least_travel_time) /
 			fmax(0.1, g_relative_gap_standard ? system_wide_travel_time : system_least_travel_time) * 100;
 
@@ -3553,10 +5363,13 @@ int AssignmentAPI()
 			int ii = 0;
 		}
 
-		printf("iter No = %d, Lambda = %f, g_System_VMT = %.1f, sys. TT =  %.1f, least TT =  %.1f, gap = %f %%\n",
-			iteration_no, Lambda, g_System_VMT, system_wide_travel_time, system_least_travel_time, gap);
-		fprintf(summary_log_file, "iter No = %d, Lambda = %f, g_System_VMT = %f, sys. TT =  %lf, least TT =  %lf, gap = %f %% \n",
-			iteration_no, Lambda, g_System_VMT, system_wide_travel_time, system_least_travel_time, gap);
+		{
+			std::chrono::duration<double> el = std::chrono::high_resolution_clock::now() - start;
+			printf("iter No = %d, Lambda = %f, g_System_VMT = %.1f, sys. TT =  %.1f, least TT =  %.1f, gap = %f %%, elapsed = %.2f s\n",
+				iteration_no, Lambda, g_System_VMT, system_wide_travel_time, system_least_travel_time, gap, el.count());
+			fprintf(summary_log_file, "iter No = %d, Lambda = %f, g_System_VMT = %f, sys. TT =  %lf, least TT =  %lf, gap = %f %%, elapsed = %.2f s \n",
+				iteration_no, Lambda, g_System_VMT, system_wide_travel_time, system_least_travel_time, gap, el.count());
+		}
 
 		// Relative-gap stopping criterion: stop once the gap stays below the target
 		// for g_convergence_consecutive successive iterations (ARC: gap<1e-4 x3).
@@ -3599,8 +5412,13 @@ int AssignmentAPI()
 		ApplyConjugateFW(MainVolume, SubVolume, SDVolume, iteration_no);
 
 		Lambda = LinksSDLineSearch(MainVolume, SDVolume);
-	
+
 		m_lambda.push_back(Lambda);
+
+		// P2 increment 2: fold this iteration's AoN paths (trees of the
+		// FindMinCostRoutes above) into the column pool with the FW step weight
+		// -- the exact theta cascade. No-op unless column_output=1.
+		ColumnPoolUpdate(Lambda, MDMinPathPredLink);
 		// MSA options
 	 //   Lambda = 1.0 / (iteration_no + 1);
 
@@ -3681,9 +5499,12 @@ int AssignmentAPI()
 	if (g_ODME_mode == 1)
 		performODME(m_theta, MainVolume, Link);
 
-	OutputODPerformance("od_performance.csv");
+	if (g_accessibility_output)
+	{
+		OutputODPerformance("od_performance.csv");
 
-	GenerateAggregatedPerformanceAndAccessibility();
+		GenerateAggregatedPerformanceAndAccessibility();
+	}
 
 	if (shortest_path_log_flag)
 	{
@@ -3692,13 +5513,67 @@ int AssignmentAPI()
 			OutputVehicleDetails("vehicle.csv", m_theta);
 	}
 
+	// Leveled DTAC column store:
+	//   column_output=1 -> DTAC v1, the last-iteration path per OD (light,
+	//   route_assignment parity; back-traced from the final SP trees).
+	//   column_output>=2 -> DTAC v2, the accumulated theta-share path set
+	//   (plus any warm-started columns); falls back to the v1 writer only if
+	//   the pool was somehow never activated (defensive).
+	if (g_column_output == 1 || (g_column_output >= 2 && !g_col_pool_active))
+	{
+		if (!sp_trees_computed)
+		{
+			printf("column_output: shortest-path trees never built this run (warm start + <=1 iteration); computing them now.\n");
+			FindMinCostRoutes(MDMinPathPredLink);
+		}
+		WriteColumnsDTAC("route_columns.bin", MDMinPathPredLink);
+	}
+	else if (g_column_output >= 2)
+		WriteColumnsDTACv2("route_columns.bin");
+	FreeColumnPool();
+
 	// output link_performance.csv
+
+	// Binary compact output (link_output=3): link_performance.bin. Header "DTLP",
+	// int32 version, int32 n_links; then per link: int32 link_id,from,to; float
+	// volume,doc,travel_time,speed,vmt. Same fields as compact CSV, fastest to write.
+	FILE* link_bin_file = NULL;
+	if (g_link_performance_output == 3)
+	{
+		fopen_s(&link_bin_file, "link_performance.bin", "wb");
+		if (link_bin_file)
+		{
+			int hdr[3] = { 0x504C5444 /*'DTLP'*/, 1, number_of_links };
+			fwrite(hdr, sizeof(int), 3, link_bin_file);
+		}
+	}
 
 	for (int k = 1; k <= number_of_links; k++)
 	{
-
-
-
+		// Compact output (CSV=1 or binary=3): skip the per-link Link_QueueVDF queue
+		// simulation + speed profile (dominant cost on large nets); essentials only.
+		if (g_link_performance_output == 1 || g_link_performance_output == 3)
+		{
+			double Hh = fmax(demand_period_ending_hours - demand_period_starting_hours, 1e-6);
+			double lanes_eff = Link[k].Lane_Capacity > 0 ? Link[k].Link_Capacity / Link[k].Lane_Capacity : 1.0;
+			double plf_c = fmax(Link[k].VDF_plf, 1e-6);
+			double doc_c = Link[k].Lane_Capacity > 0
+				? (MainVolume[k] / fmax(lanes_eff, 1.0) / Hh / plf_c) / Link[k].Lane_Capacity : 0.0;
+			double spd_c = Link[k].length / fmax(Link[k].Travel_time / 60.0, 0.001);
+			double vmt_c = MainVolume[k] * Link[k].length;
+			if (g_link_performance_output == 3 && link_bin_file)
+			{
+				int ids[3] = { Link[k].external_link_id, Link[k].external_from_node_id, Link[k].external_to_node_id };
+				float vals[5] = { (float)MainVolume[k], (float)doc_c, (float)Link[k].Travel_time, (float)spd_c, (float)vmt_c };
+				fwrite(ids, sizeof(int), 3, link_bin_file);
+				fwrite(vals, sizeof(float), 5, link_bin_file);
+			}
+			else
+				fprintf(link_performance_file, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.3lf,%.4lf\n",
+					iteration_no, Link[k].external_link_id, Link[k].external_from_node_id,
+					Link[k].external_to_node_id, MainVolume[k], doc_c, Link[k].Travel_time, spd_c, vmt_c);
+			continue;
+		}
 
 		double P = 0;
 		double vt2 = Link[k].Cutoff_Speed;
@@ -3714,7 +5589,23 @@ int AssignmentAPI()
 		double avg_QVDF_period_speed = 0;
 		double IncomingDemand = 0;
 		double DOC = 0;
-		Link_QueueVDF(k, MainVolume[k], IncomingDemand, DOC, P, t0, t2, t3, vt2, mu, Q_gamma, congestion_ref_speed, avg_queue_speed, avg_QVDF_period_speed, Severe_Congestion_P, model_speed);
+		// Run the (expensive) QVDF queue model + speed profile only for freeway links
+		// (link_type==1) carrying volume >= qvdf_volume_threshold; other links get a
+		// free-flow speed profile and a cheap BPR-style DOC. (threshold 0 => all links)
+		bool do_qvdf = (Link[k].link_type == 1) && (MainVolume[k] >= g_qvdf_volume_threshold);
+		if (do_qvdf)
+			Link_QueueVDF(k, MainVolume[k], IncomingDemand, DOC, P, t0, t2, t3, vt2, mu, Q_gamma, congestion_ref_speed, avg_queue_speed, avg_QVDF_period_speed, Severe_Congestion_P, model_speed);
+		else
+		{
+			double Hh = fmax(demand_period_ending_hours - demand_period_starting_hours, 1e-6);
+			double lanes_eff = Link[k].Lane_Capacity > 0 ? Link[k].Link_Capacity / Link[k].Lane_Capacity : 1.0;
+			double plf_e = fmax(Link[k].VDF_plf, 1e-6);
+			IncomingDemand = MainVolume[k] / fmax(lanes_eff, 1.0) / Hh / plf_e;
+			DOC = Link[k].Lane_Capacity > 0 ? IncomingDemand / Link[k].Lane_Capacity : 0.0;
+			Severe_Congestion_P = 0.0;
+			double spd_e = Link[k].length / fmax(Link[k].Travel_time / 60.0, 0.001);
+			for (int i = 0; i < 300; i++) model_speed[i] = spd_e;
+		}
 
 
 		double VMT, VHT, PMT, PHT, VHT_QVDF, PHT_QVDF;
@@ -3765,6 +5656,14 @@ int AssignmentAPI()
 
 		fprintf(link_performance_file, "\n");
 	}
+
+	if (link_bin_file)
+		fclose(link_bin_file);
+
+	// P1: DTLR flow snapshot -- written at the end of EVERY run when
+	// link_output=3 or flow_snapshot=1; input for warm_start_flows.
+	if (g_flow_snapshot == 1 || g_link_performance_output == 3)
+		WriteFlowSnapshotDTLR("link_flows.bin", MainVolume);
 
 	free(MainVolume);
 	free(SubVolume);
@@ -3841,6 +5740,16 @@ static void CloseODflow(void)
 	Free_3D((void***)MDDiffODflow, number_of_modes, no_zones, no_zones);
 	Free_3D((void***)MDRouteCost, number_of_modes, no_zones, no_zones);
 
+	if (g_mode_origin_active != NULL)
+	{
+		Free_2D((void**)g_mode_origin_active, number_of_modes, no_zones);
+		g_mode_origin_active = NULL;
+	}
+	if (g_tree_origin_active != NULL)
+	{
+		Free_2D((void**)g_tree_origin_active, number_of_modes, no_zones);
+		g_tree_origin_active = NULL;
+	}
 }
 
 
@@ -4715,6 +6624,27 @@ double Link_Travel_Time(int k, double* Volume)
 		double C = fmax(0.0, Link[k].cycle_length);
 		double d_min = 0.5 * C * (1.0 - gc) * (1.0 - gc) / fmax(0.05, 1.0 - fmin(1.0, x) * gc) / 60.0;
 		Link[k].Travel_time = bpr + d_min;
+	}
+	else if (Link[k].VDF_type == 7)
+	{
+		// SCAG piecewise BPR (Validation Report Table 16-2). The exponent is set to
+		// SCAG_UNCONGESTED_BETA (=4.0) below capacity and to the calibrated per-link
+		// VDF_Beta (5/6/8, by facility x posted speed x area type) at/above capacity.
+		// The two branches meet at x=1 (both give t0*(1+alpha)), so t is continuous.
+		// VDF_Alpha is the table alpha (1.00 freeway, 0.80 others).
+		double x = IncomingDemand / fmax(0.1, Link[k].Lane_Capacity);
+		double e = (x <= 1.0) ? SCAG_UNCONGESTED_BETA : Link[k].VDF_Beta;
+		Link[k].Travel_time = Link[k].FreeTravelTime * (1.0 + Link[k].VDF_Alpha * pow(x, e));
+	}
+	else if (Link[k].VDF_type == 8)
+	{
+		// SCAG freeway on-ramp meter delay (Validation Report, facility 82/84):
+		//   t = L/FFS + [ (PLPHx/120) * 5.0 * (1 + x)^8 ] / 60   (hours -> stored in min)
+		// PLPHx = per-lane-per-hour flow = IncomingDemand; x = per-lane V/C. The bracket
+		// is a metered-queue delay that grows with the 8th power of the demand ratio.
+		double x = IncomingDemand / fmax(0.1, Link[k].Lane_Capacity);
+		double ramp_delay_hr = (IncomingDemand / 120.0) * 5.0 * pow(1.0 + x, 8.0) / 60.0;
+		Link[k].Travel_time = Link[k].FreeTravelTime + ramp_delay_hr * 60.0;
 	}
 	else
 	{
@@ -6794,16 +8724,12 @@ int mapmatchingAPI() {
 }
 
 
-// C-ABI exports for the shared library (DTALite.dll / .so / .dylib), loaded from Python via
-// ctypes — the Path4GMNS / DTALite package pattern. The extern "C" + PATH_ENGINE_API
-// (dllexport) declarations live in TAPLite.h; the kernel reads CSVs from the current working
-// directory and writes link_performance.csv there, so the caller sets the cwd before calling.
 void DTA_AssignmentAPI() {
-	AssignmentAPI();
+AssignmentAPI();
 }
 
 void DTA_SimulationAPI() {
-	SimulationAPI();
+SimulationAPI();
 }
 
 // Optional standalone executable entry point. Built only when BUILD_EXE is

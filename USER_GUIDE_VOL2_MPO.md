@@ -48,7 +48,7 @@ Beyond the Volume 1 schema, MPO runs use these fields (all optional, sensible de
 | file | field | MPO meaning |
 |---|---|---|
 | link.csv | `capacity` | **hourly per-lane** capacity (`= agency hourly cap`); period handled by `vdf_plf` (see §4) |
-| link.csv | `vdf_type` | `0` BPR · `1` conical · `2` QVDF · `3` BPR2 · `4` INRETS · `5` Akcelik · `6` SANDAG-signal |
+| link.csv | `vdf_type` | `0` BPR · `1` conical · `2` QVDF · `3` BPR2 · `4` INRETS · `5` Akcelik · `6` SANDAG-signal · `7` SCAG piecewise-BPR · `8` SCAG ramp-meter |
 | link.csv | `vdf_alpha,vdf_beta` | per-facility VDF coefficients (from the agency FACTYPE×ATYPE table) |
 | link.csv | `vdf_A` | modified-BPR linear term (ARC) |
 | link.csv | `vdf_plf` | **peak load factor** φ/L (the period-capacity convention — §4) |
@@ -137,6 +137,12 @@ empty/`all` = all modes; `hov2;hov3` = HOV-only; `trk` = truck-only/closed-to-au
 (via `toll_<mode>`), just at higher cost. The converter maps each agency's coding
 (ARC `PROHIBIT` 2/6/11→HOV, 4/10→truck; SANDAG `HOV`+`TOLL`; MTC `USE`/`FT8`) into
 `allowed_use` + toll.
+
+**Turn restrictions (`movement.csv`) are bans-only:** a movement row with
+`penalty >= 10` hard-bans that turn (exact link-state search); **`penalty < 10` is
+currently IGNORED — there are no graded/soft turn penalties yet** (planned; see
+WORK_PACKAGES WP-12). Don't encode TransCAD-style seconds-per-left-turn tables and
+expect them to apply.
 
 ---
 
@@ -229,11 +235,12 @@ validation tolerance:
    `vot=21.5`, `operating_cost=0.1729`.
 3. **Solve to equilibrium:** `convergence_gap_pct=0.5, convergence_consecutive=3`
    (or `assignment_method=2` for BFW). Converged at iter 10.
-4. **Validate:** region-wide %RMSE **23%** (target ~38%), all volume groups pass,
-   assigned/ref total = 1.00.
+4. **Validate:** region-wide %RMSE **22%** (target ~38%), all volume groups pass,
+   assigned/ref total = 1.00. *(Re-baselined 2026-07 from 23% after the Dijkstra-default
+   and standardized-gap kernel updates.)*
 
-Scripts: `private/ARC_Atlanta/{arc_benchmark.py, arc_calibrate.py, arc_validate_run.py}`;
-detail in `private/ARC_Atlanta/ARC_BENCHMARK.md`.
+Scripts: `examples/arc_atlanta/{arc_benchmark.py, arc_calibrate.py, arc_validate_run.py}`;
+detail in `examples/arc_atlanta/ARC_BENCHMARK.md` / `README.md`.
 
 ---
 

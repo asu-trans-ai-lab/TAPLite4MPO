@@ -10,6 +10,7 @@ commands:
 """
 import argparse
 import json
+import os
 import sys
 
 from . import validate as _validate
@@ -48,6 +49,13 @@ def main(argv=None):
     sp.add_argument("scenario")
     sp.add_argument("--exe", required=True)
     sp.add_argument("--out", default=None)
+    sp.add_argument("--override", default=None, metavar="WHO_WHY",
+                    help="bypass a non-READY intake gate; recorded in the run manifest")
+    sp.add_argument("--no-gate", action="store_true",
+                    help="skip the intake-gate check entirely (legacy behavior)")
+    sp = sub.add_parser("diff")
+    sp.add_argument("manifest_a", help="manifest.json of run A")
+    sp.add_argument("manifest_b", help="manifest.json of run B")
     sp = sub.add_parser("schema")
     sp.add_argument("--out", default=None, help="write field schema JSON to this path")
     sp = sub.add_parser("manifest")
@@ -61,8 +69,17 @@ def main(argv=None):
     sp.add_argument("scenario", help="inventory VDF_plf and flag a flat PLF")
     sp.add_argument("--period", default=None, help="MAG period profile for recommendations: AM/MD/PM/NT")
     sp.add_argument("--hours", type=float, default=None, help="override period length (hours)")
+    sp = sub.add_parser("columns")
+    sp.add_argument("run_dir", help="folder with route_columns.bin (DTAC), link_performance.csv, mode_type.csv + demand CSVs")
+    sp.add_argument("--dtac", default=None, help="explicit DTAC path (default: <run_dir>/route_columns.bin)")
     sp = sub.add_parser("demand-bin")
     sp.add_argument("scenario", help="convert the scenario's demand CSVs to .bin (set demand_format=1)")
+    sp = sub.add_parser("forensics")
+    sp.add_argument("scenario", help="detect data conventions / issues before any conversion")
+    sp.add_argument("--quick", action="store_true", help="skip large-file line counts")
+    sp.add_argument("--out", default=None, help="also write the report JSON here")
+    sp = sub.add_parser("tools")
+    sp.add_argument("--out", default=None, help="write the agent tool manifest JSON here")
     sp = sub.add_parser("intake")
     sp.add_argument("scenario", help="GMNS scenario to run the MPO data-intake audit on")
     sp.add_argument("--submission", default=None, help="declaration file (default: <scenario>/submission.yml)")
@@ -134,7 +151,6 @@ def main(argv=None):
         return 0
 
     if args.cmd == "manifest":
-        import os
         man = _manifest.build_manifest(args.scenario, kernel_version=args.kernel_version)
         out = args.out or os.path.join(args.scenario, "manifest.json")
         open(out, "w", encoding="utf-8").write(json.dumps(man, indent=2))
@@ -160,6 +176,13 @@ def main(argv=None):
               f"python -m dtalite_qa validate {args.out}")
         return 0
 
+    if args.cmd == "columns":
+        from . import columns as _columns
+        print(f"== columns {args.run_dir} ==")
+        rep = _columns.verify(args.run_dir, dtac_path=args.dtac)
+        print(_columns.render(rep))
+        return 0
+
     if args.cmd == "demand-bin":
         print(f"== demand-bin {args.scenario} ==")
         for df, binp, n in _demandbin.convert_scenario(args.scenario):
@@ -168,6 +191,25 @@ def main(argv=None):
             else:
                 print(f"  {df} -> {binp} ({n:,} pairs)")
         print("set demand_format=1 in settings.csv to read the .bin files")
+        return 0
+
+    if args.cmd == "forensics":
+        from . import forensics as _forensics
+        rep = _forensics.run(args.scenario, quick=args.quick)
+        print(_forensics.render(rep))
+        if args.out:
+            open(args.out, "w", encoding="utf-8").write(json.dumps(rep, indent=2))
+            print(f"\nreport JSON written to {args.out}")
+        return 1 if rep["counts"]["BLOCK"] else 0
+
+    if args.cmd == "tools":
+        from . import agent_tools as _agent_tools
+        text = _agent_tools.manifest()
+        if args.out:
+            open(args.out, "w", encoding="utf-8").write(text)
+            print(f"agent tool manifest written to {args.out}")
+        else:
+            print(text)
         return 0
 
     if args.cmd == "intake":
@@ -202,7 +244,7 @@ def main(argv=None):
         return 0 if s["overall"] in ("PASS", "WARN", "INCOMPLETE") else 1
 
     if args.cmd == "report":
-        import os
+
         rep = _report.build(args.run_dir)
         prefix = args.out or os.path.join(args.run_dir, "run_report")
         open(prefix + ".json", "w", encoding="utf-8").write(json.dumps(rep, indent=2))
@@ -213,7 +255,16 @@ def main(argv=None):
 
     if args.cmd == "run":
         print(f"== run {args.scenario} (QA gate -> kernel) ==")
-        result = _control.run(args.scenario, exe=args.exe, out_dir=args.out)
+        result = _control.run(args.scenario, exe=args.exe, out_dir=args.out,
+                              override=args.override,
+                              enforce_intake=not args.no_gate)
+        if result.get("gate_refusal"):
+            print(f"INTAKE GATE {result['intake_gate']}: {result['gate_refusal']}")
+            print("  (use --override \"who/why\" to bypass -- it will be recorded, "
+                  "or --no-gate for legacy behavior)")
+            return 1
+        if result.get("intake_gate") and result["intake_gate"] != "READY":
+            print(f"INTAKE GATE {result['intake_gate']} -- OVERRIDDEN: {result['override']}")
         _print_report(result["validate"])
         if not result["ok"]:
             print("ABORTED: validation failed; kernel not run.")
@@ -223,9 +274,26 @@ def main(argv=None):
         text, worst = _accessibility.render(result["accessibility"])
         print(text)
         if result.get("ran"):
+            # M1: emit the run manifest next to the outputs
+            import datetime as _dt
+            man = _manifest.build_run_manifest(
+                result["normalized"], scenario=args.scenario, exe=args.exe,
+                override=result.get("override"), intake_gate=result.get("intake_gate"),
+                created=_dt.datetime.now().isoformat(timespec="seconds"))
+            mp = os.path.join(result["normalized"], "manifest.json")
+            with open(mp, "w", encoding="utf-8") as f:
+                json.dump(man, f, indent=1)
             print(f"kernel exit={result['returncode']}; outputs in {result['normalized']}")
+            print(f"run manifest: {mp}")
             return 0 if result["returncode"] == 0 else 1
         return 1
+
+    if args.cmd == "diff":
+        a = json.load(open(args.manifest_a, encoding="utf-8"))
+        b = json.load(open(args.manifest_b, encoding="utf-8"))
+        d = _manifest.diff_manifests(a, b)
+        print(json.dumps(d, indent=1))
+        return 0 if d["identical"] else 2
 
     return 2
 

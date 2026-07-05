@@ -34,7 +34,7 @@ Climb in order — each rung teaches one new thing. See **[DATASET_LADDER.md](DA
 1. **Chicago Sketch** — minimum runnable assignment (BPR, one period). *Start here.*
 2. **Chicago Regional** — scale, binary demand, convergence, super-zones.
 3. **ARC Atlanta** — full agency reproduction (field mapping, modified BPR, PLF, classes, validation).
-4. **Chicago Downtown OSM** — public-data quick start (OSM → GMNS). *(planned)*
+4. **Tempe OSM** — public-data quick start (osm2gmns → gmns-ready → assignment → HTML map). *(built — see DATASET_LADDER Rung 4)*
 
 ---
 
@@ -138,9 +138,22 @@ daily capacity used hourly · persons loaded as vehicles · mph/kmh · m/mi/km �
 missing `dedicated_shortest_path` · broken centroid/zone ids · unsorted links · inaccessible
 OD · validating against the wrong volume column · super-zones before a trusted baseline.
 
+> **Full catalog:** [CONVERSION_ERRORS_CATALOG.md](CONVERSION_ERRORS_CATALOG.md) — every
+> error above with symptom → cause → correct convention → which agency it was seen in
+> (SCAG, ARC, GSATS, MAG, AZTDM), plus the order to check when a run looks wrong.
+
 ## Where to go next
+- **[RERUN_RECIPE.md](RERUN_RECIPE.md)** — the standard rerun recipe: rerunning ANY
+  model = L3 column warm start (`warm_start_columns`) to a 0.1% relative-gap target
+  (SCAG: 139x at 0.10%; sweeps only for tighter targets)
 - **[DATASET_LADDER.md](DATASET_LADDER.md)** — which example to start with
 - `examples/arc_atlanta/` — the agency-reproduction worked example
 - **[MPO_ONBOARDING_GUIDE.md](MPO_ONBOARDING_GUIDE.md)** — the detailed declare→…→workflow process
+- **[MPO_REVIEW_PANEL.md](MPO_REVIEW_PANEL.md)** — six simulated MPO reviewer personas
+  (TransCAD / Cube / Visum / small-MPO-OSM / QA / visualization) on this package, with the
+  prioritized P0-P2 improvement list; work packages: [WORK_PACKAGES.md](WORK_PACKAGES.md)
+- **Replication index** — `soft/README.md` (kernel repo root): six one-command
+  replications of every headline claim (regression 30/30, ARC 22%, Tempe OSM, calibration
+  recovery), independently verified 2026-07-04
 - **[USER_GUIDE_VOL2_MPO.md](../USER_GUIDE_VOL2_MPO.md)** — kernel mechanics & per-agency recipes
 - `docs/onboarding_guide.html` — the visual, click-through version of this path

@@ -11,7 +11,7 @@ multi-hour period, with the recommended PLF per facility type when an expansion-
 factor profile is supplied. A built-in MAG PM profile (from the "Capacity from
 Hourly to Period" table) is included as an example.
 
-BOUNDS (ADOT Load-Factor memo, ADOT VDF calibration project, 2022 -- the canonical reference):
+BOUNDS (ADOT Load-Factor memo, Belezamo/Zhou, Sep 2022 -- the canonical reference):
   * hard:      0 < PLF <= 1     (memo Sec 5: "LF between 0 and 1; 1 = flat").
   * physical:  phi = L*PLF >= 1 (a multi-hour period cannot carry LESS capacity
                than a single hour)  =>  PLF >= 1/L.

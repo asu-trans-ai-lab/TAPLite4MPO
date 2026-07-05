@@ -157,5 +157,7 @@ declared value is now on the record, reproducible, and reviewable.
 - [ ] the observed-count / reference-volume column for validation
 - [ ] a pointer to the agency's own assignment documentation (the ARC *Section 7* equivalent)
 
-See also: `peak_load_factor.md` (the PLF convention), `examples/arc_atlanta/` (a complete,
-correct submission), and `USER_GUIDE_VOL2_MPO.md` (the kernel mechanics).
+See also: **`CONVERSION_ERRORS_CATALOG.md`** (every convention error by category — symptom,
+cause, fix, and which agency it was seen in; read this before your first conversion),
+`peak_load_factor.md` (the PLF convention), `examples/arc_atlanta/` (a complete, correct
+submission), and `USER_GUIDE_VOL2_MPO.md` (the kernel mechanics).

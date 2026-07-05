@@ -1,0 +1,23 @@
+{
+  "directed": false,
+  "id_field": "ID",
+  "node_id_field": "ID",
+  "dir_field": "DIR",
+  "a_field": "FROM_ID",
+  "b_field": "TO_ID",
+  "length_field": "LENGTH",
+  "length_unit": "mi",
+  "speed_unit": "mph",
+  "capacity_basis": "per_lane",
+  "capacity_period_hours": 1,
+  "fields": {
+    "lanes":     {"ab": "ABLANES", "ba": "BALANES", "default": 1},
+    "speed":     {"ab": "POSTEDSPEE", "default": 30},
+    "factype":   {"ab": "HCMTYPE"},
+    "vdf_alpha": {"ab": "_ALPHA", "default": 0.15},
+    "vdf_beta":  {"ab": "_BETA",  "default": 4}
+  },
+  "connector": {"field": "HCMTYPE", "values": ["CC"]},
+  "zone_node_field": "CENTROID",
+  "row_filter": {"field": "DTWB", "contains": "D"}
+}
