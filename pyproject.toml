@@ -51,6 +51,14 @@ packages = ["dtalite_qa", "pytaplite"]
 dtalite_qa = ["templates/*.yml"]
 
 [tool.cibuildwheel]
-build = "cp38-* cp39-* cp310-* cp311-* cp312-*"
+# cp38 dropped: Python 3.8 is EOL (Oct 2024) and its macOS wheels default to the
+# macosx_10_9 platform tag, which a C++17 extension cannot satisfy -- delocate-wheel
+# rejected the cp38 repaired wheel in CI on the v0.2.0 tag. 3.8 users still get the sdist.
+build = "cp39-* cp310-* cp311-* cp312-*"
 skip = "*-musllinux_i686 *_i686 pp*"
 build-verbosity = 1
+
+[tool.cibuildwheel.macos]
+# C++17 needs a modern deployment target (arm64 requires >=11.0 anyway); this makes the
+# binary's min-OS match the wheel's platform tag so delocate accepts the repaired wheel.
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
