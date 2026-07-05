@@ -83,6 +83,69 @@ def _fld(cfg, row, name, direction):
     return v if v is not None else spec.get("default")
 
 
+def _fld_raw(cfg, row, name, direction):
+    """Read a field as a STRING (categorical facility type / class codes).
+
+    Numeric-coercing categorical labels (e.g. HCMType "Freeway") would silently
+    drop them via _fld -> None -> default. Use this for factype and other
+    non-numeric fields so agencies with string classes are preserved.
+    """
+    spec = cfg["fields"].get(name)
+    if spec is None:
+        return None
+    col = spec.get(direction) or spec.get("ab")
+    v = row.get(col) if col else None
+    if v is None:
+        return spec.get("default")
+    try:
+        if isinstance(v, float) and math.isnan(v):
+            return spec.get("default")
+    except (TypeError, ValueError):
+        pass
+    s = str(v).strip()
+    # a numeric factype like 12.0 should print as "12", not "12.0"
+    try:
+        f = float(s)
+        if f == int(f):
+            s = str(int(f))
+    except (TypeError, ValueError):
+        pass
+    return s if s != "" else spec.get("default")
+
+
+def _access_for(cfg, row):
+    """Map an agency access/prohibit code to (allowed_use, toll_flag) via the
+    config's reusable access_code_map preset (Cube PROHIBIT / TransCAD access
+    tables). Config block:
+        "access_code_map": {
+          "field": "PROHIBIT",
+          "codes": {"2": {"allowed_use": "hov2;hov3"}, "6": {"allowed_use": "hov3", ...}},
+          "toll_field": "TOLLAM", "toll_id_field": "TOLLID"   // optional numeric->toll
+        }
+    Returns (allowed_use_str, toll_flag_int). No block -> ("", 0)."""
+    acm = cfg.get("access_code_map")
+    if not acm:
+        return "", 0
+    fld = acm.get("field")
+    raw = row.get(fld) if fld else None
+    code = None
+    try:
+        code = str(int(float(raw)))
+    except (TypeError, ValueError):
+        code = None
+    entry = (acm.get("codes") or {}).get(code) if code is not None else None
+    allowed = (entry or {}).get("allowed_use", "")
+    toll = 1 if (entry or {}).get("toll") else 0
+    for tf in (acm.get("toll_field"), acm.get("toll_id_field")):
+        if tf:
+            try:
+                if float(row.get(tf) or 0) > 0:
+                    toll = 1
+            except (TypeError, ValueError):
+                pass
+    return allowed, toll
+
+
 def convert(links_path, config_path, out_dir, nodes_path=None):
     cfg = json.load(open(config_path, encoding="utf-8"))
     os.makedirs(out_dir, exist_ok=True)
@@ -92,6 +155,18 @@ def convert(links_path, config_path, out_dir, nodes_path=None):
     nodes = _read_table(nodes_path) if nodes_path else None
     log["steps"].append(f"read {len(links):,} link records" +
                         (f", {len(nodes):,} node records" if nodes is not None else ""))
+
+    # optional row filter: keep only rows where <field> CONTAINS a token (e.g. drive
+    # links have DTWB containing "D"; walk/bike/transit-only geometry is excluded).
+    #   "row_filter": {"field": "DTWB", "contains": "D"}
+    rf = cfg.get("row_filter")
+    if rf and rf.get("field") in links.columns:
+        tok = str(rf.get("contains", ""))
+        mask = links[rf["field"]].astype(str).str.contains(tok, na=False, regex=False)
+        kept = int(mask.sum())
+        log["steps"].append(
+            f"row_filter {rf['field']} contains {tok!r}: kept {kept:,} of {len(links):,}")
+        links = links[mask].reset_index(drop=True)
 
     node_id_col = cfg.get("node_id_field", "ID")
     if cfg.get("a_field") and cfg.get("b_field"):
@@ -144,6 +219,8 @@ def convert(links_path, config_path, out_dir, nodes_path=None):
     lid = 0
     n_rev = 0
 
+    has_access = bool(cfg.get("access_code_map"))
+
     def emit(r, fn, tn, d):
         nonlocal lid
         lid += 1
@@ -158,7 +235,7 @@ def convert(links_path, config_path, out_dir, nodes_path=None):
         fftt = _fld(cfg, r, "fftt_min", d)
         if not fftt or fftt <= 0:
             fftt = 60.0 * length_mi / max(mph, 1e-6)
-        rows.append({
+        rec = {
             "link_id": lid, "from_node_id": newid[int(fn)], "to_node_id": newid[int(tn)],
             "link_type": 100 if is_conn else 2,
             "lanes": 1 if is_conn else lanes,
@@ -169,9 +246,14 @@ def convert(links_path, config_path, out_dir, nodes_path=None):
             "vdf_alpha": _fld(cfg, r, "vdf_alpha", d) or 0.15,
             "vdf_beta": _fld(cfg, r, "vdf_beta", d) or 4,
             "vdf_plf": 1,
-            "factype": _fld(cfg, r, "factype", d) or "",
+            "factype": _fld_raw(cfg, r, "factype", d) or "",
             "org_link_id": r.get(cfg.get("id_field", "ID")),
-        })
+        }
+        if has_access:
+            au, toll = _access_for(cfg, r)
+            rec["allowed_use"] = au
+            rec["toll_flag"] = toll
+        rows.append(rec)
 
     for i, (_, r) in enumerate(links.iterrows()):
         fn, tn = A[i], B[i]

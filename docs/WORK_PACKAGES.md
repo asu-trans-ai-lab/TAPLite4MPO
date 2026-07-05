@@ -12,7 +12,12 @@ package (WP-13).
 
 ## P0 — blocks adoption
 
-**WP-01 · ◐ TransCAD converter (one engine: `dtalite_qa/net2gmns.py`)** — core DONE 2026-07-04
+**WP-01 · ✅ TransCAD converter (one engine: `dtalite_qa/net2gmns.py`)** — VERIFIED 2026-07-04
+on a full real model: **TRMG2 (Triangle Regional Model, TransCAD 9) → 75,939 drive links,
+EXACT match to an independent net.net decode**; transcad_bin parsed master_links.BIN at
+135k×50-field scale; converted GMNS converged 0.044%/24it. Second public agency example
+after ARC: `examples/trmg2/` + `docs/TRMG2_CONVERSION_REVIEW.md` (count validation deferred
+pending agency OMX — interim demand + daily-vs-AM basis, honest two-tier framing).
 Config-driven (JSON = machine-readable submission.yml twin): AB_/BA_ field pairs + DIR
 split, geometry-endpoint A/B derivation, units, capacity basis/period → per-lane hourly,
 connector codes, zone-field centroid renumbering (with exclusion values), emits
@@ -33,11 +38,13 @@ convenience for public GitHub repos only; the `.dln/.pts` geometry-sidecar reade
 DESCOPED (unnecessary under the shapefile ask); binary `.mtx`/`.mat` are out of scope.
 Remaining: SCAG config re-validation.
 
-**WP-02 · ◐ Cube converter (same engine, `"directed": true`)** — M
-Cube's directed A/B exports are the same conversion minus the DIR split — covered by
-net2gmns config. Remaining: the PROHIBIT-style access-code table preset
-(`allowed_use`/`toll_*` mapping) + ARC re-derivation byte-compare; ARC validation gate
-= **22% RMSE** (re-baselined 2026-07 from 23% after the Dijkstra/gap kernel updates).
+**WP-02 · ✅ Cube converter + access-code preset** — DONE 2026-07-04
+Cube directed A/B exports = net2gmns config minus the DIR split. The PROHIBIT-style
+**`access_code_map` preset** is now in `net2gmns.py` (agencies declare code→allowed_use/
+toll instead of writing Python). *Verified:* ARC re-derived via net2gmns + preset =
+**146,177 links vs reference 145,971 (99.9%)**, access mapping applied; GSATS 0-mismatch
+regression intact. (Small link-count delta = closed-in-period filtering config, not the
+access logic.)
 
 **WP-03 · ◐ Matrix interchange (`dtalite_qa/matrixio.py`)** — core DONE 2026-07-04
 Wide/square CSV + long CSV import (stdlib), OMX import/export (guarded optional dep),

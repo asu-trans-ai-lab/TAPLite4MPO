@@ -1,0 +1,32 @@
+# TRMG2 (Triangle Regional Model G2) — declared conventions for the TAPLite intake gate.
+# Public model (WSP / Triangle-Modeling-and-Analytics, TransCAD 9). Derived GMNS + this
+# recipe are shareable; raw TransCAD .dbd/.BIN/.dln binaries are NOT redistributed.
+
+network:
+  source: shapefile derived from the TRMG2 master network (.dbd/.dln geometry + .BIN attrs)
+  length_unit: mi            # LENGTH in miles -> vdf_length_mi
+  speed_unit: mph            # POSTEDSPEE in mph
+  capacity_basis: per_lane   # per-lane capacity (net2gmns_trmg2.json)
+  capacity_period: hourly
+  directionality: directed   # FROM_ID/TO_ID + DIR split (ABLANES/BALANES)
+  drive_filter: DTWB contains 'D' (drops walk/bike/transit-only geometry)
+
+zones:
+  zone_id_basis: node CENTROID > 0, renumbered 1..Z (org ids kept)
+
+demand:
+  demand_kind: vehicle_trips
+  status: INTERIM converted OD (single AM SOV period) -- NOT the agency OMX
+  period: AM 1-hour (interim)
+  agency_omx_pending: true
+  load_when_available: "python -m dtalite_qa.matrixio <agency>.omx --scenario gmns --out demand.csv"
+
+vdf:
+  vdf_source: TRMG2 _ALPHA/_BETA fields (BPR); confirm form vs the model documentation
+
+validation:
+  count_field: DailyCount        # + DailyCountSUT / DailyCountMUT (daily AWDT)
+  screenline_field: Screenline
+  cutline_field: Cutline
+  status: DEFERRED -- meaningful only with the agency OMX demand AND a matching
+    count basis (daily, or counts scaled to the run period). See CONVERSION_ERRORS_CATALOG 2b.
