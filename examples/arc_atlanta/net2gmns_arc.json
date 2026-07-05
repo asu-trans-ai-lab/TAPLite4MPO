@@ -1,0 +1,37 @@
+{
+  "_comment": "ARC Atlanta 2020 AM network (Cube-style, already directed A->B). This config declares the PROHIBIT access-code table as a reusable access_code_map preset so an agency DECLARES codes instead of writing Python. Capacity/VDF are ARC-specific (modified-BPR by FACTYPE) and are set by arc_atlanta_to_gmns.py; this config is exercised specifically to re-derive the allowed_use + toll_flag access columns and byte-compare them to the reference gmns/link.csv.",
+  "directed": true,
+  "id_field": "A",
+  "node_id_field": "N",
+  "a_field": "A",
+  "b_field": "B",
+  "length_field": "DISTANCE",
+  "length_unit": "mi",
+  "speed_unit": "mph",
+  "capacity_basis": "per_lane",
+  "capacity_period_hours": 1,
+  "fields": {
+    "lanes":   {"ab": "LANES", "default": 1},
+    "speed":   {"ab": "SPEED", "default": 25},
+    "factype": {"ab": "FACTYPE"}
+  },
+  "connector": {"field": "FACTYPE", "values": ["0"]},
+  "access_code_map": {
+    "field": "PROHIBIT",
+    "toll_field": "TOLLAM",
+    "toll_id_field": "TOLLID",
+    "codes": {
+      "2":  {"allowed_use": "hov2;hov3"},
+      "11": {"allowed_use": "hov2;hov3", "toll": true},
+      "6":  {"allowed_use": "hov3"},
+      "4":  {"allowed_use": "trk"},
+      "10": {"allowed_use": "trk", "toll": true},
+      "3":  {"toll": true},
+      "7":  {"toll": true},
+      "8":  {"toll": true},
+      "9":  {"toll": true},
+      "12": {"toll": true},
+      "13": {"toll": true}
+    }
+  }
+}
