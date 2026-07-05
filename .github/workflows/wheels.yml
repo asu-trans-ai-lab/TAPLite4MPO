@@ -15,12 +15,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+    # macOS is best-effort: the native extension is OPTIONAL by design (pytaplite falls
+    # back to the CLI kernel), and the x86_64 cross-build's delocate gate failed twice in
+    # CI. Build native arm64 wheels only (Intel macs install from the sdist); a macOS
+    # failure must not block publishing the Windows/Linux wheels + sdist.
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21
         env:
-          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          CIBW_ARCHS_MACOS: "native"
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
