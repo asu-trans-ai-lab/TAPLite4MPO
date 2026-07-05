@@ -114,13 +114,23 @@ def run(config_path, exe=None, do_report=None):
 
 
 def _parse_minimal(text):
-    """Fallback nested parser for a 2-level 'key:' / '  key: value' YAML subset."""
+    """Fallback nested parser for a 2-level 'key:' / '  key: value' YAML subset.
+
+    This is a deliberately small, HONEST subset -- it does NOT support YAML block
+    lists (``- item``) and raises on encountering one rather than silently dropping
+    it. Install pyyaml (``pip install taplite4mpo[runconfig]``) for full YAML.
+    """
     root, cur = {}, None
-    for raw in text.splitlines():
+    for lineno, raw in enumerate(text.splitlines(), 1):
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
+        if raw.lstrip().startswith("- "):
+            raise ValueError(
+                f"line {lineno}: YAML block lists ('- item') are not supported by the "
+                f"stdlib fallback parser. Install pyyaml (pip install taplite4mpo"
+                f"[runconfig]) to use list values.")
         indent = len(raw) - len(raw.lstrip())
-        line = raw.split("#", 1)[0].rstrip()
+        line = _strip_comment(raw).rstrip()
         if ":" not in line:
             continue
         key, _, val = line.strip().partition(":")
@@ -136,12 +146,25 @@ def _parse_minimal(text):
     return root
 
 
+def _strip_comment(raw):
+    """Strip an inline '#' comment only when it is preceded by whitespace (or starts
+    the value), so unquoted values containing '#' (e.g. a color '#ff0') are kept."""
+    out, prev_ws = [], True
+    for ch in raw:
+        if ch == "#" and prev_ws:
+            break
+        out.append(ch)
+        prev_ws = ch in " \t"
+    return "".join(out)
+
+
 def _coerce(v):
-    if v.lower() in ("null", "none", "~", ""):
+    low = v.lower()
+    if low in ("null", "none", "~", ""):
         return None
-    if v.lower() == "true":
+    if low in ("true", "yes", "on"):
         return True
-    if v.lower() == "false":
+    if low in ("false", "no", "off"):
         return False
     try:
         return int(v)

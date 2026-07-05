@@ -70,6 +70,10 @@ def cmd_run(args):
     try:
         res = _runconfig.run(cfg_path, exe=args.exe,
                              do_report=(False if args.no_report else None))
+    except FileNotFoundError as e:
+        # missing scenario_folder or kernel exe -> not-found, match sibling verbs (exit 2)
+        print(f"not found: {e}", file=sys.stderr)
+        return 2
     except RuntimeError as e:
         # gate refusal or validation failure surfaces here
         print(f"REFUSED: {e}", file=sys.stderr)

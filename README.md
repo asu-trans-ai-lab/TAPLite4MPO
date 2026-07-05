@@ -74,6 +74,30 @@ print(r.summary())                                         # links, VMT, VHT, re
 Runnable demo: **[`examples/pytaplite_quickstart.py`](examples/pytaplite_quickstart.py)**
 (`python examples/pytaplite_quickstart.py`).
 
+### The two front doors for a QA-gated run
+
+Installing the package also gives you two ways to drive a **gated, manifested** run
+(both go through the no-guessing intake gate and write a reproducibility manifest —
+neither can bypass the gate):
+
+- **Python API** (developer):
+  ```python
+  from dtalite_qa.api import Network, Scenario, AssignmentEngine
+  net  = Network.read_gmns("kernel/data_sets/03_chicago_sketch")
+  res  = AssignmentEngine().run(Scenario(net, settings={"iterations": 20}),
+                                exe="bin/DTALite.exe")
+  print(res.moe())
+  ```
+- **`taplite` CLI** (analyst) — installed as a console script; four verbs:
+  ```bash
+  taplite validate <scenario>                 # intake gate + schema/accessibility
+  taplite run      configs/chicago_sketch_baseline.yml   # gate -> kernel -> manifest -> report
+  taplite report   <run_dir>                  # fused self-contained HTML report
+  taplite compare  <run_a> <run_b>            # manifest diff + side-by-side MOE
+  ```
+  If the `taplite` script is not on your PATH (e.g. a `--user` install), run it as
+  `python -m dtalite_qa.taplite_cli <verb> ...`.
+
 ## 2. Reproduce a run (open benchmark networks — no extra data needed)
 
 ```bash

@@ -95,6 +95,12 @@ def run(scenario, exe, out_dir=None, timeout=1800, override=None, enforce_intake
         if not ok:
             result["gate_refusal"] = reason
             return result
+    else:
+        # PRINCIPLE: no path may bypass the gate without a DURABLE, recorded signal.
+        # Stamp a non-null sentinel so the manifest can NEVER show a bypassed run as
+        # null (indistinguishable from a clean, gate-checked run).
+        result["intake_gate"] = "UNCHECKED (enforce_intake=False)"
+        result["override"] = override or None
     out_dir = out_dir or tempfile.mkdtemp(prefix="dtalite_run_")
     result.update(prepare(scenario, out_dir=out_dir, do_fill=True))
     result["ran"] = False

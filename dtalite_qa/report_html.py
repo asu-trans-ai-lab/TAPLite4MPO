@@ -222,9 +222,10 @@ def build_report(run_dir, out_html=None, project_name=None):
     moe_rows = "".join([
         row("System VMT", f"{moe.get('vmt', 0):,.0f}"),
         row("System VHT", f"{moe.get('vht', 0):,.0f}"),
-        row("Mean speed (mph)", moe.get("mean_speed_mph", "&mdash;")),
+        row("Mean speed (mph)", moe.get("mean_speed_mph") or "&mdash;"),
         row("Loaded links", f"{moe.get('loaded_links', 0):,} / {moe.get('links', 0):,}"),
-        row("Final relative gap %", conv.get("final_gap_pct", rep.get("final_gap_pct"))),
+        row("Final relative gap %",
+            conv.get("final_gap_pct") or rep.get("final_gap_pct") or "&mdash;"),
         row("Iterations", conv.get("iterations", len(traj))),
         row("Links with V/C &gt; 1.0", f"{n_over1:,}"),
     ])

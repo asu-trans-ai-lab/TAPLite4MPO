@@ -39,6 +39,7 @@ class Network:
         self.folder = os.path.abspath(folder)
         if not os.path.isdir(self.folder):
             raise FileNotFoundError(f"network folder not found: {folder}")
+        self._counts = None  # memoized (nodes, links, zones) for __repr__ / summary
 
     @classmethod
     def read_gmns(cls, folder):
@@ -57,27 +58,39 @@ class Network:
         p = os.path.join(self.folder, name)
         return csvio.read(p) if os.path.exists(p) else ([], [])
 
+    def _compute_counts(self):
+        node_rows = self._read("node.csv")[1]
+        link_rows = self._read("link.csv")[1]
+        zones = len({csvio.inum(r.get("zone_id")) for r in node_rows
+                     if csvio.is_num(r.get("zone_id")) and csvio.inum(r.get("zone_id")) > 0})
+        return {"nodes": len(node_rows), "links": len(link_rows), "zones": zones}
+
+    def _get_counts(self):
+        if self._counts is None:
+            self._counts = self._compute_counts()
+        return self._counts
+
     @property
     def n_nodes(self):
-        return len(self._read("node.csv")[1])
+        return self._get_counts()["nodes"]
 
     @property
     def n_links(self):
-        return len(self._read("link.csv")[1])
+        return self._get_counts()["links"]
 
     @property
     def n_zones(self):
-        _, rows = self._read("node.csv")
-        return len({csvio.inum(r.get("zone_id")) for r in rows
-                    if csvio.is_num(r.get("zone_id")) and csvio.inum(r.get("zone_id")) > 0})
+        return self._get_counts()["zones"]
 
     def summary(self):
         """Dict of {nodes, links, zones} -- the one-line network header."""
-        return {"nodes": self.n_nodes, "links": self.n_links, "zones": self.n_zones,
+        c = self._get_counts()
+        return {"nodes": c["nodes"], "links": c["links"], "zones": c["zones"],
                 "folder": self.folder}
 
     def __repr__(self):
-        return f"<Network {os.path.basename(self.folder)}: {self.n_nodes} nodes, {self.n_links} links, {self.n_zones} zones>"
+        c = self._get_counts()
+        return f"<Network {os.path.basename(self.folder)}: {c['nodes']} nodes, {c['links']} links, {c['zones']} zones>"
 
 
 class Demand:
@@ -96,14 +109,24 @@ class Demand:
 
     @staticmethod
     def _discover(network):
+        import warnings
         p = os.path.join(network.folder, "mode_type.csv")
-        files = []
+        files, missing = [], []
         if os.path.exists(p):
             _, rows = csvio.read(p)
             for r in rows:
                 df = (r.get("demand_file") or "").strip()
-                if df and df not in files and os.path.exists(os.path.join(network.folder, df)):
+                if not df or df in files or df in missing:
+                    continue
+                if os.path.exists(os.path.join(network.folder, df)):
                     files.append(df)
+                else:
+                    missing.append(df)
+        if missing:
+            warnings.warn(
+                f"mode_type.csv declares demand file(s) that do not exist in "
+                f"{network.folder} and were dropped: {', '.join(missing)}",
+                stacklevel=2)
         if not files and os.path.exists(os.path.join(network.folder, "demand.csv")):
             files = ["demand.csv"]
         return files
@@ -112,9 +135,12 @@ class Demand:
     def from_network(cls, network):
         """Use the demand CSV(s) already declared in the network's mode_type.csv.
 
+        Only files that actually exist on disk are kept; declared-but-missing files
+        are dropped with a warning (they are not silently ignored).
+
         >>> net = Network.read_gmns("kernel/data_sets/03_chicago_sketch")
-        >>> Demand.from_network(net).files
-        ['demand.csv', ...]
+        >>> Demand.from_network(net).files          # only files present on disk
+        ['demand.csv']
         """
         return cls(network)
 
@@ -230,7 +256,12 @@ class Result:
         return folder
 
     def __repr__(self):
-        g = self.final_gap_pct()
+        # Prefer the manifest's recorded gap (no file I/O); fall back to parsing only
+        # if the manifest is absent.
+        conv = (self.manifest or {}).get("convergence") or {}
+        g = conv.get("final_gap_pct", None)
+        if g is None and not conv:
+            g = self.final_gap_pct()
         return f"<Result {self.run_dir} rc={self.returncode} gap={g}%>"
 
 
@@ -242,17 +273,22 @@ class AssignmentEngine:
     refuses to run unless you pass an ``override`` string (recorded in the manifest).
     """
 
-    def run(self, scenario, exe, out_dir=None, override=None, enforce_intake=True,
-            timeout=1800):
+    def run(self, scenario, exe, out_dir=None, override=None, timeout=1800):
         """Solve the assignment. Returns a ``Result``.
+
+        The intake gate is ALWAYS enforced on this public surface -- there is no
+        ``enforce_intake=False`` bypass, by design. A scenario that has not been
+        audited (or whose audit is BLOCKED / stale) refuses to run unless you pass
+        an ``override`` "who/why" string, which is recorded in the manifest. This
+        keeps the intake gate (the product's whole point) unbypassable without a
+        durable, recorded signal.
 
         Parameters
         ----------
         scenario : Scenario
         exe : str      path to the built DTALite kernel executable
         out_dir : str  where to run (default: a fresh tempdir)
-        override : str "who/why" to bypass a non-READY intake gate (recorded)
-        enforce_intake : bool  keep True in production; False only for legacy nets
+        override : str "who/why" to waive a non-READY intake gate (recorded in manifest)
 
         >>> eng = AssignmentEngine()
         >>> res = eng.run(scen, exe="cmake_build_rel/DTALite_exe.exe")
@@ -263,15 +299,24 @@ class AssignmentEngine:
             raise TypeError("scenario must be a dtalite_qa.api.Scenario")
 
         src = scenario.network.folder
-        # If the caller set solver settings, run against a settings-patched COPY so
-        # the source network is untouched; else run the source folder directly.
+        # If the caller set solver settings OR composed an explicit demand that
+        # differs from what mode_type.csv already declares, run against a patched
+        # COPY so the source network is untouched; else run the source directly.
+        demand_files = getattr(scenario.demand, "files", None) or []
+        needs_demand_patch = _demand_differs(src, demand_files)
         work_src = src
         tmp_patch = None
-        if scenario.settings:
+        if scenario.settings or needs_demand_patch:
             import tempfile
             tmp_patch = tempfile.mkdtemp(prefix="dtalite_api_")
             _copy_scenario(src, tmp_patch)
-            _patch_settings(tmp_patch, scenario.settings)
+            if scenario.settings:
+                _patch_settings(tmp_patch, scenario.settings)
+            if needs_demand_patch:
+                # HONOR scenario.demand: write the composed demand file list into the
+                # working copy's mode_type.csv so the Demand object is authoritative
+                # (previously scenario.demand was silently discarded).
+                _patch_demand(tmp_patch, demand_files)
             # carry the intake audit forward so the gate still sees a READY scenario
             for f in ("intake_issues.json", "submission.yml"):
                 sp = os.path.join(src, f)
@@ -279,8 +324,12 @@ class AssignmentEngine:
                     shutil.copy(sp, os.path.join(tmp_patch, f))
             work_src = tmp_patch
 
-        res = _control.run(work_src, exe=exe, out_dir=out_dir, override=override,
-                           enforce_intake=enforce_intake, timeout=timeout)
+        try:
+            res = _control.run(work_src, exe=exe, out_dir=out_dir, override=override,
+                               enforce_intake=True, timeout=timeout)
+        finally:
+            if tmp_patch:
+                shutil.rmtree(tmp_patch, ignore_errors=True)
         if res.get("gate_refusal"):
             raise RuntimeError(
                 f"intake gate {res.get('intake_gate')}: {res['gate_refusal']}\n"
@@ -303,11 +352,68 @@ class AssignmentEngine:
 
 
 def _copy_scenario(src, dst):
+    """Copy the whole scenario tree (including subfolders) into dst.
+
+    Uses copytree so subfolders (e.g. reference/, skims/) are not silently dropped.
+    """
     os.makedirs(dst, exist_ok=True)
-    for name in os.listdir(src):
-        p = os.path.join(src, name)
-        if os.path.isfile(p):
-            shutil.copy(p, os.path.join(dst, name))
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+
+
+def _declared_demand_files(folder):
+    """The demand_file list declared in a folder's mode_type.csv (order-preserving)."""
+    p = os.path.join(folder, "mode_type.csv")
+    files = []
+    if os.path.exists(p):
+        _, rows = csvio.read(p)
+        for r in rows:
+            df = (r.get("demand_file") or "").strip()
+            if df and df not in files:
+                files.append(df)
+    return files
+
+
+def _demand_differs(folder, composed_files):
+    """True when the composed Demand.files differ from mode_type.csv's declaration.
+
+    When they match (the common ``from_network`` case) no patch is needed and we can
+    run the source folder directly.
+    """
+    if not composed_files:
+        return False
+    return list(composed_files) != _declared_demand_files(folder)
+
+
+def _patch_demand(folder, demand_files):
+    """Write the composed demand file list into the working copy's mode_type.csv.
+
+    Assigns demand_files[i] to the i-th mode row (positional). Extra composed files
+    beyond the declared mode rows are appended as additional single-mode rows so the
+    kernel loads exactly the composed set. If mode_type.csv is absent it is created.
+    """
+    p = os.path.join(folder, "mode_type.csv")
+    if os.path.exists(p):
+        header, rows = csvio.read(p)
+    else:
+        header, rows = ["mode_type_id", "mode_type", "name", "vot", "pce",
+                        "occ", "demand_file"], []
+    if "demand_file" not in header:
+        header.append("demand_file")
+    new_rows = []
+    for i, df in enumerate(demand_files):
+        if i < len(rows):
+            row = dict(rows[i])
+        else:
+            row = {"mode_type_id": i + 1, "mode_type": "sov", "name": "DRIVE",
+                   "vot": 10, "pce": 1, "occ": 1}
+        row["demand_file"] = df
+        new_rows.append(row)
+    # keep any remaining declared mode rows but clear their (now-unused) demand_file
+    for r in rows[len(demand_files):]:
+        row = dict(r)
+        row["demand_file"] = ""
+        new_rows.append(row)
+    csvio.write(p, header, new_rows)
 
 
 def _patch_settings(folder, settings):

@@ -27,9 +27,27 @@ python -m dtalite_qa schema        [--out schemas/...json]    # machine-readable
 python -m dtalite_qa manifest      <scenario>                 # provenance manifest (sha256, units, rows)
 python -m dtalite_qa run           <scenario> --exe bin/DTALite.exe   # gate, then run the kernel
 python -m dtalite_qa report        <run_dir>                  # post-run summary (gap, VMT/VHT, by FT, enforcement)
+python -m dtalite_qa report-html   <run_dir>                  # fused self-contained HTML report (map + scatter + tables)
 python -m dtalite_qa demand-bin    <scenario>                 # convert demand CSVs to fast .bin
 python -m dtalite_qa adapt         <scenario> --out <dir>     # convert an older/foreign network to current format
 ```
+
+### Analyst CLI (`taplite`)
+
+A friendlier, ADDITIVE console front end (installed as the `taplite` script; also
+runnable as `python -m dtalite_qa.taplite_cli`). Every verb inherits the same
+no-guessing intake gate and reproducibility manifest — nothing here bypasses them.
+
+```bash
+taplite validate <scenario>          # intake gate + validate/inventory/accessibility
+taplite run      <config.yml>        # run-config YAML -> gate -> kernel -> manifest -> report
+taplite report   <run_dir>           # fused self-contained HTML report of a finished run
+taplite compare  <run_a> <run_b>     # manifest diff + side-by-side MOE table
+```
+
+A run-config is a small YAML that describes one whole run (scenario folder,
+solver settings, output/report). See `configs/*.yml` for ready-to-edit examples,
+e.g. `taplite run configs/chicago_sketch_baseline.yml`.
 
 ### Adapting an older / foreign network (`adapt`)
 
