@@ -57,7 +57,12 @@ class OptionalBuildExt(build_ext):
                     e.extra_compile_args += ["/openmp"]
             else:                       # gcc / clang / mingw
                 e.extra_compile_args += ["-O2"]
-                if _compiler_supports(self.compiler, "-fopenmp"):   # absent on stock macOS clang
+                # OpenMP on macOS links the native binding against Homebrew libomp,
+                # which cibuildwheel's delocate step cannot portably bundle (and the
+                # x86_64+arm64 cross-build makes it worse). Skip OpenMP on macOS -- the
+                # in-process binding runs single-threaded there; the standalone CLI
+                # kernel keeps OpenMP, and Linux/Windows wheels keep it too.
+                if sys.platform != "darwin" and _compiler_supports(self.compiler, "-fopenmp"):
                     e.extra_compile_args += ["-fopenmp"]
                     e.extra_link_args += ["-fopenmp"]
                 if sys.platform == "win32":     # mingw: bundle the runtime into the .pyd
