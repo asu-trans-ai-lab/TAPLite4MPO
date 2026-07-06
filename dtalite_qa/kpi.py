@@ -137,3 +137,33 @@ def objective(kpis, weights):
 def available(kpis):
     """The subset of KPIs actually produced (non-None) -- for reporting coverage."""
     return {k: v for k, v in kpis.items() if v is not None}
+
+
+# KPIs that ADD across regions (extensive); the rest are intensive and must NOT sum.
+EXTENSIVE = ("vmt_miles", "vht_hours", "total_delay_hours",
+             "co2_proxy_kg", "person_delay_hours")
+
+
+def aggregate(kpi_dicts):
+    """Combine per-region KPIs into system-of-systems KPIs, correctly by KIND:
+
+    extensive KPIs (VMT/VHT/delay/CO2/person-delay) SUM; ``max_vc`` is the MAX;
+    ``avg_speed_mph`` is recomputed as total VMT / total VHT (you cannot average
+    average speeds); ``od_skim_time_min`` is a simple mean of the available regions;
+    the two external KPIs stay None. Missing values are skipped, not zeroed.
+    """
+    ks = list(kpi_dicts)
+    agg = {}
+    for name in EXTENSIVE:
+        vals = [d.get(name) for d in ks if isinstance(d.get(name), (int, float))]
+        agg[name] = round(sum(vals), 4) if vals else None
+    vcs = [d.get("max_vc") for d in ks if isinstance(d.get("max_vc"), (int, float))]
+    agg["max_vc"] = max(vcs) if vcs else None
+    vmt, vht = agg.get("vmt_miles"), agg.get("vht_hours")
+    agg["avg_speed_mph"] = round(vmt / vht, 2) if (vmt and vht) else None
+    sk = [d.get("od_skim_time_min") for d in ks
+          if isinstance(d.get("od_skim_time_min"), (int, float))]
+    agg["od_skim_time_min"] = round(sum(sk) / len(sk), 4) if sk else None
+    agg["bottleneck_duration_hours"] = None
+    agg["accessibility_to_jobs"] = None
+    return agg

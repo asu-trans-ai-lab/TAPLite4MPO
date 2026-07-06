@@ -39,8 +39,10 @@ jobs:
         run: python -c "from taplite4mpo import TAPCI; print('categories', TAPCI.categories())"
       - name: TAPCI contract tests (Category 1/2 surface + Category 3 roadmap)
         run: python -m unittest tests.test_tapci_contract -v
-      - name: KPI4MPO/NPO tests (10 MVP KPIs, compare, objective)
+      - name: KPI4MPO/NPO tests (10 MVP KPIs, compare, objective, aggregate)
         run: python -m unittest tests.test_kpi -v
+      - name: City Brain orchestration tests (fan-out, per-region routing, KPI totals)
+        run: python -m unittest tests.test_citybrain -v
 
   kernel:
     name: kernel loop (Chicago Sketch)
@@ -65,3 +67,6 @@ jobs:
       - name: TAPCI kernel tests (run + observe + routing-policy save/load/replay)
         shell: bash
         run: DTALITE_EXE="bin/DTALite.exe" python -m unittest tests.test_tapci_kernel -v
+      - name: City Brain kernel test (2-region fan-out + theta reuse + KPI totals)
+        shell: bash
+        run: DTALITE_EXE="bin/DTALite.exe" python -m unittest tests.test_citybrain -v
