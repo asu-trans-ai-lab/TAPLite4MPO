@@ -36,11 +36,18 @@ from .tapci import TAPCI
 class RegionAgent:
     """One region = one TAPLite4MPO agent (a TAPCI + a persistent theta policy).
 
-    ``keep_warm`` carries the region's routing policy across stages -- the efficiency
-    lever (10-30x per call) that makes a multi-stage / multi-day loop tractable.
+    theta is ALWAYS captured after each run (available for reuse / inspection).
+    ``keep_warm`` controls whether the NEXT run WARM-STARTS from the prior theta --
+    the 10-30x efficiency lever. It defaults to False because of a known kernel
+    limitation: on a warm replay whose routing does not change, the kernel currently
+    emits an EMPTY od_performance.csv, so the skim service (observe_skims/query_skim)
+    can come back empty. Since a City Brain stage usually needs skims for the choice
+    loop, reliable skims are the default; set ``keep_warm=True`` when you want the
+    speedup and only need link/KPI outputs (not per-stage skims). Fixing the kernel's
+    warm-replay OD writer is the follow-up that lets you have both.
     """
 
-    def __init__(self, name, project, exe=None, keep_warm=True,
+    def __init__(self, name, project, exe=None, keep_warm=False,
                  run_kwargs=None, kpi_kwargs=None):
         self.name = name
         self.sim = TAPCI.open(project, exe=exe)
@@ -65,20 +72,19 @@ class RegionAgent:
             s.set_link_closure(request["closures"])
         for link, factor in request.get("capacity", []):
             s.set_link_capacity([link], factor=factor)
-        s.set_setting(column_output=2)             # capture theta for reuse
+        s.set_setting(column_output=2)             # always capture theta
         warm = request.get("warm", self.keep_warm)
-        if warm and self._policy:
+        if warm and self._policy:                  # opt-in speedup (see class docstring)
             s.load_routing_policy(self._policy)
         s.run_until_converged(**self._run)
         run_dir = s._result.run_dir
-        if self.keep_warm:
-            self._policy = s.save_routing_policy(
-                os.path.join(tempfile.mkdtemp(prefix="cb_pol_"), f"{self.name}.dtac"))
+        self._policy = s.save_routing_policy(       # ALWAYS save (reuse/inspection)
+            os.path.join(tempfile.mkdtemp(prefix="cb_pol_"), f"{self.name}.dtac"))
         skims = s.observe_skims()
         mean_t = (round(sum(x["skim_time"] for x in skims if x["skim_time"]) /
                         max(1, sum(1 for x in skims if x["skim_time"])), 3)
                   if skims else None)
-        return {
+        resp = {
             "region": self.name,
             "skim_summary": {"n": len(skims), "mean_skim_time_min": mean_t},
             "kpis": _kpi.compute(run_dir, **self._kpi),
@@ -86,6 +92,10 @@ class RegionAgent:
             "policy": self._policy,
             "compute_s": None,                     # filled by the Brain (timed there)
         }
+        if not skims:                              # never hand back empty skims silently
+            resp["warning"] = ("empty od_performance: the skim service returned 0 rows "
+                               "this stage (rerun the region; see parallel caveat)")
+        return resp
 
     def query_skim(self, o_zone, d_zone, mode=None):
         """Point skim query for the Choice Graph (full skims stay on the agent)."""
@@ -111,13 +121,19 @@ class CityBrain:
         self.history = []
         return self.step({})
 
-    def step(self, scenario_by_region=None, parallel=True):
+    def step(self, scenario_by_region=None, parallel=False):
         """Fan a per-region scenario dict out to all agents, collect responses.
 
         ``scenario_by_region`` maps region name -> request fields (period/od_multiplier/
         tolls/closures/capacity/warm); missing regions run their baseline. Returns
-        ``{region: response}``. Agents run concurrently (each is a kernel subprocess)
-        when ``parallel`` and there is more than one region.
+        ``{region: response}``.
+
+        ``parallel`` (default False) is an EXPERIMENTAL opt-in: it runs the region
+        kernels concurrently, but each kernel is already OpenMP-multithreaded, so N
+        concurrent regions oversubscribe the CPU and a transient empty-output was
+        observed. Serial is the reliable default; the theta-reuse speedup (the real
+        lever) is independent of fan-out parallelism. A region that returns empty
+        skims is flagged with a ``warning`` key, never silently zeroed.
         """
         scenario_by_region = scenario_by_region or {}
         names = list(self.agents)
