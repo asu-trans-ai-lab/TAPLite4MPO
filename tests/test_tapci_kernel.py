@@ -26,11 +26,15 @@ _OVR = "tapci ci kernel test"
 
 
 def _find_exe():
-    for cand in (os.environ.get("DTALITE_EXE"),
-                 os.path.join(REPO, "bin", "DTALite.exe"),
+    env = os.environ.get("DTALITE_EXE")
+    if env and os.path.exists(env):
+        return env
+    for cand in (os.path.join(REPO, "bin", "DTALite.exe"),
                  os.path.join(REPO, "bin", "DTALite"),
                  os.path.join(REPO, "release_v0.2.0", "DTALite.exe")):
-        if cand and os.path.exists(cand):
+        if os.path.exists(cand):
+            if cand.endswith(".exe") and os.name != "nt":
+                continue   # a committed Windows .exe is not runnable on Linux/macOS
             return cand
     return None
 
