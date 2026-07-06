@@ -19,6 +19,8 @@ import tempfile
 from . import validate as _validate
 from . import fill as _fill
 from . import inventory as _inventory
+from . import csvio as _csvio
+from . import resources as _resources
 from . import accessibility as _accessibility
 
 # input files whose modification invalidates a previous intake audit
@@ -135,23 +137,53 @@ def run(scenario, exe, out_dir=None, timeout=1800, override=None, enforce_intake
             "dtalite_qa is the QA/orchestration layer — it does NOT solve the assignment; the\n"
             "C++ kernel (DTALite.exe) is the solver. Build it with `bash build.sh` (-> bin/\n"
             "DTALite.exe) and pass --exe bin/DTALite.exe.  See docs/ARCHITECTURE.md.")
+    # memory-aware: resolve number_of_processors=auto to a memory-safe count
+    auto = _resolve_auto_processors(out_dir)
+    if auto:
+        result["processors_auto"] = auto
     exe_local = os.path.join(out_dir, os.path.basename(exe))
     shutil.copy(exe, exe_local)
     # decode with errors="replace": kernel output bytes must never raise
     # UnicodeDecodeError after a long solve
     _s = lambda x: x.decode("utf-8", errors="replace") if isinstance(x, bytes) else (x or "")
-    try:
-        p = subprocess.run([exe_local], cwd=out_dir, capture_output=True,
-                           encoding="utf-8", errors="replace", timeout=timeout)
-    except subprocess.TimeoutExpired as e:
-        result["ran"] = True
-        result["returncode"] = "timeout"
-        result["ok"] = False
-        result["log"] = (_s(e.stdout) + _s(e.stderr) +
-                         f"\nkernel timed out after {timeout}s; partial outputs in {out_dir}\n")
-        return result
+    tracer = _resources.MemoryTracer()          # trace peak memory the run consumes
+    with tracer:
+        try:
+            p = subprocess.run([exe_local], cwd=out_dir, capture_output=True,
+                               encoding="utf-8", errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            result["ran"] = True
+            result["returncode"] = "timeout"
+            result["ok"] = False
+            result["memory"] = tracer.summary()
+            result["log"] = (_s(e.stdout) + _s(e.stderr) +
+                             f"\nkernel timed out after {timeout}s; partial outputs in {out_dir}\n")
+            return result
     result["returncode"] = p.returncode
     result["log"] = p.stdout + p.stderr
     result["ran"] = True
     result["ok"] = result["ok"] and p.returncode == 0
+    result["memory"] = tracer.summary()
     return result
+
+
+def _resolve_auto_processors(out_dir):
+    """If settings.csv sets number_of_processors to 'auto' (or empty/0), replace it
+    with a memory-safe recommendation and return a one-line note; else None."""
+    p = os.path.join(out_dir, "settings.csv")
+    if not os.path.exists(p):
+        return None
+    try:
+        hdr, rows = _csvio.read(p)
+    except Exception:
+        return None
+    if not rows or "number_of_processors" not in hdr:
+        return None
+    val = str(rows[0].get("number_of_processors", "")).strip().lower()
+    if val not in ("auto", "", "0"):
+        return None
+    with_cols = str(rows[0].get("column_output", "0")).strip() not in ("", "0")
+    n, info = _resources.recommend_processors(out_dir, with_columns=with_cols)
+    rows[0]["number_of_processors"] = str(n)
+    _csvio.write(p, hdr, rows)
+    return f"number_of_processors=auto -> {n}  ({info['reason']})"

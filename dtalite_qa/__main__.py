@@ -76,6 +76,10 @@ def main(argv=None):
     sp = sub.add_parser("columns")
     sp.add_argument("run_dir", help="folder with route_columns.bin (DTAC), link_performance.csv, mode_type.csv + demand CSVs")
     sp.add_argument("--dtac", default=None, help="explicit DTAC path (default: <run_dir>/route_columns.bin)")
+    sp = sub.add_parser("resources")
+    sp.add_argument("scenario", help="GMNS scenario to size for a memory-safe number_of_processors")
+    sp.add_argument("--requested", type=int, default=None, help="cap the recommendation at this many processors")
+    sp.add_argument("--columns", action="store_true", help="account for a column_output run (larger footprint)")
     sp = sub.add_parser("demand-bin")
     sp.add_argument("scenario", help="convert the scenario's demand CSVs to .bin (set demand_format=1)")
     sp = sub.add_parser("forensics")
@@ -185,6 +189,13 @@ def main(argv=None):
         print(f"== columns {args.run_dir} ==")
         rep = _columns.verify(args.run_dir, dtac_path=args.dtac)
         print(_columns.render(rep))
+        return 0
+
+    if args.cmd == "resources":
+        from . import resources as _res
+        txt, _n, _info = _res.report(args.scenario, requested=args.requested,
+                                     with_columns=args.columns)
+        print(txt)
         return 0
 
     if args.cmd == "demand-bin":

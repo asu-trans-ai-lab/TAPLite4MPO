@@ -43,6 +43,8 @@ jobs:
         run: python -m unittest tests.test_kpi -v
       - name: City Brain orchestration tests (fan-out, per-region routing, KPI totals)
         run: python -m unittest tests.test_citybrain -v
+      - name: Resource tests (memory status, processor recommendation, tracer)
+        run: python -m unittest tests.test_resources -v
 
   kernel:
     name: kernel loop (Chicago Sketch)
