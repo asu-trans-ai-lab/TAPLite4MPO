@@ -19,15 +19,17 @@ adopted independently (see :meth:`categories` and ``tests/test_tapci_*.py``):
     ``prob`` column IS the routing policy; the DTAC warm-start replays those theta
     shares). Scenario edits applied to a working copy before the NEXT run (source
     untouched): set_time_period / set_link_capacity / set_link_closure / set_toll /
-    set_od_multiplier / clear_edits. This is the one-period ENVIRONMENT that a
-    Choice-Graph / ABM / LLM-scenario / RL loop calls repeatedly.
+    set_od_multiplier / clear_edits, plus run_day_to_day (an offline day-to-day /
+    information-provision loop driven by an external policy_fn). This is the one-period
+    ENVIRONMENT that a Choice-Graph / ABM / LLM-scenario / RL loop calls repeatedly.
   Category 3 -- DYNAMIC / LIVE / STEP (roadmap): step-style run_iteration, LIVE
     (mid-solve) control, injecting an external routing policy (load_paths /
-    set_routing_policy_from_paths), day-to-day / information-provision loops,
-    per-link VDF edits. These raise a clear NotImplementedError -- the names exist so
-    the contract is legible and the error precise, but nothing is faked with a
-    silent no-op. NOTE: next-run capacity/closure/toll/OD edits are Category 2 (real);
-    only LIVE/step control is Category 3.
+    set_routing_policy_from_paths), the live message-control primitive
+    set_information_provision, set_loading_policy, per-link VDF edits. These raise a
+    clear NotImplementedError -- the names exist so the contract is legible and the
+    error precise, but nothing is faked with a silent no-op. NOTE: next-run
+    capacity/closure/toll/OD edits and the offline day-to-day loop are Category 2
+    (real); only LIVE/step control is Category 3.
 
 This is a thin facade: every real method delegates to the audited dtalite_qa.api
 layer (intake gate + reproducibility manifest included). It adds no solving logic.
@@ -468,6 +470,47 @@ class TAPCI:
                     r["volume"] = repr((_f(r.get("volume")) or 0.0) * mult)
             _csvio.write(p, header, rows)
 
+    def run_day_to_day(self, days, policy_fn=None, carry_policy=False,
+                       max_iter=20, gap=0.001, override="tapci-d2d", exe=None,
+                       record=("vmt", "vht", "mean_speed_mph", "loaded_links")):
+        """[Cat 2] Offline day-to-day loop -- the one-period ENVIRONMENT driven for
+        ``days`` days. Each day, optionally call ``policy_fn(day, self)`` (the EXTERNAL
+        information-provision / choice / RL logic, free to read observe_skims()/
+        observe_links() and apply set_toll/set_od_multiplier/... edits), optionally
+        carry yesterday's routing policy (DTAC) forward as today's warm start
+        (``carry_policy`` -- day-to-day route learning), run one-period assignment, and
+        record the chosen MOEs. Returns the day-by-day history (list of dicts).
+
+        The day-to-day / information-provision LOGIC lives in ``policy_fn`` (external);
+        TAPCI just orchestrates: hand today's state to the policy, apply its edits, run,
+        observe. This is offline (repeated one-period), not a resident dynamic loading.
+        """
+        prev_policy = None
+        history = []
+        for day in range(int(days)):
+            if policy_fn is not None:
+                policy_fn(day, self)
+            if carry_policy:
+                self._settings["column_output"] = 2       # write today's DTAC
+                if prev_policy:
+                    self.load_routing_policy(prev_policy)  # seed from yesterday
+            self.run_until_converged(max_iter=max_iter, gap=gap,
+                                     override=override, exe=exe)
+            moe = self.moe()
+            row = {"day": day}
+            row.update({k: moe.get(k) for k in record})
+            try:
+                row["final_gap_pct"] = self.observe_convergence()[-1]["gap_pct"]
+            except (IndexError, KeyError, RuntimeError):
+                row["final_gap_pct"] = None
+            history.append(row)
+            if carry_policy:
+                prev_policy = os.path.join(
+                    self._result.run_dir, "route_columns.bin")
+                if not os.path.exists(prev_policy):
+                    prev_policy = None
+        return history
+
     def close(self):
         """Remove the scenario-edit working copy, if any."""
         if self._work and os.path.isdir(self._work):
@@ -492,10 +535,6 @@ class TAPCI:
         raise NotImplementedError(_ROADMAP.format(
             what="building a routing policy from user-supplied paths (day-to-day / dynamic "
                  "assignment)"))
-
-    def run_day_to_day(self, *a, **k):
-        raise NotImplementedError(_ROADMAP.format(
-            what="day-to-day / dynamic assignment loop (OD + routing-policy update per day)"))
 
     def set_information_provision(self, *a, **k):
         raise NotImplementedError(_ROADMAP.format(
@@ -526,10 +565,9 @@ class TAPCI:
                 "query_paths", "save_paths", "save_routing_policy", "load_routing_policy",
                 "observe_skims", "query_skim", "save_skims",
                 "set_link_capacity", "set_link_closure", "set_toll", "set_od_multiplier",
-                "clear_edits", "close"],
+                "clear_edits", "run_day_to_day", "close"],
             3: ["run_iteration", "load_paths", "set_routing_policy_from_paths",
-                "run_day_to_day", "set_information_provision", "set_loading_policy",
-                "set_vdf_parameters"],
+                "set_information_provision", "set_loading_policy", "set_vdf_parameters"],
         }
 
     def __repr__(self):

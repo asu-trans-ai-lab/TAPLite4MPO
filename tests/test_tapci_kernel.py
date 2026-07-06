@@ -148,6 +148,46 @@ class TapciStreamLoop(unittest.TestCase):
 
 
 @unittest.skipIf(EXE is None, "no DTALite kernel found (set $DTALITE_EXE)")
+class KpiOnRealRun(unittest.TestCase):
+    def test_six_real_kpis_present(self):
+        from dtalite_qa import kpi
+        sim = TAPCI.open(SKETCH, exe=EXE)
+        sim.run_until_converged(max_iter=15, gap=0.001, override=_OVR)
+        k = kpi.compute(sim.export(os.path.join(tempfile.mkdtemp(), "run")))
+        for name in ("vmt_miles", "vht_hours", "total_delay_hours", "avg_speed_mph",
+                     "max_vc", "od_skim_time_min"):
+            self.assertIsInstance(k[name], float, f"{name} should be produced")
+            self.assertGreater(k[name], 0)
+        self.assertIsNone(k["bottleneck_duration_hours"])   # external
+
+
+@unittest.skipIf(EXE is None, "no DTALite kernel found (set $DTALITE_EXE)")
+class DayToDayLoop(unittest.TestCase):
+    def test_offline_day_to_day_with_policy_and_carry(self):
+        sim = TAPCI.open(SKETCH, exe=EXE)
+        sim.run_until_converged(max_iter=5, override=_OVR)
+        busy = max(sim.observe_links(["volume"]), key=lambda r: float(r["volume"]))["link_id"]
+        sim.clear_edits()
+
+        applied = []
+
+        def policy(day, s):
+            if day >= 1:            # information provision: toll the busy link from day 1
+                s.set_toll([busy], 5.0 * day)
+                applied.append(day)
+
+        hist = sim.run_day_to_day(days=3, policy_fn=policy, carry_policy=True,
+                                  max_iter=12, override=_OVR)
+        self.assertEqual(len(hist), 3)
+        self.assertEqual([h["day"] for h in hist], [0, 1, 2])
+        self.assertTrue(all(h["vht"] > 0 for h in hist))
+        self.assertEqual(applied, [1, 2])
+        # carry_policy warm-starts each day from yesterday -> day>=1 converges tighter
+        self.assertLess(hist[1]["final_gap_pct"], hist[0]["final_gap_pct"])
+        sim.close()
+
+
+@unittest.skipIf(EXE is None, "no DTALite kernel found (set $DTALITE_EXE)")
 class TapciEnvLoop(unittest.TestCase):
     def test_reset_and_steps(self):
         from dtalite_qa.tapci_env import TAPCIEnv

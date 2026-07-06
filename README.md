@@ -108,8 +108,13 @@ neither can bypass the gate):
   routing policy, and **next-run scenario edits** (`set_link_closure` /
   `set_link_capacity` / `set_toll` / `set_od_multiplier`, applied to a working
   copy — the source network is never touched) — are real and backed by the
-  audited API + kernel. There's also an assignment-based RL environment
-  (`dtalite_qa.tapci_env.TAPCIEnv`, `reset`/`step`/reward). **Category 3**
+  audited API + kernel. There's also an offline day-to-day / information-provision
+  loop (`run_day_to_day`, driven by an external policy function) and an
+  assignment-based RL environment (`dtalite_qa.tapci_env.TAPCIEnv`,
+  `reset`/`step`/reward). A separate, kernel-independent **KPI4MPO/NPO** layer
+  (`dtalite_qa.kpi`) turns any run into decision KPIs (VMT, VHT, delay, speed,
+  max V/C, OD-skim time, + CO2/person-delay proxies), KPI deltas, and a weighted
+  objective/reward. **Category 3**
   (step-style `run_iteration`, live mid-solve control, external `load_paths`,
   `run_day_to_day` / information provision) raises a clear roadmap error rather
   than faking a no-op. Auto-tested in CI (`.github/workflows/tapci-ci.yml`:
