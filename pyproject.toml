@@ -45,7 +45,7 @@ dtalite-qa = "dtalite_qa.__main__:main"
 taplite = "dtalite_qa.taplite_cli:main"
 
 [tool.setuptools]
-packages = ["dtalite_qa", "pytaplite"]
+packages = ["dtalite_qa", "pytaplite", "taplite4mpo"]
 # ext_modules (the pybind11 _native binding) are declared in setup.py so the build can fall
 # back gracefully when no C++ compiler is present (pytaplite then uses subprocess).
 

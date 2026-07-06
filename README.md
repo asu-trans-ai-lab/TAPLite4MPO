@@ -88,6 +88,20 @@ neither can bypass the gate):
                                 exe="bin/DTALite.exe")
   print(res.moe())
   ```
+- **TAPCI** (preview) — a stable "build-on-top" surface for GMNS assignment
+  (open → validate → run → observe → export), so tools and AI workflows call the
+  kernel instead of forking it:
+  ```python
+  from taplite4mpo import TAPCI
+  sim = TAPCI.open("project.yml", exe="bin/DTALite.exe")
+  sim.validate(); sim.run_until_converged(max_iter=50, gap=0.001)
+  links = sim.observe_links(["volume", "speed", "vc"])
+  sim.export("outputs/")
+  ```
+  0.x preview: `open/validate/run_until_converged/observe_*/export` are backed by
+  the audited API above; step-style `run_iteration` and live control
+  (`set_toll`, `set_link_capacity`, …) raise a clear roadmap error rather than
+  faking it.
 - **`taplite` CLI** (analyst) — installed as a console script; four verbs:
   ```bash
   taplite validate <scenario>                 # intake gate + schema/accessibility
