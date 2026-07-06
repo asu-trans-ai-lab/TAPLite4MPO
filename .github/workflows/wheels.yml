@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.21
+        uses: pypa/cibuildwheel@v3.2
         env:
           CIBW_ARCHS_MACOS: "native"
       - uses: actions/upload-artifact@v4
@@ -57,3 +57,5 @@ jobs:
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true  # re-runs after a partial publish must not hard-fail

@@ -5,10 +5,18 @@ import os
 
 
 def read(path):
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        r = csv.DictReader(f)
-        rows = list(r)
-        header = r.fieldnames or []
+    # agency CSVs are sometimes cp1252 (e.g. "Pena Blvd" with a 0xF1 byte):
+    # try utf-8 first, fall back to cp1252 rather than crash mid-file
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            r = csv.DictReader(f)
+            rows = list(r)
+            header = r.fieldnames or []
+    except UnicodeDecodeError:
+        with open(path, newline="", encoding="cp1252") as f:
+            r = csv.DictReader(f)
+            rows = list(r)
+            header = r.fieldnames or []
     return header, rows
 
 

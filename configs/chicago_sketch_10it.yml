@@ -1,0 +1,10 @@
+project_name: Chicago Sketch — 10-iteration variant
+input:
+  scenario_folder: ../kernel/data_sets/03_chicago_sketch
+assignment:
+  iterations: 10
+  gap_tolerance: 0
+output:
+  folder: ../runs/chicago_10it
+  report: false
+exe: ../cmake_build_rel/DTALite_exe.exe

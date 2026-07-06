@@ -1,0 +1,23 @@
+# TAPLite4MPO run-config — TRMG2 (Triangle Regional Model G2) baseline.
+# The real-agency workflow network (~76k links). Demand here is the INTERIM
+# single-period AM SOV conversion, NOT the agency OMX — validation is deferred
+# (never call a run "validated" without observed counts). This config exists to
+# prove the pipeline scales to a real MPO model; it runs against the LOCAL GMNS
+# copy (not committed — the network is large / partly agency-derived).
+# Run:  taplite run configs/trmg2_baseline.yml
+project_name: TRMG2 — baseline (interim AM SOV, validation deferred)
+
+input:
+  scenario_folder: ../4step/trmg2_gmns/gmns
+
+assignment:
+  iterations: 25
+  gap_tolerance: 0
+  processors: 8
+
+output:
+  folder: ../runs/trmg2_baseline
+  report: true
+
+exe: ../cmake_build_rel/DTALite_exe.exe
+override: null              # gate is READY (submission.yml declared) — no override needed

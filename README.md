@@ -74,6 +74,69 @@ print(r.summary())                                         # links, VMT, VHT, re
 Runnable demo: **[`examples/pytaplite_quickstart.py`](examples/pytaplite_quickstart.py)**
 (`python examples/pytaplite_quickstart.py`).
 
+### The two front doors for a QA-gated run
+
+Installing the package also gives you two ways to drive a **gated, manifested** run
+(both go through the no-guessing intake gate and write a reproducibility manifest —
+neither can bypass the gate):
+
+- **Python API** (developer):
+  ```python
+  from dtalite_qa.api import Network, Scenario, AssignmentEngine
+  net  = Network.read_gmns("kernel/data_sets/03_chicago_sketch")
+  res  = AssignmentEngine().run(Scenario(net, settings={"iterations": 20}),
+                                exe="bin/DTALite.exe")
+  print(res.moe())
+  ```
+- **TAPCI** (preview) — a stable, tiered "build-on-top" surface for GMNS
+  assignment, so tools and AI workflows call the kernel instead of forking it.
+  `TAPCI.categories()` returns the three tiers:
+  ```python
+  from taplite4mpo import TAPCI
+  sim = TAPCI.open("project.yml", exe="bin/DTALite.exe")
+  sim.set_time_period(7, 9).set_setting(route_output=1, column_output=2)
+  sim.run_until_converged(max_iter=50, gap=0.001)
+  sim.observe_links(["volume", "speed", "vc"])   # + observe_od / observe_system
+  sim.query_paths(o_zone=12, d_zone=87)          # Path4GMNS-style external query
+  sim.save_routing_policy("policy.dtac")         # the theta-share routing policy
+  # ...later: reuse that policy on new demand and execute in ~1 iteration
+  TAPCI.open("project.yml", exe="...").load_routing_policy("policy.dtac").run_until_converged()
+  ```
+  **Category 1** (core run/observe/export) and **Category 2** — the one-period
+  *environment*: time period, OD/system/path performance, **OD skims** for a
+  Choice-Graph/ABM caller (`observe_skims` / `query_skim`), save & reload the
+  routing policy, and **next-run scenario edits** (`set_link_closure` /
+  `set_link_capacity` / `set_toll` / `set_od_multiplier`, applied to a working
+  copy — the source network is never touched) — are real and backed by the
+  audited API + kernel. There's also an offline day-to-day / information-provision
+  loop (`run_day_to_day`, driven by an external policy function) and an
+  assignment-based RL environment (`dtalite_qa.tapci_env.TAPCIEnv`,
+  `reset`/`step`; `reward=` accepts a MOE shortcut string, a **KPI-weighted
+  objective dict** e.g. `{"vht_hours": -1.0, "co2_proxy_kg": -1e-4}`, or a
+  callable). A separate, kernel-independent **KPI4MPO/NPO** layer
+  (`dtalite_qa.kpi`) turns any run into decision KPIs (VMT, VHT, delay, speed,
+  max V/C, OD-skim time, + CO2/person-delay proxies), KPI deltas, and a weighted
+  objective/reward. **Category 3**
+  (step-style `run_iteration`, live mid-solve control, external `load_paths`,
+  `run_day_to_day` / information provision) raises a clear roadmap error rather
+  than faking a no-op. Auto-tested in CI (`.github/workflows/tapci-ci.yml`:
+  a no-kernel contract job + a kernel-loop job).
+- **`taplite` CLI** (analyst) — installed as a console script; four verbs:
+  ```bash
+  taplite validate <scenario>                 # intake gate + schema/accessibility
+  taplite run      configs/chicago_sketch_baseline.yml   # gate -> kernel -> manifest -> report
+  taplite report   <run_dir>                  # fused self-contained HTML report
+  taplite compare  <run_a> <run_b>            # manifest diff + side-by-side MOE
+  ```
+  If the `taplite` script is not on your PATH (e.g. a `--user` install), run it as
+  `python -m dtalite_qa.taplite_cli <verb> ...`.
+
+  > **pip users**: the examples above assume a repo clone — `configs/`, the
+  > sample networks, and the kernel exe (`bash build.sh` -> `bin/DTALite.exe`)
+  > live in the repo, not in the wheel. With only `pip install taplite4mpo`,
+  > point `taplite run` at your own scenario + config and set `assignment.exe`
+  > (or `--exe`) to your kernel build.
+
 ## 2. Reproduce a run (open benchmark networks — no extra data needed)
 
 ```bash

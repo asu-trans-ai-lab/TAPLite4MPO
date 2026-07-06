@@ -73,9 +73,12 @@ HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Assignment map
 <script>
 const SEGS = __SEGS__;
 const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
-let xs=SEGS.map(s=>[s[0],s[2]]).flat(), ys=SEGS.map(s=>[s[1],s[3]]).flat();
-const x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys);
-const vmax = Math.max(...SEGS.map(s=>s[4]), 1);
+// plain min/max loop -- spread args throw RangeError above ~65k links
+let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity,vmax=1;
+for(const s of SEGS){
+  if(s[0]<x0)x0=s[0]; if(s[0]>x1)x1=s[0]; if(s[2]<x0)x0=s[2]; if(s[2]>x1)x1=s[2];
+  if(s[1]<y0)y0=s[1]; if(s[1]>y1)y1=s[1]; if(s[3]<y0)y0=s[3]; if(s[3]>y1)y1=s[3];
+  if(s[4]>vmax)vmax=s[4];}
 function color(t){ t=Math.max(0,Math.min(1,t));
   return t<0.5 ? `rgb(${46+t*2*(241-46)},${204+t*2*(196-204)},${113+t*2*(15-113)})`
                : `rgb(${241+(t-0.5)*2*(231-241)},${196+(t-0.5)*2*(76-196)},${15+(t-0.5)*2*(60-15)})`; }

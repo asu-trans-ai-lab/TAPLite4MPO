@@ -1,0 +1,19 @@
+# TAPLite4MPO run-config — Chicago Sketch baseline assignment.
+# Run:  taplite run configs/chicago_sketch_baseline.yml
+# (paths are relative to this file's directory; run from the repo root.)
+project_name: Chicago Sketch — baseline (BPR, user equilibrium)
+
+input:
+  scenario_folder: ../kernel/data_sets/03_chicago_sketch
+
+assignment:
+  iterations: 40            # number_of_iterations
+  gap_tolerance: 0          # convergence_gap_pct (0 = run all iterations)
+  processors: 8
+
+output:
+  folder: ../runs/chicago_baseline
+  report: true              # emit report.html next to the run
+
+exe: ../cmake_build_rel/DTALite_exe.exe
+override: null              # gate is READY (submission.yml declared) — no override needed
