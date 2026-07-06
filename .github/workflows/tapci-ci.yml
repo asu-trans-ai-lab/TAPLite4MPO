@@ -1,0 +1,62 @@
+name: tapci-ci
+
+# Auto-tests the TAPCI interface at two levels (Track C of the three-track strategy):
+#   contract  -- Category 1/2 surface + Category 3 roadmap + observe/save logic on
+#                canned fixtures. No kernel; runs in seconds on every push/PR.
+#   kernel    -- full Category 1/2 loop on Chicago Sketch with a freshly built
+#                DTALite kernel: run -> observe link/OD/system -> save routing policy
+#                (DTAC) -> reload as warm start -> confirm fast replay -> export.
+
+on:
+  push:
+    branches: [main, master, "workflow-product-*"]
+    paths:
+      - "dtalite_qa/**"
+      - "taplite4mpo/**"
+      - "tests/**"
+      - "kernel/**"
+      - ".github/workflows/tapci-ci.yml"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  contract:
+    name: contract (no kernel)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Import smoke (front-door namespace)
+        run: python -c "from taplite4mpo import TAPCI; print('categories', TAPCI.categories())"
+      - name: TAPCI contract tests (Category 1/2 surface + Category 3 roadmap)
+        run: python -m unittest tests.test_tapci_contract -v
+
+  kernel:
+    name: kernel loop (Chicago Sketch)
+    # The kernel uses MSVC-secure CRT calls; the proven build path is Windows + MSVC
+    # (mirrors ci.yml). The TAPCI kernel tests then drive the full Category 1/2 loop.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Configure + build kernel (DTALite_exe)
+        run: |
+          cmake -S kernel -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --target DTALite_exe
+      - name: Stage executable -> bin/DTALite.exe
+        shell: bash
+        run: |
+          mkdir -p bin
+          cp build/Release/DTALite_exe.exe bin/DTALite.exe
+          ls -la bin/
+      - name: TAPCI kernel tests (run + observe + routing-policy save/load/replay)
+        shell: bash
+        run: DTALITE_EXE="bin/DTALite.exe" python -m unittest tests.test_tapci_kernel -v

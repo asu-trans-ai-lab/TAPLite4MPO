@@ -88,20 +88,27 @@ neither can bypass the gate):
                                 exe="bin/DTALite.exe")
   print(res.moe())
   ```
-- **TAPCI** (preview) — a stable "build-on-top" surface for GMNS assignment
-  (open → validate → run → observe → export), so tools and AI workflows call the
-  kernel instead of forking it:
+- **TAPCI** (preview) — a stable, tiered "build-on-top" surface for GMNS
+  assignment, so tools and AI workflows call the kernel instead of forking it.
+  `TAPCI.categories()` returns the three tiers:
   ```python
   from taplite4mpo import TAPCI
   sim = TAPCI.open("project.yml", exe="bin/DTALite.exe")
-  sim.validate(); sim.run_until_converged(max_iter=50, gap=0.001)
-  links = sim.observe_links(["volume", "speed", "vc"])
-  sim.export("outputs/")
+  sim.set_time_period(7, 9).set_setting(route_output=1, column_output=2)
+  sim.run_until_converged(max_iter=50, gap=0.001)
+  sim.observe_links(["volume", "speed", "vc"])   # + observe_od / observe_system
+  sim.query_paths(o_zone=12, d_zone=87)          # Path4GMNS-style external query
+  sim.save_routing_policy("policy.dtac")         # the theta-share routing policy
+  # ...later: reuse that policy on new demand and execute in ~1 iteration
+  TAPCI.open("project.yml", exe="...").load_routing_policy("policy.dtac").run_until_converged()
   ```
-  0.x preview: `open/validate/run_until_converged/observe_*/export` are backed by
-  the audited API above; step-style `run_iteration` and live control
-  (`set_toll`, `set_link_capacity`, …) raise a clear roadmap error rather than
-  faking it.
+  **Category 1** (core run/observe/export) and **Category 2** (time period, OD/
+  system/path performance, save & reload the routing policy) are real and backed
+  by the audited API + kernel output files. **Category 3** (step-style
+  `run_iteration`, live control `set_toll`/`set_link_capacity`, external routing
+  policy `load_paths`, `run_day_to_day` / information provision) raises a clear
+  roadmap error rather than faking a no-op. Auto-tested in CI
+  (`.github/workflows/tapci-ci.yml`: a no-kernel contract job + a kernel-loop job).
 - **`taplite` CLI** (analyst) — installed as a console script; four verbs:
   ```bash
   taplite validate <scenario>                 # intake gate + schema/accessibility

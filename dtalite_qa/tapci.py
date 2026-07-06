@@ -1,50 +1,63 @@
-"""TAPCI -- Traffic Assignment Programming/Control Interface (PREVIEW, 0.x).
+"""TAPCI -- Traffic Assignment Programming/Control Interface (preview).
 
 The stable "build-on-top" surface for GMNS-based traffic assignment: open a
-project, validate the intake gate, run to convergence, observe link/path/gap
-state, and export. Inspired by the ecosystem role of SUMO's TraCI/libsumo, but
-targeted at planning-scale assignment / ODME / corridor validation rather than
-vehicle-level microsimulation -- so the unit of observation is an *assignment
-iteration / link-time state*, never a vehicle.
+project, validate the intake gate, run to convergence, observe link / OD / path /
+system state, save & reload the routing policy, and export. Inspired by the
+ecosystem role of SUMO's TraCI/libsumo, but targeted at planning-scale assignment
+/ ODME / corridor validation rather than vehicle-level microsimulation -- so the
+unit of observation is an *assignment iteration / link-time state*, never a vehicle.
 
-    from taplite4mpo import TAPCI            # or: from dtalite_qa.tapci import TAPCI
-    sim = TAPCI.open("project.yml", exe="bin/DTALite.exe")
-    sim.validate()
-    sim.run_until_converged(max_iter=50, gap=0.001)
-    links = sim.observe_links(["volume", "speed", "vc"])
-    sim.export("outputs/")
+The surface is organized into three CATEGORIES so each level can be tested and
+adopted independently (see :meth:`categories` and ``tests/test_tapci_*.py``):
 
-WHAT IS REAL IN THIS PREVIEW (batch style, backed by dtalite_qa.api):
-  open / validate / run_until_converged / observe_links / observe_paths /
-  observe_convergence / observe_manifest / moe / set_setting / export*.
+  Category 1 -- CORE (real): open / validate / run_until_converged / observe_links /
+    observe_convergence / observe_manifest / moe / set_setting / export / export_report.
+  Category 2 -- SCENARIO, TIME, PERFORMANCE, ROUTING-POLICY I/O (real): set_time_period /
+    observe_od / observe_system / query_paths / observe_paths / save_paths /
+    save_routing_policy / load_routing_policy. These are backed by kernel output files
+    (od_performance.csv, system_performance.csv, route_assignment.csv) and the DTAC
+    column store (the route_assignment ``prob`` column IS the routing policy; the DTAC
+    warm-start replays exactly those theta shares).
+  Category 3 -- DYNAMIC / CONTROL / INFORMATION PROVISION (roadmap): step-style
+    run_iteration, live scenario edits (set_link_capacity/closure/toll/vdf,
+    set_od_multiplier), injecting an external routing policy (load_paths /
+    set_routing_policy_from_paths), day-to-day / information-provision loops. These
+    raise a clear NotImplementedError -- the names exist so the contract is legible
+    and the error precise, but nothing is faked with a silent no-op.
 
-WHAT IS ROADMAP (raises NotImplementedError with a pointer, does NOT fake it):
-  step style (run_iteration) and live control (set_link_capacity/toll/vdf,
-  set_od_multiplier, observe_od skims). These need a stepped/resident kernel and
-  demand-edit plumbing (TAPCI 1.0 / DRC R3). The names exist here so the contract
-  is legible and the error is precise instead of an AttributeError.
-
-This is a thin, honest facade -- it adds NO solving logic of its own; every real
-method delegates to the audited dtalite_qa.api layer (gate + manifest included).
+This is a thin facade: every real method delegates to the audited dtalite_qa.api
+layer (intake gate + reproducibility manifest included). It adds no solving logic.
 """
+import json
 import os
+import shutil
 
 from . import api as _api
 from . import runconfig as _runconfig
 from . import csvio as _csvio
 
-_ROADMAP = ("TAPCI roadmap (not in this 0.x preview): {what}. "
-            "The preview is batch-style -- open/validate/run_until_converged/"
-            "observe_*/export. See private_docs/TAPCI_STRATEGY.md for the R2/R3 plan.")
+_ROADMAP = ("TAPCI Category 3 (roadmap, not in this preview): {what}. "
+            "The preview implements Categories 1-2 (batch run + observe + routing-policy "
+            "I/O). See private_docs/TAPCI_STRATEGY.md for the R2/R3 plan.")
+
+# friendly-name -> actual output column, per observed object
+_LINK_COLS = {"volume": "volume", "speed": "speed_mph", "vc": "doc",
+              "travel_time": "travel_time", "vmt": "VMT", "vht": "VHT"}
+_OD_COLS = {"volume": "volume", "demand": "volume", "distance": "total_distance_mile",
+            "travel_time": "total_congestion_travel_time",
+            "free_flow_travel_time": "total_free_flow_travel_time"}
+_SYS_COLS = {"volume": "total_volume", "vmt": "PMT (VMT in miles)",
+             "vht": "PHT (VHT in hours)", "delay": "Delay (hours)", "tti": "TTI",
+             "speed": "avg_speed_mph"}
 
 
 class TAPCI:
     """A single assignment project: network + pending demand/settings + last run.
 
-    Construct with :meth:`open`. The object is mutable across runs -- edit pending
-    settings with :meth:`set_setting`, call :meth:`run_until_converged` again, and
-    re-observe. The source network folder is never modified (runs happen in an
-    isolated working copy, exactly as :class:`dtalite_qa.api.AssignmentEngine`).
+    Construct with :meth:`open`. Mutable across runs -- edit pending settings with
+    :meth:`set_setting` / :meth:`set_time_period` / :meth:`load_routing_policy`, call
+    :meth:`run_until_converged` again, and re-observe. The source network is never
+    modified (runs happen in an isolated working copy).
     """
 
     def __init__(self, network, exe=None, settings=None, demand=None):
@@ -54,14 +67,16 @@ class TAPCI:
         self._demand = demand
         self._result = None            # dtalite_qa.api.Result of the last run
 
-    # -- A. load ------------------------------------------------------------
+    # =====================================================================
+    # Category 1 -- CORE
+    # =====================================================================
     @classmethod
     def open(cls, project, exe=None):
-        """Open a project.yml run-config OR a GMNS scenario folder.
+        """[Cat 1] Open a project.yml run-config OR a GMNS scenario folder.
 
-        A ``.yml``/``.yaml`` path is parsed as a run-config (its ``input.scenario_folder``,
-        ``assignment`` settings, and ``exe`` become the pending state). A directory is
-        read as a GMNS network folder directly.
+        A ``.yml``/``.yaml`` path is parsed as a run-config (its
+        ``input.scenario_folder``, ``assignment`` settings, and ``exe`` become the
+        pending state). A directory is read as a GMNS network folder directly.
         """
         if os.path.isdir(project):
             return cls(_api.Network.read_gmns(project), exe=exe)
@@ -78,20 +93,26 @@ class TAPCI:
             cfg_exe = os.path.normpath(os.path.join(base, cfg_exe))
         return cls(net, exe=exe or cfg_exe, settings=settings)
 
-    # -- B. validate + run --------------------------------------------------
     def validate(self):
-        """Run the intake gate + schema/accessibility checks; returns the prepare() dict."""
+        """[Cat 1] Intake gate + schema/accessibility checks; returns the prepare() dict."""
         from . import control as _control
         return _control.prepare(self.network.folder)
 
+    def set_setting(self, **kwargs):
+        """[Cat 1] Set pending kernel settings (friendly aliases OK), applied on the
+        NEXT run. Backs anything the kernel reads from settings.csv. Returns self."""
+        self._settings.update(kwargs)
+        return self
+
     def run_until_converged(self, max_iter=None, gap=None, exe=None,
                             override=None, timeout=1800):
-        """Solve to convergence (batch). Returns self so calls can chain.
+        """[Cat 1] Solve to convergence (batch). Returns self so calls can chain.
 
-        ``max_iter`` -> ``iterations``; ``gap`` (a fraction, e.g. 0.001 = 0.1%) ->
-        ``gap_tolerance`` as a percent. Other pending settings from :meth:`set_setting`
-        / the opened config are carried through. The kernel exe must be given here,
-        at :meth:`open`, or on the object.
+        ``max_iter`` -> ``iterations``; ``gap`` (a fraction, 0.001 = 0.1%) ->
+        ``gap_tolerance`` percent. Pending settings from :meth:`set_setting` /
+        :meth:`set_time_period` / :meth:`load_routing_policy` / the opened config are
+        carried through. The kernel exe must be given here, at :meth:`open`, or on the
+        object.
         """
         settings = dict(self._settings)
         if max_iter is not None:
@@ -107,105 +128,220 @@ class TAPCI:
             scen, exe=exe, override=override, timeout=timeout)
         return self
 
-    def run_iteration(self, *a, **k):
-        raise NotImplementedError(_ROADMAP.format(
-            what="step-style run_iteration (one FW iteration with hand-back) needs a "
-                 "stepped/resident kernel"))
-
-    # -- C. observe (read-only; real once a run has produced outputs) --------
     def _require_run(self):
         if self._result is None:
             raise RuntimeError("no run yet: call run_until_converged() first")
         return self._result
 
-    def observe_links(self, variables=None):
-        """link_performance rows, optionally projected to ``variables`` (aliased).
-
-        ``variables`` accepts friendly names (volume, speed, vc, travel_time) mapped to
-        the link_performance columns; unknown names pass through verbatim. Returns a
-        list of dicts.
-        """
-        rows = self._require_run().link_volumes()
+    @staticmethod
+    def _project(rows, variables, alias, key_cols):
         if not variables:
             return rows
-        alias = {"volume": "volume", "speed": "speed_mph", "vc": "doc",
-                 "travel_time": "travel_time", "vmt": "VMT", "vht": "VHT"}
-        keep = [alias.get(v, v) for v in variables]
         out = []
         for r in rows:
-            o = {"link_id": r.get("link_id")}
-            for want, col in zip(variables, keep):
-                o[want] = r.get(col)
+            o = {k: r.get(k) for k in key_cols}
+            for v in variables:
+                o[v] = r.get(alias.get(v, v))
             out.append(o)
         return out
 
-    def observe_paths(self, variables=None):
-        """route_assignment.csv rows (requires the run to have had route_output on).
-
-        Raises a clear message if no path file was written, rather than returning an
-        empty list that reads as "no paths".
-        """
-        run_dir = self._require_run().run_dir
-        p = os.path.join(run_dir, "route_assignment.csv")
-        if not os.path.exists(p):
-            raise RuntimeError(
-                "no route_assignment.csv in the run -- set route_output=1 (via "
-                "set_setting(route_output=1)) before run_until_converged() to observe paths")
-        _, rows = _csvio.read(p)
-        if not variables:
-            return rows
-        return [{v: r.get(v) for v in ["o_zone_id", "d_zone_id", *variables]} for r in rows]
+    def observe_links(self, variables=None):
+        """[Cat 1] link_performance rows, optionally projected to ``variables``
+        (volume/speed/vc/travel_time/vmt/vht; unknown names pass through)."""
+        rows = self._require_run().link_volumes()
+        return self._project(rows, variables, _LINK_COLS, ["link_id"])
 
     def observe_convergence(self):
-        """Per-iteration gap trajectory (list of dicts)."""
+        """[Cat 1] Per-iteration gap trajectory (list of dicts)."""
         return self._require_run().convergence()
 
     def observe_manifest(self):
-        """The run manifest dict (version, hashes, effective settings, MOE, gate)."""
+        """[Cat 1] The run manifest (version, hashes, effective settings, MOE, gate)."""
         return self._require_run().manifest
 
     def moe(self):
-        """System MOEs: VMT / VHT / mean speed / loaded links."""
+        """[Cat 1] System MOEs: VMT / VHT / mean speed / loaded links."""
         return self._require_run().moe()
 
-    def observe_od(self, *a, **k):
-        raise NotImplementedError(_ROADMAP.format(
-            what="OD skim observation (needs the skim writer / Path4GMNS hook)"))
-
-    # -- D. control / modify (honest: next-run scenario edits) --------------
-    def set_setting(self, **kwargs):
-        """Set pending kernel settings (friendly aliases OK) applied on the NEXT run.
-
-        Real and backed today: anything the kernel reads from settings.csv
-        (iterations, gap_tolerance, warm_start_columns, column_adjust_sweeps,
-        route_output, vdf_* defaults, ...). Returns self.
-        """
-        self._settings.update(kwargs)
-        return self
-
-    def _roadmap_control(self, what):
-        raise NotImplementedError(_ROADMAP.format(what=what + " (next-run scenario edit; "
-                                  "planned for TAPCI R2 -- edits link.csv/demand in the "
-                                  "working copy before the next run)"))
-
-    def set_link_capacity(self, *a, **k): self._roadmap_control("set_link_capacity")
-    def set_link_closure(self, *a, **k):  self._roadmap_control("set_link_closure")
-    def set_toll(self, *a, **k):          self._roadmap_control("set_toll")
-    def set_vdf_parameters(self, *a, **k): self._roadmap_control("set_vdf_parameters")
-    def set_od_multiplier(self, *a, **k):  self._roadmap_control("set_od_multiplier")
-
-    # -- E. export ----------------------------------------------------------
     def export(self, folder):
-        """Copy the last run to a durable folder; returns the path."""
+        """[Cat 1] Copy the last run to a durable folder; returns the path."""
         return self._require_run().export(folder)
 
     def export_report(self, out_html=None):
-        """Build the self-contained HTML report for the last run; returns its path."""
+        """[Cat 1] Build the self-contained HTML report for the last run."""
         from . import report_html as _rh
         run_dir = self._require_run().run_dir
         out_html = out_html or os.path.join(run_dir, "report.html")
         _rh.build_report(run_dir, out_html)
         return out_html
+
+    # =====================================================================
+    # Category 2 -- SCENARIO, TIME, PERFORMANCE, ROUTING-POLICY I/O
+    # =====================================================================
+    def set_time_period(self, start_hour, end_hour):
+        """[Cat 2] Set the demand period (start/end hour), applied on the next run.
+
+        Maps to the kernel's ``demand_period_starting_hours`` / ``ending_hours``. The
+        VDF period length (peak-hour factor, queue duration) derives from this window.
+        """
+        self._settings["demand_period_starting_hours"] = start_hour
+        self._settings["demand_period_ending_hours"] = end_hour
+        return self
+
+    def observe_od(self, variables=None):
+        """[Cat 2] od_performance rows (per O-D: volume, distance, free-flow &
+        congested travel time), optionally projected."""
+        rows = self._read_output("od_performance.csv",
+                                 "no od_performance.csv in the run")
+        return self._project(rows, variables, _OD_COLS, ["o_zone_id", "d_zone_id", "mode"])
+
+    def observe_system(self, variables=None):
+        """[Cat 2] system_performance rows (per mode: VMT/VHT/delay/TTI/speed)."""
+        rows = self._read_output("system_performance.csv",
+                                 "no system_performance.csv in the run")
+        return self._project(rows, variables, _SYS_COLS, ["mode_type"])
+
+    def observe_paths(self, variables=None):
+        """[Cat 2] route_assignment rows (needs route_output on). The ``prob`` column
+        is the routing policy (theta share per path)."""
+        rows = self._read_output(
+            "route_assignment.csv",
+            "no route_assignment.csv -- set route_output=1 before run_until_converged()")
+        if not variables:
+            return rows
+        return [{k: r.get(k) for k in ["o_zone_id", "d_zone_id", *variables]} for r in rows]
+
+    def query_paths(self, o_zone, d_zone):
+        """[Cat 2] All routes for one O-D pair (read-only, Path4GMNS-style external
+        query -- inspects route_assignment without touching the engine)."""
+        rows = self._read_output(
+            "route_assignment.csv",
+            "no route_assignment.csv -- set route_output=1 before run_until_converged()")
+        o, d = str(o_zone), str(d_zone)
+        return [r for r in rows
+                if str(r.get("o_zone_id")) == o and str(r.get("d_zone_id")) == d]
+
+    def save_paths(self, path):
+        """[Cat 2] Save the run's path set (route_assignment) to ``path``.
+
+        ``.json`` writes a portable, engine-independent trajectory list
+        (o/d/mode/route_id/prob/node_ids/link_ids/volume/travel_time); any other
+        suffix copies the raw route_assignment.csv. Returns ``path``.
+        """
+        rows = self._read_output(
+            "route_assignment.csv",
+            "no route_assignment.csv -- set route_output=1 before run_until_converged()")
+        if path.lower().endswith(".json"):
+            keep = ["mode", "route_id", "o_zone_id", "d_zone_id", "prob",
+                    "node_ids", "link_ids", "volume", "total_travel_time"]
+            trips = [{k: r.get(k) for k in keep} for r in rows]
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"format": "tapci.paths.v1", "n": len(trips), "paths": trips},
+                          f, indent=1)
+        else:
+            shutil.copy(os.path.join(self._require_run().run_dir,
+                                     "route_assignment.csv"), path)
+        return path
+
+    def save_routing_policy(self, path):
+        """[Cat 2] Persist the routing policy (DTAC column store) to ``path``.
+
+        The last run must have written ``route_columns.bin`` (``column_output=2``);
+        if it did not, this raises with the fix. The saved file is a complete
+        theta-share routing policy that :meth:`load_routing_policy` replays.
+        """
+        src = os.path.join(self._require_run().run_dir, "route_columns.bin")
+        if not os.path.exists(src):
+            raise RuntimeError(
+                "no route_columns.bin in the run -- set_setting(column_output=2) before "
+                "run_until_converged() to capture the routing policy (DTAC store)")
+        shutil.copy(src, path)
+        return path
+
+    def load_routing_policy(self, path, adjust_sweeps=0):
+        """[Cat 2] Load a saved routing policy (DTAC store) as the warm start for the
+        NEXT run. The kernel replays the stored theta shares against the current OD
+        table (demand-invariant policy), so a changed OD reuses the same routing.
+        ``adjust_sweeps`` runs fixed-policy GP sweeps over the loaded columns."""
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"routing policy not found: {path}")
+        self._settings["warm_start_columns"] = os.path.abspath(path)
+        self._settings["column_adjust_sweeps"] = adjust_sweeps
+        return self
+
+    def _read_output(self, name, missing_msg):
+        p = os.path.join(self._require_run().run_dir, name)
+        if not os.path.exists(p):
+            raise RuntimeError(missing_msg)
+        _, rows = _csvio.read(p)
+        return rows
+
+    # =====================================================================
+    # Category 3 -- DYNAMIC / CONTROL / INFORMATION PROVISION (roadmap)
+    # =====================================================================
+    def run_iteration(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(
+            what="step-style run_iteration (one FW iteration with hand-back) needs a "
+                 "stepped/resident kernel"))
+
+    def load_paths(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(
+            what="injecting an EXTERNAL path set as the routing policy (vs replaying the "
+                 "kernel's own DTAC store via load_routing_policy) needs a policy-import "
+                 "loader"))
+
+    def set_routing_policy_from_paths(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(
+            what="building a routing policy from user-supplied paths (day-to-day / dynamic "
+                 "assignment)"))
+
+    def run_day_to_day(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(
+            what="day-to-day / dynamic assignment loop (OD + routing-policy update per day)"))
+
+    def set_information_provision(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(
+            what="information-provision control (message -> path-response experiment)"))
+
+    def set_loading_policy(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(what="network-loading policy control"))
+
+    def set_link_capacity(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(what="live set_link_capacity (next-run edit)"))
+
+    def set_link_closure(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(what="live set_link_closure (next-run edit)"))
+
+    def set_toll(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(what="live set_toll (next-run edit)"))
+
+    def set_vdf_parameters(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(what="live set_vdf_parameters (next-run edit)"))
+
+    def set_od_multiplier(self, *a, **k):
+        raise NotImplementedError(_ROADMAP.format(what="live set_od_multiplier (next-run edit)"))
+
+    # =====================================================================
+    # Introspection -- the API contract (used by docs + contract tests)
+    # =====================================================================
+    @classmethod
+    def categories(cls):
+        """Return the tiered method contract: {category: [method names]}.
+
+        Category 1-2 methods are implemented and backed by the kernel; Category 3
+        methods exist as roadmap stubs that raise NotImplementedError.
+        """
+        return {
+            1: ["open", "validate", "set_setting", "run_until_converged",
+                "observe_links", "observe_convergence", "observe_manifest", "moe",
+                "export", "export_report"],
+            2: ["set_time_period", "observe_od", "observe_system", "observe_paths",
+                "query_paths", "save_paths", "save_routing_policy", "load_routing_policy"],
+            3: ["run_iteration", "load_paths", "set_routing_policy_from_paths",
+                "run_day_to_day", "set_information_provision", "set_loading_policy",
+                "set_link_capacity", "set_link_closure", "set_toll",
+                "set_vdf_parameters", "set_od_multiplier"],
+        }
 
     def __repr__(self):
         state = "no-run" if self._result is None else (
