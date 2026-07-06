@@ -198,8 +198,22 @@ class TapciEnvLoop(unittest.TestCase):
         self.assertIsInstance(r1, float)
         self.assertGreater(o1["vmt"], obs["vmt"])          # +10% demand -> more VMT
         self.assertFalse(done)
+        self.assertEqual(len(o1["kpis"]), 10)              # obs carries the KPI vector
         o2, r2, _, _ = env.step({"type": "noop"})
         self.assertIsInstance(r2, float)
+        env.close()
+
+    def test_kpi_weighted_reward(self):
+        """A KPI-weighted objective as the reward: minimizing delay, a +demand step
+        (more delay) must yield a negative reward."""
+        from dtalite_qa.tapci_env import TAPCIEnv
+        env = TAPCIEnv(SKETCH, exe=EXE, reward={"total_delay_hours": -1.0},
+                       co2_kg_per_mile=0.4, max_iter=10)
+        env.reset()
+        _, reward, _, info = env.step({"type": "od_multiplier", "factor": 1.25})
+        self.assertIsInstance(reward, float)
+        self.assertLess(reward, 0.0, "more demand -> more delay -> negative reward")
+        self.assertIsNotNone(info["kpis"]["co2_proxy_kg"])   # proxy available (factor set)
         env.close()
 
 

@@ -220,6 +220,34 @@ class EnvContract(unittest.TestCase):
         with self.assertRaises(ValueError):
             TAPCIEnv(SKETCH, reward="nonsense")
 
+    def test_reward_spec_validation(self):
+        from dtalite_qa.tapci_env import TAPCIEnv
+        TAPCIEnv(SKETCH, reward="vht")                      # str ok
+        TAPCIEnv(SKETCH, reward={"vht_hours": -1.0})        # KPI dict ok
+        TAPCIEnv(SKETCH, reward=lambda p, n: 0.0)           # callable ok
+        with self.assertRaises(ValueError):
+            TAPCIEnv(SKETCH, reward={"not_a_kpi": 1.0})     # unknown KPI
+        with self.assertRaises(ValueError):
+            TAPCIEnv(SKETCH, reward={})                     # empty dict
+        with self.assertRaises(TypeError):
+            TAPCIEnv(SKETCH, reward=123)                    # wrong type
+
+    def test_kpi_weighted_reward_math(self):
+        """reward = step-change in the weighted KPI objective (no kernel needed)."""
+        from dtalite_qa.tapci_env import TAPCIEnv
+        env = TAPCIEnv(SKETCH, reward={"vht_hours": -1.0})
+        env._prev_kpis = {"vht_hours": 100.0}
+        # VHT 100 -> 90 with weight -1: objective -90 - (-100) = +10 (improvement)
+        self.assertAlmostEqual(env._reward({}, {"vht_hours": 90.0}), 10.0, places=6)
+        # VHT worsens 100 -> 120: reward negative
+        self.assertAlmostEqual(env._reward({}, {"vht_hours": 120.0}), -20.0, places=6)
+
+    def test_callable_reward(self):
+        from dtalite_qa.tapci_env import TAPCIEnv
+        env = TAPCIEnv(SKETCH, reward=lambda p, n: p["vht_hours"] - n["vht_hours"])
+        env._prev_kpis = {"vht_hours": 100.0}
+        self.assertAlmostEqual(env._reward({}, {"vht_hours": 70.0}), 30.0, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

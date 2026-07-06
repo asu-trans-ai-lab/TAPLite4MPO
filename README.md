@@ -111,7 +111,9 @@ neither can bypass the gate):
   audited API + kernel. There's also an offline day-to-day / information-provision
   loop (`run_day_to_day`, driven by an external policy function) and an
   assignment-based RL environment (`dtalite_qa.tapci_env.TAPCIEnv`,
-  `reset`/`step`/reward). A separate, kernel-independent **KPI4MPO/NPO** layer
+  `reset`/`step`; `reward=` accepts a MOE shortcut string, a **KPI-weighted
+  objective dict** e.g. `{"vht_hours": -1.0, "co2_proxy_kg": -1e-4}`, or a
+  callable). A separate, kernel-independent **KPI4MPO/NPO** layer
   (`dtalite_qa.kpi`) turns any run into decision KPIs (VMT, VHT, delay, speed,
   max V/C, OD-skim time, + CO2/person-delay proxies), KPI deltas, and a weighted
   objective/reward. **Category 3**
