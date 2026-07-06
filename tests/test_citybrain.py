@@ -95,10 +95,15 @@ class KpiAggregateUnit(unittest.TestCase):
 
 
 def _find_exe():
-    for c in (os.environ.get("DTALITE_EXE"),
-              os.path.join(REPO, "bin", "DTALite.exe"),
+    env = os.environ.get("DTALITE_EXE")
+    if env and os.path.exists(env):
+        return env
+    for c in (os.path.join(REPO, "bin", "DTALite.exe"),
+              os.path.join(REPO, "bin", "DTALite"),
               os.path.join(REPO, "release_v0.2.0", "DTALite.exe")):
-        if c and os.path.exists(c):
+        if os.path.exists(c):
+            if c.endswith(".exe") and os.name != "nt":
+                continue   # a committed Windows .exe is not runnable on Linux/macOS
             return c
     return None
 
