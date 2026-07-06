@@ -13,6 +13,16 @@ import shutil
 from . import csvio
 from . import schema
 
+# kernel OUTPUT files (lowercase): never copy these into a run dir -- stale
+# numbers left by a previous/crashed run in the source folder would otherwise
+# masquerade as this run's results in Result.moe()/manifest
+KERNEL_OUTPUTS = frozenset((
+    "link_performance.csv", "route_assignment.csv", "agent.csv",
+    "od_performance.csv", "system_performance.csv", "origin_accessibility.csv",
+    "destination_accessibility.csv", "inaccessible_od.csv", "tap_log.csv",
+    "summary_log_file.txt",
+))
+
 
 def _fill_links(scenario, out, log):
     header, rows = csvio.read(csvio.path(scenario, "link.csv"))
@@ -106,6 +116,8 @@ def fill(scenario, out_dir):
     for name in os.listdir(scenario):
         if name in ("node.csv", "link.csv", "settings.csv", "mode_type.csv"):
             continue
+        if name.lower() in KERNEL_OUTPUTS or name.lower().endswith(".log"):
+            continue  # stale kernel outputs must not travel into the run dir
         if name.endswith(".csv"):
             src = csvio.path(scenario, name)
             if os.path.isfile(src):

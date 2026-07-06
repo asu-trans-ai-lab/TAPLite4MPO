@@ -14,7 +14,11 @@ import shutil
 import subprocess
 import tempfile
 
-__version__ = "0.1.0"
+try:  # single-source: the installed distribution version (pyproject.toml)
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("taplite4mpo")
+except Exception:  # repo checkout without install
+    __version__ = "0.3.0"
 
 # --- in-process kernel via a C-ABI shared library (the Path4GMNS / DTALite pattern) ---------
 # The kernel is built as DTALite.dll / libDTALite.so / libDTALite.dylib exporting the C symbol

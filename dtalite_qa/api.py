@@ -105,7 +105,8 @@ class Demand:
 
     def __init__(self, network, files=None):
         self.network = network
-        self.files = files or self._discover(network)
+        # None -> auto-discover; an explicit (even empty) list is honored as-is
+        self.files = self._discover(network) if files is None else list(files)
 
     @staticmethod
     def _discover(network):
@@ -250,6 +251,15 @@ class Result:
         if os.path.abspath(self.run_dir) == folder:
             return folder
         if os.path.exists(folder):
+            # only clobber an empty dir or a prior run export (has manifest.json);
+            # anything else is the user's data
+            is_run = os.path.isdir(folder) and (
+                not os.listdir(folder)
+                or os.path.exists(os.path.join(folder, "manifest.json")))
+            if not is_run:
+                raise ValueError(
+                    f"refusing to overwrite non-run folder {folder} "
+                    "(not empty and has no manifest.json); pick another path or delete it")
             shutil.rmtree(folder)
         shutil.copytree(self.run_dir, folder)
         self.run_dir = folder
@@ -307,6 +317,16 @@ class AssignmentEngine:
         work_src = src
         tmp_patch = None
         if scenario.settings or needs_demand_patch:
+            # Gate-check the SOURCE first: the audit copied below gets a fresh
+            # mtime (which would un-stale a stale audit), so carrying it forward is
+            # only sound once the source itself passes -- the only diffs in the copy
+            # vs the source are the API-authored settings/demand patches.
+            ok, status, reason = _control.check_intake_gate(src, override=override)
+            if not ok:
+                raise RuntimeError(
+                    f"intake gate {status}: {reason}\n"
+                    f"  declare conventions in {src}/submission.yml and run intake, "
+                    f"or pass override='who/why'.")
             import tempfile
             tmp_patch = tempfile.mkdtemp(prefix="dtalite_api_")
             _copy_scenario(src, tmp_patch)
@@ -376,20 +396,29 @@ def _declared_demand_files(folder):
 def _demand_differs(folder, composed_files):
     """True when the composed Demand.files differ from mode_type.csv's declaration.
 
-    When they match (the common ``from_network`` case) no patch is needed and we can
-    run the source folder directly.
+    When they match as a SET of basenames (the common ``from_network`` case, in any
+    order) no patch is needed: the declared mapping is authoritative and we can run
+    the source folder directly.
     """
     if not composed_files:
         return False
-    return list(composed_files) != _declared_demand_files(folder)
+    comp = {os.path.basename(f) for f in composed_files}
+    decl = {os.path.basename(f) for f in _declared_demand_files(folder)}
+    return comp != decl
 
 
 def _patch_demand(folder, demand_files):
     """Write the composed demand file list into the working copy's mode_type.csv.
 
-    Assigns demand_files[i] to the i-th mode row (positional). Extra composed files
-    beyond the declared mode rows are appended as additional single-mode rows so the
-    kernel loads exactly the composed set. If mode_type.csv is absent it is created.
+    A demand file's mode row decides its PCE/VOT, so files are matched to rows BY
+    NAME wherever possible: every composed file whose basename appears in the
+    declared demand_file column stays on its DECLARED row (no swap is possible),
+    declared rows not covered by the composed list get their demand_file cleared
+    (the kernel must not load a file the Demand dropped), and genuinely-new files
+    are appended as additional single-mode rows. A list with NO name overlap maps
+    positionally, and only when its count matches the mode rows -- anything else
+    would silently reassign demand between modes and raises instead. If
+    mode_type.csv is absent it is created.
     """
     p = os.path.join(folder, "mode_type.csv")
     if os.path.exists(p):
@@ -399,20 +428,46 @@ def _patch_demand(folder, demand_files):
                         "occ", "demand_file"], []
     if "demand_file" not in header:
         header.append("demand_file")
-    new_rows = []
-    for i, df in enumerate(demand_files):
-        if i < len(rows):
+    decl_pos = {}
+    for i, r in enumerate(rows):
+        df = (r.get("demand_file") or "").strip()
+        if df:
+            decl_pos.setdefault(os.path.basename(df), i)
+    overlap = [f for f in demand_files if os.path.basename(f) in decl_pos]
+
+    if rows and not overlap:
+        # no name overlap: positional is the only mapping, and it must be total
+        if len(demand_files) != len(rows):
+            raise ValueError(
+                f"{len(demand_files)} demand file(s) cannot map positionally onto "
+                f"{len(rows)} mode_type.csv rows; edit mode_type.csv's demand_file "
+                "column instead")
+        new_rows = []
+        for i, df in enumerate(demand_files):
             row = dict(rows[i])
-        else:
-            row = {"mode_type_id": i + 1, "mode_type": "sov", "name": "DRIVE",
-                   "vot": 10, "pce": 1, "occ": 1}
-        row["demand_file"] = df
-        new_rows.append(row)
-    # keep any remaining declared mode rows but clear their (now-unused) demand_file
-    for r in rows[len(demand_files):]:
+            row["demand_file"] = df
+            new_rows.append(row)
+        csvio.write(p, header, new_rows)
+        return
+
+    # name-keyed: declared rows keep their own file; declared rows NOT covered by
+    # the composed list are DROPPED (not blanked -- fill's MODE_DEFAULTS would
+    # re-fill an empty demand_file with "demand.csv" and multi-load the demand);
+    # genuinely-new files are appended as single-mode rows.
+    covered = {os.path.basename(f): f for f in demand_files}
+    new_rows = []
+    for r in rows:
         row = dict(r)
-        row["demand_file"] = ""
+        base = os.path.basename((r.get("demand_file") or "").strip())
+        if base:
+            if base not in covered:
+                continue  # demand dropped by the composed list -> drop the mode row
+            row["demand_file"] = covered.pop(base)
         new_rows.append(row)
+    for base, df in covered.items():  # genuinely-new files
+        new_rows.append({"mode_type_id": len(new_rows) + 1, "mode_type": "sov",
+                         "name": "DRIVE", "vot": 10, "pce": 1, "occ": 1,
+                         "demand_file": df})
     csvio.write(p, header, new_rows)
 
 

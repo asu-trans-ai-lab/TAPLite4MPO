@@ -56,7 +56,7 @@ dtalite_qa = ["templates/*.yml"]
 # cp38 dropped: Python 3.8 is EOL (Oct 2024) and its macOS wheels default to the
 # macosx_10_9 platform tag, which a C++17 extension cannot satisfy -- delocate-wheel
 # rejected the cp38 repaired wheel in CI on the v0.2.0 tag. 3.8 users still get the sdist.
-build = "cp39-* cp310-* cp311-* cp312-*"
+build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
 skip = "*-musllinux_i686 *_i686 pp*"
 build-verbosity = 1
 

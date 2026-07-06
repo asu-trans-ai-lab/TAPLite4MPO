@@ -15,4 +15,8 @@ from . import (schema, csvio, validate, fill, inventory, accessibility, control,
 
 __all__ = ["schema", "csvio", "validate", "fill", "inventory", "accessibility",
            "control", "manifest", "report", "demandbin", "adapt", "plf"]
-__version__ = "0.1.0"
+try:  # single-source: the installed distribution version (pyproject.toml)
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("taplite4mpo")
+except Exception:  # repo checkout without install
+    __version__ = "0.3.0"

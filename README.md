@@ -98,6 +98,12 @@ neither can bypass the gate):
   If the `taplite` script is not on your PATH (e.g. a `--user` install), run it as
   `python -m dtalite_qa.taplite_cli <verb> ...`.
 
+  > **pip users**: the examples above assume a repo clone — `configs/`, the
+  > sample networks, and the kernel exe (`bash build.sh` -> `bin/DTALite.exe`)
+  > live in the repo, not in the wheel. With only `pip install taplite4mpo`,
+  > point `taplite run` at your own scenario + config and set `assignment.exe`
+  > (or `--exe`) to your kernel build.
+
 ## 2. Reproduce a run (open benchmark networks — no extra data needed)
 
 ```bash

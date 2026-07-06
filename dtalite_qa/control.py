@@ -9,6 +9,7 @@ This is the stable entry point for automated/batch use: a scenario that passes
 prepare() has explicit defaults, sorted links, no dangling references, and a
 known accessibility profile before a single iteration runs.
 """
+import csv
 import json
 import os
 import shutil
@@ -22,7 +23,23 @@ from . import accessibility as _accessibility
 
 # input files whose modification invalidates a previous intake audit
 _INTAKE_INPUTS = ("link.csv", "node.csv", "settings.csv", "mode_type.csv",
-                  "demand.csv", "submission.yml")
+                  "demand.csv", "movement.csv", "submission.yml")
+
+
+def _declared_demand_files(scenario):
+    """demand_file values declared in mode_type.csv (lenient; never raises)."""
+    files = []
+    try:
+        with open(os.path.join(scenario, "mode_type.csv"), newline="",
+                  encoding="utf-8-sig") as f:
+            for r in csv.DictReader(f):
+                df = ((r.get("demand_file") or "").strip()
+                      if isinstance(r, dict) else "")
+                if df and df not in files:
+                    files.append(df)
+    except (OSError, csv.Error, UnicodeDecodeError):
+        pass
+    return files
 
 
 def check_intake_gate(scenario, override=None):
@@ -40,7 +57,8 @@ def check_intake_gate(scenario, override=None):
         st = ("ABSENT", "intake has not been run: python -m dtalite_qa intake <scenario>")
     else:
         try:
-            gate = json.load(open(p, encoding="utf-8")).get("gate", "BLOCKED")
+            with open(p, encoding="utf-8") as f:
+                gate = json.load(f).get("gate", "BLOCKED")
         except (ValueError, OSError):
             gate = "BLOCKED"
         if gate != "READY":
@@ -48,7 +66,9 @@ def check_intake_gate(scenario, override=None):
                              "(open intake_dashboard.html) and re-run intake")
         else:
             audit_t = os.path.getmtime(p)
-            newer = [f for f in _INTAKE_INPUTS
+            # per-mode demand files declared in mode_type.csv count as inputs too
+            inputs = list(_INTAKE_INPUTS) + _declared_demand_files(scenario)
+            newer = [f for f in inputs
                      if os.path.exists(os.path.join(scenario, f))
                      and os.path.getmtime(os.path.join(scenario, f)) > audit_t + 1]
             st = (("STALE", f"inputs changed after the intake audit ({', '.join(newer)}); "
@@ -101,10 +121,13 @@ def run(scenario, exe, out_dir=None, timeout=1800, override=None, enforce_intake
         # null (indistinguishable from a clean, gate-checked run).
         result["intake_gate"] = "UNCHECKED (enforce_intake=False)"
         result["override"] = override or None
+    made_out_dir = out_dir is None
     out_dir = out_dir or tempfile.mkdtemp(prefix="dtalite_run_")
     result.update(prepare(scenario, out_dir=out_dir, do_fill=True))
     result["ran"] = False
     if not result["ok"]:
+        if made_out_dir:  # don't leave an empty/partial tempdir behind
+            shutil.rmtree(out_dir, ignore_errors=True)
         return result
     if not exe or not os.path.exists(exe):
         raise FileNotFoundError(
@@ -114,8 +137,21 @@ def run(scenario, exe, out_dir=None, timeout=1800, override=None, enforce_intake
             "DTALite.exe) and pass --exe bin/DTALite.exe.  See docs/ARCHITECTURE.md.")
     exe_local = os.path.join(out_dir, os.path.basename(exe))
     shutil.copy(exe, exe_local)
-    p = subprocess.run([exe_local], cwd=out_dir, capture_output=True, text=True, timeout=timeout)
+    # decode with errors="replace": kernel output bytes must never raise
+    # UnicodeDecodeError after a long solve
+    _s = lambda x: x.decode("utf-8", errors="replace") if isinstance(x, bytes) else (x or "")
+    try:
+        p = subprocess.run([exe_local], cwd=out_dir, capture_output=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        result["ran"] = True
+        result["returncode"] = "timeout"
+        result["ok"] = False
+        result["log"] = (_s(e.stdout) + _s(e.stderr) +
+                         f"\nkernel timed out after {timeout}s; partial outputs in {out_dir}\n")
+        return result
     result["returncode"] = p.returncode
     result["log"] = p.stdout + p.stderr
     result["ran"] = True
+    result["ok"] = result["ok"] and p.returncode == 0
     return result

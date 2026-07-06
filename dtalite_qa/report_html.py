@@ -212,20 +212,22 @@ def build_report(run_dir, out_html=None, project_name=None):
     def row(k, v):
         return f'<tr><td class="k">{html.escape(str(k))}</td><td>{v}</td></tr>'
 
+    final_gap = conv.get("final_gap_pct")
+    if final_gap is None:
+        final_gap = rep.get("final_gap_pct")
     summary_rows = "".join([
         row("Project", html.escape(str(title))),
-        row("Nodes", f"{nodes:,}" if nodes else "&mdash;"),
-        row("Links", f"{links:,}" if links else "&mdash;"),
-        row("Zones", f"{zones:,}" if zones else "&mdash;"),
-        row("OD trips", f"{trips:,.0f}" if trips else "&mdash;"),
+        row("Nodes", f"{nodes:,}" if nodes is not None else "&mdash;"),
+        row("Links", f"{links:,}" if links is not None else "&mdash;"),
+        row("Zones", f"{zones:,}" if zones is not None else "&mdash;"),
+        row("OD trips", f"{trips:,.0f}" if trips is not None else "&mdash;"),
     ])
     moe_rows = "".join([
         row("System VMT", f"{moe.get('vmt', 0):,.0f}"),
         row("System VHT", f"{moe.get('vht', 0):,.0f}"),
         row("Mean speed (mph)", moe.get("mean_speed_mph") or "&mdash;"),
         row("Loaded links", f"{moe.get('loaded_links', 0):,} / {moe.get('links', 0):,}"),
-        row("Final relative gap %",
-            conv.get("final_gap_pct") or rep.get("final_gap_pct") or "&mdash;"),
+        row("Final relative gap %", final_gap if final_gap is not None else "&mdash;"),
         row("Iterations", conv.get("iterations", len(traj))),
         row("Links with V/C &gt; 1.0", f"{n_over1:,}"),
     ])
@@ -310,9 +312,12 @@ _MAP_TEMPLATE = """
 <script>
 const SEGS = __SEGS__;
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
-let xs=SEGS.map(s=>[s[0],s[2]]).flat(), ys=SEGS.map(s=>[s[1],s[3]]).flat();
-const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
-const vmax=Math.max(...SEGS.map(s=>s[4]),1);
+// plain min/max loop -- spread args throw RangeError above ~65k links
+let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity,vmax=1;
+for(const s of SEGS){
+ if(s[0]<x0)x0=s[0]; if(s[0]>x1)x1=s[0]; if(s[2]<x0)x0=s[2]; if(s[2]>x1)x1=s[2];
+ if(s[1]<y0)y0=s[1]; if(s[1]>y1)y1=s[1]; if(s[3]<y0)y0=s[3]; if(s[3]>y1)y1=s[3];
+ if(s[4]>vmax)vmax=s[4];}
 function color(t){t=Math.max(0,Math.min(1,t));
  return t<0.5?`rgb(${46+t*2*(241-46)},${204+t*2*(196-204)},${113+t*2*(15-113)})`
             :`rgb(${241+(t-0.5)*2*(231-241)},${196+(t-0.5)*2*(76-196)},${15+(t-0.5)*2*(60-15)})`;}

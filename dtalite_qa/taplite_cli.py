@@ -14,6 +14,7 @@ Everything under `python -m dtalite_qa ...` keeps working unchanged.
 import argparse
 import json
 import os
+import subprocess
 import sys
 
 from . import control as _control
@@ -34,6 +35,9 @@ def _find_manifest(run_dir):
 # ---------------------------------------------------------------------------
 def cmd_validate(args):
     scenario = args.scenario
+    if not os.path.isdir(scenario):
+        print(f"scenario folder not found: {scenario}", file=sys.stderr)
+        return 2
     print(f"== taplite validate {scenario} ==")
     # 1) the no-guessing intake gate (inherited, non-negotiable)
     ok, status, reason = _control.check_intake_gate(scenario)
@@ -78,13 +82,23 @@ def cmd_run(args):
         # gate refusal or validation failure surfaces here
         print(f"REFUSED: {e}", file=sys.stderr)
         return 1
+    except subprocess.TimeoutExpired as e:
+        print(f"kernel timed out after {e.timeout}s -- raise assignment.timeout "
+              f"in the config", file=sys.stderr)
+        return 3
     r = res["result"]
+    if r.returncode == "timeout":
+        print("kernel timed out -- raise assignment.timeout in the config",
+              file=sys.stderr)
+        return 3
+    gap = r.final_gap_pct()
+    spd = (r.moe() or {}).get("mean_speed_mph")
     print(f"  gate: {r.manifest.get('intake_gate')}   iterations: "
           f"{r.manifest.get('convergence', {}).get('iterations')}   "
-          f"final gap: {r.final_gap_pct()}%")
+          f"final gap: {f'{gap}%' if gap is not None else 'n/a'}")
     moe = r.moe() or {}
     print(f"  VMT {moe.get('vmt', 0):,.0f}  VHT {moe.get('vht', 0):,.0f}  "
-          f"mean speed {moe.get('mean_speed_mph')} mph  "
+          f"mean speed {f'{spd} mph' if spd is not None else 'n/a'}  "
           f"loaded {moe.get('loaded_links', 0):,}/{moe.get('links', 0):,}")
     print(f"  run folder : {res['run_dir']}")
     print(f"  manifest   : {os.path.join(res['run_dir'], 'manifest.json')}")
@@ -102,7 +116,11 @@ def cmd_report(args):
               file=sys.stderr)
         return 2
     out = args.out or os.path.join(run_dir, "report.html")
-    path = _rh.build_report(run_dir, out_html=out, project_name=args.name)
+    try:
+        path = _rh.build_report(run_dir, out_html=out, project_name=args.name)
+    except FileNotFoundError as e:
+        print(f"not found: {e}", file=sys.stderr)
+        return 2
     print(f"== taplite report {run_dir} ==")
     print(f"  self-contained HTML report -> {path}")
     return 0
@@ -115,8 +133,14 @@ def cmd_compare(args):
         print(f"no manifest.json for {miss} (run it through `taplite run` first)",
               file=sys.stderr)
         return 2
-    a = json.load(open(ma, encoding="utf-8"))
-    b = json.load(open(mb, encoding="utf-8"))
+    try:
+        bad = ma
+        a = json.load(open(ma, encoding="utf-8"))
+        bad = mb
+        b = json.load(open(mb, encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"corrupt manifest {bad}: {e}", file=sys.stderr)
+        return 2
     d = _manifest.diff_manifests(a, b)
     print(f"== taplite compare ==")
     print(f"  A: {ma}")
@@ -133,8 +157,8 @@ def cmd_compare(args):
         pct = ""
         if isinstance(va, (int, float)) and isinstance(vb, (int, float)) and va:
             pct = f"{(vb - va) / va * 100:+.2f}%"
-        fa = f"{va:,.1f}" if isinstance(va, (int, float)) else str(va)
-        fb = f"{vb:,.1f}" if isinstance(vb, (int, float)) else str(vb)
+        fa = f"{va:,.1f}" if isinstance(va, (int, float)) else ("n/a" if va is None else str(va))
+        fb = f"{vb:,.1f}" if isinstance(vb, (int, float)) else ("n/a" if vb is None else str(vb))
         print(f"  {k:16} {fa:>14}  {fb:>14}   {pct:>8}")
 
     # convergence + changed inputs/settings

@@ -14,6 +14,7 @@ Schema (all keys optional except input.scenario_folder)::
       iterations: 20
       gap_tolerance: 0.01          # convergence_gap_pct (0 = run all iterations)
       processors: 8                # optional
+      timeout: 3600                # optional kernel wall-clock limit, seconds (default 1800)
       warm_start_columns: ""       # optional path to a prior route_columns.bin
     output:
       folder: runs/chicago_baseline
@@ -36,7 +37,12 @@ except Exception:                                     # pragma: no cover
 
 def load(path):
     """Parse a run-config YAML into a dict (pyyaml if present, else a small parser)."""
-    text = open(path, encoding="utf-8").read()
+    try:
+        text = open(path, encoding="utf-8-sig").read()
+    except UnicodeDecodeError as e:
+        raise ValueError(
+            f"{path}: not valid UTF-8 ({e}). Save the config as UTF-8 "
+            f"(PowerShell: Out-File -Encoding utf8).") from None
     if _yaml is not None:
         cfg = _yaml.safe_load(text) or {}
     else:
@@ -79,7 +85,9 @@ def run(config_path, exe=None, do_report=None):
     if "processors" in asg:
         settings["number_of_processors"] = asg["processors"]
     if asg.get("warm_start_columns"):
-        settings["warm_start_columns"] = asg["warm_start_columns"]
+        # resolve relative to the config dir -- the kernel runs in a tempdir,
+        # so an unresolved relative path silently cold-starts
+        settings["warm_start_columns"] = _resolve(base, asg["warm_start_columns"])
     if "assignment_method" in asg:
         settings["assignment_method"] = asg["assignment_method"]
 
@@ -96,7 +104,8 @@ def run(config_path, exe=None, do_report=None):
     scen = _api.Scenario(net, _api.Demand.from_network(net), settings=settings)
 
     t0 = time.time()
-    result = _api.AssignmentEngine().run(scen, exe=exe_path, override=cfg.get("override"))
+    kw = {"timeout": int(asg["timeout"])} if asg.get("timeout") else {}
+    result = _api.AssignmentEngine().run(scen, exe=exe_path, override=cfg.get("override"), **kw)
     wall = time.time() - t0
 
     if out_folder:
@@ -120,7 +129,7 @@ def _parse_minimal(text):
     lists (``- item``) and raises on encountering one rather than silently dropping
     it. Install pyyaml (``pip install taplite4mpo[runconfig]``) for full YAML.
     """
-    root, cur = {}, None
+    root, cur, child_indent = {}, None, None
     for lineno, raw in enumerate(text.splitlines(), 1):
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
@@ -134,21 +143,38 @@ def _parse_minimal(text):
         if ":" not in line:
             continue
         key, _, val = line.strip().partition(":")
-        key, val = key.strip(), val.strip().strip('"').strip("'")
+        key, val = key.strip(), val.strip()
+        if val.startswith(("[", "{")):
+            raise ValueError(
+                f"line {lineno}: YAML flow collections ('[...]' / '{{...}}') are not "
+                f"supported by the stdlib fallback parser. Install pyyaml (pip install "
+                f"taplite4mpo[runconfig]) to use them.")
+        val = val.strip('"').strip("'")
         if indent == 0:
             if val == "":
                 root[key] = cur = {}
             else:
                 root[key] = _coerce(val)
                 cur = None
+            child_indent = None
         elif cur is not None:
+            if child_indent is None:
+                child_indent = indent
+            elif indent > child_indent:
+                raise ValueError(
+                    f"line {lineno}: nested mappings beyond 2 levels are not supported "
+                    f"by the stdlib fallback parser. Install pyyaml (pip install "
+                    f"taplite4mpo[runconfig]) to use deeper nesting.")
             cur[key] = _coerce(val)
     return root
 
 
 def _strip_comment(raw):
     """Strip an inline '#' comment only when it is preceded by whitespace (or starts
-    the value), so unquoted values containing '#' (e.g. a color '#ff0') are kept."""
+    the value), so unquoted values containing '#' (e.g. a color '#ff0') are kept.
+    Quoted values (value starts with a quote) are left untouched."""
+    if raw.partition(":")[2].strip()[:1] in ('"', "'"):
+        return raw
     out, prev_ws = [], True
     for ch in raw:
         if ch == "#" and prev_ws:
