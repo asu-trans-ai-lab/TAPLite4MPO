@@ -1,11 +1,14 @@
 name: tapci-ci
 
 # Auto-tests the TAPCI interface at two levels (Track C of the three-track strategy):
-#   contract  -- Category 1/2 surface + Category 3 roadmap + observe/save logic on
-#                canned fixtures. No kernel; runs in seconds on every push/PR.
-#   kernel    -- full Category 1/2 loop on Chicago Sketch with a freshly built
-#                DTALite kernel: run -> observe link/OD/system -> save routing policy
-#                (DTAC) -> reload as warm start -> confirm fast replay -> export.
+#   contract  -- Category 1/2 surface + Category 3 roadmap + observe/skim/save +
+#                scenario-edit MECHANICS + RL-env action validation, all on canned
+#                fixtures. No kernel; runs in seconds on every push/PR.
+#   kernel    -- full Category 1/2 loop + one-period ENVIRONMENT on Chicago Sketch
+#                with a freshly built DTALite kernel: run -> observe link/OD/system/
+#                skims -> save/load routing policy (DTAC) -> CAUSAL scenario edits
+#                (closure zeros the link, source untouched) -> repeated-run stream
+#                stability -> RL env reset/step -> export.
 
 on:
   push:

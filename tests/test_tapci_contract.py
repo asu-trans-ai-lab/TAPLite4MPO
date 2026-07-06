@@ -143,5 +143,83 @@ class Category2IO(unittest.TestCase):
         self.assertEqual(sim._settings["demand_period_ending_hours"], 9)
 
 
+class SkimService(unittest.TestCase):
+    def setUp(self):
+        self.sim = _sim_with_fake_run()
+
+    def test_observe_skims(self):
+        rows = self.sim.observe_skims()
+        self.assertEqual(rows[0]["skim_time"], 6.0)          # congested tt
+        self.assertEqual(rows[0]["skim_distance"], 3.0)
+        self.assertTrue(rows[0]["path_available"])
+
+    def test_query_skim_found_and_missing(self):
+        self.assertTrue(self.sim.query_skim(1, 2)["path_available"])
+        miss = self.sim.query_skim(9, 9)
+        self.assertFalse(miss["path_available"])
+        self.assertIsNone(miss["skim_time"])
+
+    def test_save_skims_json(self):
+        out = os.path.join(tempfile.mkdtemp(), "skims.json")
+        self.sim.save_skims(out)
+        with open(out, encoding="utf-8") as f:
+            doc = json.load(f)
+        self.assertEqual(doc["format"], "tapci.skims.v1")
+        self.assertGreater(doc["n"], 0)
+
+
+class ScenarioEditLogic(unittest.TestCase):
+    """The edit MECHANICS, exercised without a kernel by applying edits to a
+    fixture link.csv and reading the result back."""
+
+    def _link_fixture(self):
+        d = tempfile.mkdtemp(prefix="tapci_link_")
+        _write_csv(os.path.join(d, "link.csv"),
+                   ["link_id", "capacity", "vdf_toll", "allowed_uses"],
+                   [{"link_id": "10", "capacity": "1000", "vdf_toll": "0", "allowed_uses": "all"},
+                    {"link_id": "20", "capacity": "2000", "vdf_toll": "0", "allowed_uses": "all"}])
+        return d
+
+    def test_set_methods_record_edits(self):
+        sim = TAPCI(_api.Network.read_gmns(SKETCH))
+        sim.set_link_closure([10]).set_link_capacity([20], factor=0.5)
+        sim.set_toll([30], 2.5).set_od_multiplier(1.1, o_zones=[1])
+        ops = {e["op"] for e in sim._edits}
+        self.assertEqual(ops, {"closure", "capacity", "toll", "od_mult"})
+        self.assertEqual(len(sim.clear_edits()._edits), 0)
+
+    def test_capacity_needs_exactly_one_of(self):
+        sim = TAPCI(_api.Network.read_gmns(SKETCH))
+        with self.assertRaises(ValueError):
+            sim.set_link_capacity([1])                       # neither
+        with self.assertRaises(ValueError):
+            sim.set_link_capacity([1], factor=2, value=5)    # both
+
+    def test_apply_link_edits_writes_expected_columns(self):
+        d = self._link_fixture()
+        ops = [{"op": "closure", "links": {"10"}},
+               {"op": "capacity", "links": {"20"}, "factor": 0.5, "value": None},
+               {"op": "toll", "links": {"20"}, "toll": 3.0}]
+        TAPCI._apply_link_edits(d, ops)
+        _, rows = csvio.read(os.path.join(d, "link.csv"))
+        by_id = {r["link_id"]: r for r in rows}
+        # closure writes the singular allowed_use the kernel reads
+        self.assertEqual(by_id["10"]["allowed_use"], "closed")
+        self.assertEqual(float(by_id["20"]["capacity"]), 1000.0)   # 2000 * 0.5
+        self.assertEqual(float(by_id["20"]["vdf_toll"]), 3.0)
+
+
+class EnvContract(unittest.TestCase):
+    def test_env_import_and_action_validation(self):
+        from dtalite_qa.tapci_env import TAPCIEnv
+        env = TAPCIEnv(SKETCH)                     # open reads the network; no solve
+        self.assertEqual(set(env.action_space()),
+                         {"noop", "link_closure", "link_capacity", "toll", "od_multiplier"})
+        with self.assertRaises(ValueError):
+            env._apply({"type": "bogus"})
+        with self.assertRaises(ValueError):
+            TAPCIEnv(SKETCH, reward="nonsense")
+
+
 if __name__ == "__main__":
     unittest.main()

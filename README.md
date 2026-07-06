@@ -102,13 +102,18 @@ neither can bypass the gate):
   # ...later: reuse that policy on new demand and execute in ~1 iteration
   TAPCI.open("project.yml", exe="...").load_routing_policy("policy.dtac").run_until_converged()
   ```
-  **Category 1** (core run/observe/export) and **Category 2** (time period, OD/
-  system/path performance, save & reload the routing policy) are real and backed
-  by the audited API + kernel output files. **Category 3** (step-style
-  `run_iteration`, live control `set_toll`/`set_link_capacity`, external routing
-  policy `load_paths`, `run_day_to_day` / information provision) raises a clear
-  roadmap error rather than faking a no-op. Auto-tested in CI
-  (`.github/workflows/tapci-ci.yml`: a no-kernel contract job + a kernel-loop job).
+  **Category 1** (core run/observe/export) and **Category 2** — the one-period
+  *environment*: time period, OD/system/path performance, **OD skims** for a
+  Choice-Graph/ABM caller (`observe_skims` / `query_skim`), save & reload the
+  routing policy, and **next-run scenario edits** (`set_link_closure` /
+  `set_link_capacity` / `set_toll` / `set_od_multiplier`, applied to a working
+  copy — the source network is never touched) — are real and backed by the
+  audited API + kernel. There's also an assignment-based RL environment
+  (`dtalite_qa.tapci_env.TAPCIEnv`, `reset`/`step`/reward). **Category 3**
+  (step-style `run_iteration`, live mid-solve control, external `load_paths`,
+  `run_day_to_day` / information provision) raises a clear roadmap error rather
+  than faking a no-op. Auto-tested in CI (`.github/workflows/tapci-ci.yml`:
+  a no-kernel contract job + a kernel-loop job).
 - **`taplite` CLI** (analyst) — installed as a console script; four verbs:
   ```bash
   taplite validate <scenario>                 # intake gate + schema/accessibility
