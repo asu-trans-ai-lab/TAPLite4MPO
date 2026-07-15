@@ -84,10 +84,12 @@ It locates the binary, runs the assignment, and loads `link_performance.csv` bac
 the fastest of three execution paths automatically (all call the same C++ kernel):
 
 **2. ctypes shared library — the Path4GMNS / DTALite pattern (in-process, no pybind11).**
-The kernel exports the C-ABI symbols `DTA_AssignmentAPI()` / `DTA_SimulationAPI()`
-(`extern "C"` in `kernel/src/TAPLite.h`), so it builds as a shared library that Python loads
-with stdlib **`ctypes`** — exactly how [Path4GMNS](https://github.com/jdlph/Path4GMNS) ships
-the `DTALite` engine:
+The kernel retains the void C-ABI symbols `DTA_AssignmentAPI()` / `DTA_SimulationAPI()` for
+compatibility with existing callers. New integrations should prefer
+`DTA_AssignmentAPIWithStatus()` / `DTA_SimulationAPIWithStatus()` (`extern "C"` in
+`kernel/src/TAPLite.h`), which return zero on success and a nonzero status on failure. Invalid
+processor settings return status 2. The shared library can be loaded with stdlib **`ctypes`** —
+exactly how [Path4GMNS](https://github.com/jdlph/Path4GMNS) ships the `DTALite` engine:
 ```bash
 bash kernel/python/build_shared.sh    # -> pytaplite/DTALite.dll | libDTALite.so | libDTALite.dylib
 ```
@@ -111,7 +113,10 @@ from pytaplite import _native
 print(_native.openmp_status(2))
 ```
 The `number_of_processors` setting controls both the requested OpenMP team and the assignment's
-origin-zone processor buckets. It must be at least 1 and has no fixed 50-processor ceiling.
+origin-zone processor buckets. The accepted range is 1 through 4096; the upper bound is an input
+safety ceiling against unreasonable thread requests and processor-dependent allocations, not a
+recommended processor count or a return to the old 50-bucket implementation. Requests above the
+runtime's processor count or the network's assignable origin count are accepted with warnings.
 External OpenMP controls, process limits, or machine capacity can reduce the actual team size;
 the kernel records the requested and probed sizes in `summary_log_file.txt`.
 

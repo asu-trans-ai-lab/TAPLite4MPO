@@ -21,6 +21,7 @@
 #endif
 
 int AssignmentAPI();    // defined in TAPLite.cpp (compiled here without BUILD_EXE)
+int ProcessorCountValidationStatus(int requested_processors);
 
 namespace py = pybind11;
 
@@ -51,23 +52,20 @@ static py::dict openmp_status(int requested_threads) {
     openmp_version = _OPENMP;
     max_threads = omp_get_max_threads();
     num_procs = omp_get_num_procs();
-    const int original_dynamic = omp_get_dynamic();
-    dynamic = original_dynamic != 0;
+    dynamic = omp_get_dynamic() != 0;
 
     if (requested_threads > 0) {
-        omp_set_dynamic(0);
-        omp_set_num_threads(requested_threads);
-    }
-
-#pragma omp parallel
-    {
+#pragma omp parallel num_threads(requested_threads)
+        {
 #pragma omp single
-        probe_team_size = omp_get_num_threads();
-    }
-
-    if (requested_threads > 0) {
-        omp_set_num_threads(max_threads);
-        omp_set_dynamic(original_dynamic);
+            probe_team_size = omp_get_num_threads();
+        }
+    } else {
+#pragma omp parallel
+        {
+#pragma omp single
+            probe_team_size = omp_get_num_threads();
+        }
     }
 #endif
 
@@ -91,4 +89,7 @@ PYBIND11_MODULE(_native, m) {
           "runs use subprocess / multiprocessing (pytaplite.assign does this for you).");
     m.def("openmp_status", &openmp_status, py::arg("requested_threads") = 0,
           "Return native OpenMP build and runtime diagnostics without running an assignment.");
+    m.def("_processor_count_validation_status", &ProcessorCountValidationStatus,
+          py::arg("requested_processors"),
+          "Return the kernel settings-validation status for a processor count.");
 }

@@ -8,8 +8,10 @@
 #endif
 
 extern "C" PATH_ENGINE_API void DTA_AssignmentAPI();
+extern "C" PATH_ENGINE_API int DTA_AssignmentAPIWithStatus();
 
 extern "C" PATH_ENGINE_API void DTA_SimulationAPI();
+extern "C" PATH_ENGINE_API int DTA_SimulationAPIWithStatus();
 
 #define BUFFERSIZE 1000
 #define MAX_NO_BISECTITERATION 5 /* Avoids infinite loops */

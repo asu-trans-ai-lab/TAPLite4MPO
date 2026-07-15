@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import csv
 import math
 import os
@@ -110,32 +111,55 @@ class OpenMPStatusTests(unittest.TestCase):
         if os.environ.get("TAPLITE_REQUIRE_OPENMP") == "1":
             self.assertTrue(status["compiled"])
 
-    def test_two_thread_probe(self):
-        initial = _native.openmp_status()
-        if not initial["compiled"] or initial["num_procs"] < 2:
-            self.skipTest("native OpenMP runtime does not report two processors")
-        status = _native.openmp_status(2)
-        self.assertEqual(status["requested_threads"], 2)
-        self.assertGreaterEqual(status["probe_team_size"], 2)
-        self.assertEqual(_native.openmp_status()["max_threads"], initial["max_threads"])
+    def test_requested_probe_does_not_change_openmp_default(self):
+        before = _native.openmp_status(0)
+        probe = _native.openmp_status(2)
+        after = _native.openmp_status(0)
+
+        self.assertEqual(probe["requested_threads"], 2)
+        self.assertGreaterEqual(probe["probe_team_size"], 1)
+        self.assertLessEqual(probe["probe_team_size"], 2)
+        self.assertEqual(after["max_threads"], before["max_threads"])
+        self.assertEqual(after["dynamic"], before["dynamic"])
+
+        if before["compiled"] and before["num_procs"] >= 2:
+            if probe["probe_team_size"] < 2:
+                self.skipTest("external OpenMP runtime limits prevented a two-thread team")
+            self.assertEqual(probe["probe_team_size"], 2)
+
+    def test_negative_requested_threads_are_rejected(self):
+        with self.assertRaises(ValueError):
+            _native.openmp_status(-1)
 
 
 @unittest.skipIf(_native is None, "pytaplite._native is not built")
 class ProcessorConfigurationTests(unittest.TestCase):
+    def test_processor_validation_boundaries(self):
+        for processors in (1, 2, 17, 64, 4096):
+            with self.subTest(processors=processors):
+                self.assertEqual(
+                    _native._processor_count_validation_status(processors), 0
+                )
+        for processors in (0, -3, 4097):
+            with self.subTest(processors=processors):
+                self.assertEqual(
+                    _native._processor_count_validation_status(processors), 2
+                )
+
     def test_invalid_processor_counts_are_rejected(self):
-        for processors in (0, -3):
+        for processors in (0, -3, 4097):
             with self.subTest(processors=processors):
                 with tempfile.TemporaryDirectory(prefix="taplite-invalid-") as directory:
                     scenario = Path(directory)
                     _write_scenario(scenario, processors)
                     return_code, result = _run_native(scenario)
-                    self.assertNotEqual(return_code, 0)
+                    self.assertEqual(return_code, 2)
                     summary = (scenario / "summary_log_file.txt").read_text(
                         encoding="utf-8"
                     )
                     expected = (
-                        "number_of_processors must be >= 1; "
-                        f"received {processors}"
+                        f"number_of_processors={processors} is outside the accepted "
+                        "range [1, 4096]"
                     )
                     self.assertIn(expected, summary)
                     self.assertIn(expected, result.stderr)
@@ -151,6 +175,11 @@ class ProcessorConfigurationTests(unittest.TestCase):
                     return_code, _ = _run_native(scenario)
                     self.assertEqual(return_code, 0)
                     self.assertTrue((scenario / "link_performance.csv").is_file())
+
+                    summary = (scenario / "summary_log_file.txt").read_text(
+                        encoding="utf-8"
+                    )
+                    self.assertIn("exceeds the 2 assignable origin zones", summary)
 
     def test_one_and_two_processor_link_results_are_equivalent(self):
         one_thread = _assignment_rows(1)
@@ -168,6 +197,29 @@ class ProcessorConfigurationTests(unittest.TestCase):
                     ),
                     f"{field} differs for link {first['link_id']}",
                 )
+
+
+class SharedLibraryExportTests(unittest.TestCase):
+    def test_legacy_and_status_c_abi_symbols_are_exported(self):
+        if os.name == "nt":
+            library_name = "DTALite.dll"
+        elif sys.platform == "darwin":
+            library_name = "libDTALite.dylib"
+        else:
+            library_name = "libDTALite.so"
+        library_path = REPO / "pytaplite" / library_name
+        if not library_path.is_file():
+            self.skipTest("the optional C-ABI shared library is not built")
+
+        library = ctypes.CDLL(str(library_path))
+        for symbol in (
+            "DTA_AssignmentAPI",
+            "DTA_AssignmentAPIWithStatus",
+            "DTA_SimulationAPI",
+            "DTA_SimulationAPIWithStatus",
+        ):
+            with self.subTest(symbol=symbol):
+                self.assertIsNotNone(getattr(library, symbol))
 
 
 if __name__ == "__main__":

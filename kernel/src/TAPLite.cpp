@@ -35,6 +35,7 @@
 #include <vector>
 #include <cstring>
 #include <algorithm>
+#include <new>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -842,16 +843,31 @@ Output:	RouteCost - route generalized cost, by origin and destination
 std::vector<std::vector<int>> Processor_origin_zones;
 
 int g_number_of_processors = 4;
+static constexpr int MAX_SAFE_PROCESSOR_BUCKETS = 4096;
+
+int ProcessorCountValidationStatus(int requested_processors)
+{
+	return requested_processors >= 1 &&
+		requested_processors <= MAX_SAFE_PROCESSOR_BUCKETS ? 0 : 2;
+}
 
 static bool ValidateProcessorCount()
 {
-	if (g_number_of_processors >= 1)
+	if (ProcessorCountValidationStatus(g_number_of_processors) == 0)
 		return true;
 
-	fprintf(stderr, "ERROR: number_of_processors must be >= 1; received %d.\n", g_number_of_processors);
+	fprintf(stderr,
+		"ERROR: number_of_processors=%d is outside the accepted range [1, %d]. "
+		"This safety ceiling prevents unreasonable OpenMP thread requests and "
+		"processor-dependent memory allocations.\n",
+		g_number_of_processors, MAX_SAFE_PROCESSOR_BUCKETS);
 	if (summary_log_file != NULL)
 	{
-		fprintf(summary_log_file, "ERROR: number_of_processors must be >= 1; received %d.\n", g_number_of_processors);
+		fprintf(summary_log_file,
+			"ERROR: number_of_processors=%d is outside the accepted range [1, %d]. "
+			"This safety ceiling prevents unreasonable OpenMP thread requests and "
+			"processor-dependent memory allocations.\n",
+			g_number_of_processors, MAX_SAFE_PROCESSOR_BUCKETS);
 		fflush(summary_log_file);
 	}
 	return false;
@@ -895,6 +911,22 @@ static bool ConfigureOpenMPRuntime()
 		fflush(summary_log_file);
 	}
 
+	if (compiled && g_number_of_processors > num_procs)
+	{
+		fprintf(stderr,
+			"WARNING: number_of_processors=%d exceeds the %d processors reported by "
+			"the OpenMP runtime; oversubscription may reduce performance.\n",
+			g_number_of_processors, num_procs);
+		if (summary_log_file != NULL)
+		{
+			fprintf(summary_log_file,
+				"WARNING: number_of_processors=%d exceeds the %d processors reported by "
+				"the OpenMP runtime; oversubscription may reduce performance.\n",
+				g_number_of_processors, num_procs);
+			fflush(summary_log_file);
+		}
+	}
+
 	if (g_number_of_processors > 1 && probe_team_size == 1)
 	{
 		fprintf(stderr,
@@ -911,6 +943,52 @@ static bool ConfigureOpenMPRuntime()
 	}
 
 	return true;
+}
+
+static bool InitializeProcessorOriginZones()
+{
+	try
+	{
+		Processor_origin_zones.assign(
+			static_cast<std::size_t>(g_number_of_processors),
+			std::vector<int>());
+	}
+	catch (const std::bad_alloc&)
+	{
+		fprintf(stderr,
+			"ERROR: unable to allocate %d processor-origin buckets. "
+			"Reduce number_of_processors or free memory and try again.\n",
+			g_number_of_processors);
+		if (summary_log_file != NULL)
+		{
+			fprintf(summary_log_file,
+				"ERROR: unable to allocate %d processor-origin buckets. "
+				"Reduce number_of_processors or free memory and try again.\n",
+				g_number_of_processors);
+			fflush(summary_log_file);
+		}
+		return false;
+	}
+	return true;
+}
+
+static void WarnIfProcessorsExceedOrigins(int assignable_origin_zones)
+{
+	if (g_number_of_processors <= assignable_origin_zones)
+		return;
+
+	fprintf(stderr,
+		"WARNING: number_of_processors=%d exceeds the %d assignable origin zones; "
+		"some processor buckets will be empty.\n",
+		g_number_of_processors, assignable_origin_zones);
+	if (summary_log_file != NULL)
+	{
+		fprintf(summary_log_file,
+			"WARNING: number_of_processors=%d exceeds the %d assignable origin zones; "
+			"some processor buckets will be empty.\n",
+			g_number_of_processors, assignable_origin_zones);
+		fflush(summary_log_file);
+	}
 }
 
 double FindMinCostRoutes(int*** MinPathPredLink)
@@ -5145,9 +5223,13 @@ int AssignmentAPI()
 		return 2;
 	}
 	ConfigureOpenMPRuntime();
-	Processor_origin_zones.assign(
-		static_cast<std::size_t>(g_number_of_processors),
-		{});
+	if (!InitializeProcessorOriginZones())
+	{
+		if (summary_log_file != NULL)
+			fclose(summary_log_file);
+		summary_log_file = NULL;
+		return 3;
+	}
 	read_mode_type_file(); 
 
 
@@ -5205,15 +5287,18 @@ int AssignmentAPI()
 	if(g_accessibility_only_mode ==0)
 		 InitializeLinkIndices(number_of_modes, no_zones, TotalAssignIterations);
 
+	int assignable_origin_zones = 0;
 	for (int i = 1; i <= no_nodes; i++)
 		{
 			int p = i % g_number_of_processors;
 			if(g_node_vector[i].zone_id>=0)
 			{ 
 
+			assignable_origin_zones++;
 			Processor_origin_zones[p].push_back(g_node_vector[i].node_id);
 			}
 		}
+	WarnIfProcessorsExceedOrigins(assignable_origin_zones);
 
 
 
@@ -8845,12 +8930,24 @@ int mapmatchingAPI() {
 }
 
 
-void DTA_AssignmentAPI() {
-AssignmentAPI();
+extern "C" PATH_ENGINE_API int DTA_AssignmentAPIWithStatus()
+{
+	return AssignmentAPI();
 }
 
-void DTA_SimulationAPI() {
-SimulationAPI();
+extern "C" PATH_ENGINE_API int DTA_SimulationAPIWithStatus()
+{
+	return SimulationAPI();
+}
+
+extern "C" PATH_ENGINE_API void DTA_AssignmentAPI()
+{
+	(void)DTA_AssignmentAPIWithStatus();
+}
+
+extern "C" PATH_ENGINE_API void DTA_SimulationAPI()
+{
+	(void)DTA_SimulationAPIWithStatus();
 }
 
 // Optional standalone executable entry point. Built only when BUILD_EXE is
