@@ -135,19 +135,19 @@ class OpenMPStatusTests(unittest.TestCase):
 @unittest.skipIf(_native is None, "pytaplite._native is not built")
 class ProcessorConfigurationTests(unittest.TestCase):
     def test_processor_validation_boundaries(self):
-        for processors in (1, 2, 17, 64, 4096):
+        for processors in (1, 2, 17, 64, 128):
             with self.subTest(processors=processors):
                 self.assertEqual(
                     _native._processor_count_validation_status(processors), 0
                 )
-        for processors in (0, -3, 4097):
+        for processors in (0, -3, 129):
             with self.subTest(processors=processors):
                 self.assertEqual(
                     _native._processor_count_validation_status(processors), 2
                 )
 
     def test_invalid_processor_counts_are_rejected(self):
-        for processors in (0, -3, 4097):
+        for processors in (0, -3, 129):
             with self.subTest(processors=processors):
                 with tempfile.TemporaryDirectory(prefix="taplite-invalid-") as directory:
                     scenario = Path(directory)
@@ -159,7 +159,7 @@ class ProcessorConfigurationTests(unittest.TestCase):
                     )
                     expected = (
                         f"number_of_processors={processors} is outside the accepted "
-                        "range [1, 4096]"
+                        "range [1, 128]"
                     )
                     self.assertIn(expected, summary)
                     self.assertIn(expected, result.stderr)

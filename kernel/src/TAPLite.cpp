@@ -843,7 +843,7 @@ Output:	RouteCost - route generalized cost, by origin and destination
 std::vector<std::vector<int>> Processor_origin_zones;
 
 int g_number_of_processors = 4;
-static constexpr int MAX_SAFE_PROCESSOR_BUCKETS = 4096;
+static constexpr int MAX_SAFE_PROCESSOR_BUCKETS = 128;
 
 int ProcessorCountValidationStatus(int requested_processors)
 {

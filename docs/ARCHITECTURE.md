@@ -113,7 +113,7 @@ from pytaplite import _native
 print(_native.openmp_status(2))
 ```
 The `number_of_processors` setting controls both the requested OpenMP team and the assignment's
-origin-zone processor buckets. The accepted range is 1 through 4096; the upper bound is an input
+origin-zone processor buckets. The accepted range is 1 through 128; the upper bound is an input
 safety ceiling against unreasonable thread requests and processor-dependent allocations, not a
 recommended processor count or a return to the old 50-bucket implementation. Requests above the
 runtime's processor count or the network's assignable origin count are accepted with warnings.
