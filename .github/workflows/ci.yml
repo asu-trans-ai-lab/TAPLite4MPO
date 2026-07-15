@@ -32,5 +32,13 @@ jobs:
           cp build/Release/DTALite_exe.exe bin/DTALite.exe
           ls -la bin/
 
+      - name: Native OpenMP processor tests
+        env:
+          TAPLITE_REQUIRE_OPENMP: "1"
+        run: |
+          python -m pip install pybind11
+          python setup.py build_ext --inplace
+          python -m unittest tests.test_openmp_native -v
+
       - name: Regression suite
         run: python test_networks/run_regression.py

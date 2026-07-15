@@ -15,17 +15,25 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    # macOS is best-effort: the native extension is OPTIONAL by design (pytaplite falls
-    # back to the CLI kernel), and the x86_64 cross-build's delocate gate failed twice in
-    # CI. Build native arm64 wheels only (Intel macs install from the sdist); a macOS
-    # failure must not block publishing the Windows/Linux wheels + sdist.
-    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install macOS OpenMP runtime
+        if: runner.os == 'macOS'
+        run: |
+          brew install libomp
+          echo "LIBOMP_PREFIX=$(brew --prefix libomp)" >> "$GITHUB_ENV"
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2
         env:
           CIBW_ARCHS_MACOS: "native"
+          CIBW_ENVIRONMENT: "TAPLITE_REQUIRE_OPENMP=1"
+          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=11.0 TAPLITE_REQUIRE_OPENMP=1 LIBOMP_PREFIX=${{ env.LIBOMP_PREFIX }}"
+      - name: Verify repaired macOS wheels
+        if: runner.os == 'macOS'
+        run: |
+          python -m pip install delocate
+          delocate-listdeps wheelhouse/*.whl
+          python scripts/verify_macos_wheel.py --architecture "$(uname -m)" wheelhouse/*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}

@@ -97,6 +97,24 @@ bash kernel/python/build_shared.sh    # -> pytaplite/DTALite.dll | libDTALite.so
 **3. pybind11 binding — `pytaplite._native` (alternative in-process; releases the GIL).**
 `pip install pybind11 && bash kernel/python/build_native.sh`.
 
+For a native source build with Apple Clang on macOS, install LLVM's OpenMP runtime and
+identify its prefix before installing the package:
+```bash
+brew install libomp
+export LIBOMP_PREFIX="$(brew --prefix libomp)"
+python -m pip install .
+```
+Published macOS wheels bundle the OpenMP runtime required by `_native`; installing a repaired
+wheel does not require Homebrew. To inspect a native build without running an assignment:
+```python
+from pytaplite import _native
+print(_native.openmp_status(2))
+```
+The `number_of_processors` setting controls both the requested OpenMP team and the assignment's
+origin-zone processor buckets. It must be at least 1 and has no fixed 50-processor ceiling.
+External OpenMP controls, process limits, or machine capacity can reduce the actual team size;
+the kernel records the requested and probed sizes in `summary_log_file.txt`.
+
 **Caveat (both in-process paths):** the kernel keeps global state, so run **one assignment
 per process**; for many runs use a fresh `work_dir` per call, `multiprocessing`, or
 `prefer_inproc=False` to use the subprocess path. The shared lib / native module are optional

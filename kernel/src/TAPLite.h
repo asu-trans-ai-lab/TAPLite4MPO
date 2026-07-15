@@ -427,12 +427,13 @@ void*** Alloc_3D(int dim1, int dim2, int dim3, size_t size) {
 
 // Function to free a 3D array
 void Free_3D(void*** Array, int dim1, int dim2, int dim3) {
+    (void)dim3;
     int i, j;   // Loop variables declared outside for efficiency
     void* p;    // Pointer variable declared outside the loop for efficiency
 
     // Free the innermost arrays (1D arrays)
     for (i = 0; i <= dim1; i++) {
-        for (j = 0; j < dim2; j++) {
+        for (j = 0; j <= dim2; j++) {
             p = Array[i][j];
             free(p);
         }

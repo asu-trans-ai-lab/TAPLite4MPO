@@ -35,7 +35,9 @@
 #include <vector>
 #include <cstring>
 #include <algorithm>
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 #include <chrono>  // for high_resolution_clock
 #include <deque>
 #include <queue>
@@ -533,7 +535,10 @@ void InitSPScratch()
 {
 	// scratch is indexed by omp_get_thread_num(), so size by the OpenMP thread count
 	// (>= any concurrent thread id, independent of g_number_of_processors).
-	int nthreads = omp_get_max_threads();
+	int nthreads = 1;
+#ifdef _OPENMP
+	nthreads = omp_get_max_threads();
+#endif
 	if (nthreads < 1)
 		nthreads = 1;
 	g_sp_QueueNext.assign(nthreads, std::vector<int>(no_nodes + 1, INVALID));
@@ -542,6 +547,33 @@ void InitSPScratch()
 	for (int t = 0; t < nthreads; t++)
 		g_sp_heap[t].reserve(2048);
 	g_sp_nnodes = no_nodes;
+}
+
+static int GetSPScratchThreadIndex()
+{
+	int tid = 0;
+#ifdef _OPENMP
+	tid = omp_get_thread_num();
+#endif
+	if (tid < 0 || static_cast<std::size_t>(tid) >= g_sp_QueueNext.size() ||
+		static_cast<std::size_t>(tid) >= g_sp_PrevLink.size() ||
+		static_cast<std::size_t>(tid) >= g_sp_heap.size())
+	{
+		fprintf(stderr,
+			"ERROR: OpenMP thread %d is outside shortest-path scratch range [0, %zu). "
+			"Configure OpenMP before InitSPScratch().\n",
+			tid, g_sp_QueueNext.size());
+		if (summary_log_file != NULL)
+		{
+			fprintf(summary_log_file,
+				"ERROR: OpenMP thread %d is outside shortest-path scratch range [0, %zu).\n",
+				tid, g_sp_QueueNext.size());
+			fflush(summary_log_file);
+		}
+		fflush(stderr);
+		abort();
+	}
+	return tid;
 }
 
 // Min-heap comparator for the reusable Dijkstra heap (smallest cost on top).
@@ -556,7 +588,7 @@ static inline bool g_sp_heap_gt(const std::pair<double, int>& a, const std::pair
 // non-negative link costs (BPR/conic/QVDF all >= 0).
 int Minpath_Dijkstra(int mode, int Orig, int* PredLink, double* CostTo)
 {
-	int tid = omp_get_thread_num();
+	int tid = GetSPScratchThreadIndex();
 	int* PrevLink = g_sp_PrevLink[tid].data();
 	std::vector<std::pair<double, int>>& heap = g_sp_heap[tid];
 	heap.clear();
@@ -613,7 +645,7 @@ int Minpath(int mode, int Orig, int* PredLink, double* CostTo)
 	double NewCost;
 	int QueueFirst, QueueLast;
 
-	int tid = omp_get_thread_num();
+	int tid = GetSPScratchThreadIndex();
 	int* QueueNext = g_sp_QueueNext[tid].data();   // pre-allocated, reused (no malloc)
 	int* PrevLink = g_sp_PrevLink[tid].data();
 
@@ -807,9 +839,79 @@ int Minpath_TR(int mode, int Orig, int* PredLink, int* PredLinkOfLink, double* C
 Input: 	None
 Output:	RouteCost - route generalized cost, by origin and destination
 		MinPathSuccLink - trees of minimum cost routes, by destination and node. */
-std::vector<int> Processor_origin_zones[50];
+std::vector<std::vector<int>> Processor_origin_zones;
 
 int g_number_of_processors = 4;
+
+static bool ValidateProcessorCount()
+{
+	if (g_number_of_processors >= 1)
+		return true;
+
+	fprintf(stderr, "ERROR: number_of_processors must be >= 1; received %d.\n", g_number_of_processors);
+	if (summary_log_file != NULL)
+	{
+		fprintf(summary_log_file, "ERROR: number_of_processors must be >= 1; received %d.\n", g_number_of_processors);
+		fflush(summary_log_file);
+	}
+	return false;
+}
+
+static bool ConfigureOpenMPRuntime()
+{
+	int compiled = 0;
+	int openmp_version = 0;
+	int max_threads = 1;
+	int num_procs = 1;
+	int probe_team_size = 1;
+	int dynamic = 0;
+
+#ifdef _OPENMP
+	compiled = 1;
+	openmp_version = _OPENMP;
+	omp_set_dynamic(0);
+	omp_set_num_threads(g_number_of_processors);
+	max_threads = omp_get_max_threads();
+	num_procs = omp_get_num_procs();
+	dynamic = omp_get_dynamic();
+#pragma omp parallel
+	{
+#pragma omp single
+		probe_team_size = omp_get_num_threads();
+	}
+#endif
+
+	printf("OpenMP status: compiled=%d, _OPENMP=%d, requested_processors=%d, "
+		"max_threads=%d, num_procs=%d, probe_team_size=%d, dynamic=%d\n",
+		compiled, openmp_version, g_number_of_processors, max_threads,
+		num_procs, probe_team_size, dynamic);
+	if (summary_log_file != NULL)
+	{
+		fprintf(summary_log_file,
+			"OpenMP status: compiled=%d, _OPENMP=%d, requested_processors=%d, "
+			"max_threads=%d, num_procs=%d, probe_team_size=%d, dynamic=%d\n",
+			compiled, openmp_version, g_number_of_processors, max_threads,
+			num_procs, probe_team_size, dynamic);
+		fflush(summary_log_file);
+	}
+
+	if (g_number_of_processors > 1 && probe_team_size == 1)
+	{
+		fprintf(stderr,
+			"WARNING: %d processors were requested, but the OpenMP probe created only one thread. "
+			"Check the native build and external OpenMP runtime limits.\n",
+			g_number_of_processors);
+		if (summary_log_file != NULL)
+		{
+			fprintf(summary_log_file,
+				"WARNING: %d processors were requested, but the OpenMP probe created only one thread.\n",
+				g_number_of_processors);
+			fflush(summary_log_file);
+		}
+	}
+
+	return true;
+}
 
 double FindMinCostRoutes(int*** MinPathPredLink)
 {
@@ -1112,7 +1214,7 @@ int ComputeAccessibilityAndODCosts_v1(const char* filename)
 	auto start0 = std::chrono::high_resolution_clock::now();
 
 	// Allocate memory for cost matrix
-	double** CostTo = (double**)Alloc_2D(50, no_nodes+1, sizeof(double));
+	double** CostTo = (double**)Alloc_2D(g_number_of_processors, no_nodes+1, sizeof(double));
 
 
 
@@ -1125,7 +1227,7 @@ int ComputeAccessibilityAndODCosts_v1(const char* filename)
 	ODPathInfo** odPathInfoMatrix = (ODPathInfo**)Alloc_2D(number_of_internal_zones, number_of_internal_zones, sizeof(ODPathInfo));
 
 	// Allocate memory for predecessor links
-	int** PredLink = (int**)Alloc_2D(50, no_nodes + 1, sizeof(int));
+	int** PredLink = (int**)Alloc_2D(g_number_of_processors, no_nodes + 1, sizeof(int));
 
 	cout << " Memory allocation completes. Starting the minpath calculations." << endl; 
 
@@ -1203,8 +1305,8 @@ int ComputeAccessibilityAndODCosts_v1(const char* filename)
 	}
 
 	// Free the memory for costs and predecessor links
-	Free_2D((void**)CostTo, 50, no_nodes+1);
-	Free_2D((void**)PredLink, 50, no_nodes+1);
+	Free_2D((void**)CostTo, g_number_of_processors, no_nodes+1);
+	Free_2D((void**)PredLink, g_number_of_processors, no_nodes+1);
 
 	// Calculate elapsed time
 	auto end0 = std::chrono::high_resolution_clock::now();
@@ -1236,9 +1338,9 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 {
 	auto start0 = std::chrono::high_resolution_clock::now();
 
-	// Allocate cost and predecessor arrays (assumed size 50 is for processor count)
-	double** CostTo = (double**)Alloc_2D(50, no_nodes + 1, sizeof(double));
-	int** PredLink = (int**)Alloc_2D(50, no_nodes + 1, sizeof(int));
+	// Allocate cost and predecessor arrays by the configured processor count.
+	double** CostTo = (double**)Alloc_2D(g_number_of_processors, no_nodes + 1, sizeof(double));
+	int** PredLink = (int**)Alloc_2D(g_number_of_processors, no_nodes + 1, sizeof(int));
 
 
 
@@ -1377,8 +1479,8 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 	} // End batch loop
 
 	// Free the cost and predecessor arrays.
-	Free_2D((void**)CostTo, 50, no_nodes + 1);
-	Free_2D((void**)PredLink, 50, no_nodes + 1);
+	Free_2D((void**)CostTo, g_number_of_processors, no_nodes + 1);
+	Free_2D((void**)PredLink, g_number_of_processors, no_nodes + 1);
 
 	// Write the zone accessibility aggregated statistics to a separate CSV file.
 	std::ofstream zoneFile("zone_accessibility.csv");
@@ -5035,6 +5137,17 @@ int AssignmentAPI()
 	int*** MDMinPathPredLink;
 
 	read_settings_file();
+	if (!ValidateProcessorCount())
+	{
+		if (summary_log_file != NULL)
+			fclose(summary_log_file);
+		summary_log_file = NULL;
+		return 2;
+	}
+	ConfigureOpenMPRuntime();
+	Processor_origin_zones.assign(
+		static_cast<std::size_t>(g_number_of_processors),
+		{});
 	read_mode_type_file(); 
 
 
@@ -8037,6 +8150,14 @@ int SimulationAPI()
 	int*** MDMinPathPredLink;
 
 	read_settings_file();
+	if (!ValidateProcessorCount())
+	{
+		if (summary_log_file != NULL)
+			fclose(summary_log_file);
+		summary_log_file = NULL;
+		return 2;
+	}
+	ConfigureOpenMPRuntime();
 	read_mode_type_file();
 	fopen_s(&logfile, "TAP_log.csv", "w");  // Open the log file for writing.
 	no_nodes = get_number_of_nodes_from_node_file(no_zones, FirstThruNode);
@@ -8738,7 +8859,6 @@ SimulationAPI();
 // writes link_performance.csv etc.) without deploying a shared library.
 #ifdef BUILD_EXE
 int main(int /*argc*/, char** /*argv*/) {
-	AssignmentAPI();
-	return 0;
+	return AssignmentAPI();
 }
 #endif

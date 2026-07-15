@@ -59,6 +59,7 @@ dtalite_qa = ["templates/*.yml"]
 build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
 skip = "*-musllinux_i686 *_i686 pp*"
 build-verbosity = 1
+test-command = "python -c \"from pytaplite import _native; s = _native.openmp_status(2); print(s); assert s['compiled']; assert s['probe_team_size'] >= min(2, s['num_procs'])\""
 
 [tool.cibuildwheel.macos]
 # C++17 needs a modern deployment target (arm64 requires >=11.0 anyway); this makes the
