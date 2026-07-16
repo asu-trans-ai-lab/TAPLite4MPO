@@ -118,6 +118,13 @@ Load command 2
 
 
 class BinaryCompatibilityTests(unittest.TestCase):
+    LOAD_COMMANDS_11 = """\
+Load command 1
+          cmd LC_BUILD_VERSION
+      cmdsize 32
+     platform MACOS
+        minos 11.0
+"""
     LOAD_COMMANDS_14 = """\
 Load command 1
           cmd LC_BUILD_VERSION
@@ -203,6 +210,41 @@ Load command 0
             verify_macos_wheel._without_otool_headers(binary, output),
             "Load command 0\nLoad command 0",
         )
+
+    def test_runner_binary_location_is_not_an_embedded_path(self):
+        binary = Path(
+            "/Users/runner/work/_temp/taplite-libomp/lib/libomp.dylib"
+        )
+        linked_libraries = f"""{binary}:
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)
+"""
+
+        def command_output(*command):
+            if command[:2] == ("otool", "-l"):
+                return f"{binary}:\n{self.LOAD_COMMANDS_11}"
+            if command[:2] == ("lipo", "-archs"):
+                return "arm64\n"
+            if command[:3] == ("xcrun", "vtool", "-show-build"):
+                return self.LOAD_COMMANDS_11
+            raise AssertionError(f"unexpected command: {command}")
+
+        dependencies_patch = mock.patch.object(
+            verify_macos_wheel,
+            "_dependencies",
+            return_value=(linked_libraries, ["/usr/lib/libSystem.B.dylib"]),
+        )
+        install_id_patch = mock.patch.object(
+            verify_macos_wheel, "_install_id", return_value="@rpath/libomp.dylib"
+        )
+        run_patch = mock.patch.object(
+            verify_macos_wheel, "_run", side_effect=command_output
+        )
+        with dependencies_patch, install_id_patch, run_patch:
+            minimum = verify_macos_wheel._verify_binary(
+                binary, "arm64", "13.0", "13.0"
+            )
+
+        self.assertEqual(minimum, "11.0")
 
 
 class RuntimeValidationModeTests(unittest.TestCase):

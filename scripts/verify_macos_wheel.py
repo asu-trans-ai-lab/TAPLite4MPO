@@ -194,9 +194,10 @@ def _verify_binary(
 ) -> str:
     linked_libraries, dependencies = _dependencies(binary)
     mach_o_commands = _run("otool", "-l", str(binary))
+    linked_library_payload = _without_otool_headers(binary, linked_libraries)
     load_command_payload = _without_otool_headers(binary, mach_o_commands)
     for prefix in BUILD_MACHINE_PREFIXES:
-        if prefix in linked_libraries or prefix in load_command_payload:
+        if prefix in linked_library_payload or prefix in load_command_payload:
             raise RuntimeError(f"{binary.name} retains build-machine path {prefix}")
 
     _verify_runtime_search_paths(binary, _runtime_search_paths(mach_o_commands))
