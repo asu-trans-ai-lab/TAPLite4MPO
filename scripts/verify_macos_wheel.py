@@ -150,6 +150,19 @@ def _runtime_search_paths(mach_o_commands: str) -> list[str]:
     return paths
 
 
+def _without_otool_headers(binary: Path, output: str) -> str:
+    header = str(binary)
+    return "\n".join(
+        line
+        for line in output.splitlines()
+        if line.strip() != f"{header}:"
+        and not (
+            line.strip().startswith(f"{header} (architecture ")
+            and line.strip().endswith("):")
+        )
+    )
+
+
 def _verify_runtime_search_paths(binary: Path, paths: list[str]) -> None:
     for path in paths:
         if path.startswith("/") and not _is_allowed_absolute_path(path):
@@ -181,8 +194,9 @@ def _verify_binary(
 ) -> str:
     linked_libraries, dependencies = _dependencies(binary)
     mach_o_commands = _run("otool", "-l", str(binary))
+    load_command_payload = _without_otool_headers(binary, mach_o_commands)
     for prefix in BUILD_MACHINE_PREFIXES:
-        if prefix in linked_libraries or prefix in mach_o_commands:
+        if prefix in linked_libraries or prefix in load_command_payload:
             raise RuntimeError(f"{binary.name} retains build-machine path {prefix}")
 
     _verify_runtime_search_paths(binary, _runtime_search_paths(mach_o_commands))

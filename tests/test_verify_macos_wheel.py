@@ -179,6 +179,31 @@ Load command 1
             )
         )
 
+    def test_otool_filename_header_is_not_treated_as_an_embedded_path(self):
+        binary = Path("/Users/runner/work/_temp/lib/libomp.dylib")
+        output = f"""{binary}:
+Load command 0
+          cmd LC_RPATH
+      cmdsize 32
+         path @loader_path/ (offset 12)
+"""
+        self.assertNotIn(
+            "/Users/runner/",
+            verify_macos_wheel._without_otool_headers(binary, output),
+        )
+
+    def test_otool_architecture_headers_are_removed(self):
+        binary = Path("/Users/runner/work/_temp/lib/libomp.dylib")
+        output = f"""{binary} (architecture arm64):
+Load command 0
+{binary} (architecture x86_64):
+Load command 0
+"""
+        self.assertEqual(
+            verify_macos_wheel._without_otool_headers(binary, output),
+            "Load command 0\nLoad command 0",
+        )
+
 
 class RuntimeValidationModeTests(unittest.TestCase):
     def test_runtime_validation_uses_deployment_target_as_binary_limit(self):
