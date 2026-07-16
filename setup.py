@@ -5,6 +5,7 @@ subprocess kernel when a native toolchain is unavailable. Wheel CI sets
 TAPLITE_REQUIRE_OPENMP=1 so a missing native OpenMP extension is a hard error.
 """
 
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import shutil
@@ -150,15 +151,31 @@ def _probe_openmp(
 ):
     source = """\
 #include <omp.h>
+#ifdef _WIN32
+extern "C" __declspec(dllexport) int taplite_openmp_probe() {
+#else
 int main() {
+#endif
     int workers = 0;
 #pragma omp parallel reduction(+:workers)
     workers += omp_get_thread_num() >= 0 ? 1 : 0;
+#ifdef _WIN32
+    return workers;
+#else
     return (workers < 1 || omp_get_max_threads() < 1) ? 1 : 0;
+#endif
 }
 """
+    configured_probe_dir = os.environ.get("TAPLITE_OPENMP_PROBE_DIR")
+    if configured_probe_dir:
+        probe_dir = Path(configured_probe_dir).expanduser().resolve()
+        probe_dir.mkdir(parents=True, exist_ok=True)
+        directory_context = nullcontext(str(probe_dir))
+    else:
+        directory_context = tempfile.TemporaryDirectory(prefix="taplite-openmp-")
+
     try:
-        with tempfile.TemporaryDirectory(prefix="taplite-openmp-") as directory:
+        with directory_context as directory:
             source_path = Path(directory) / "openmp_probe.cpp"
             source_path.write_text(source, encoding="ascii")
             objects = compiler.compile(
@@ -167,23 +184,55 @@ int main() {
                 include_dirs=[str(path) for path in include_dirs],
                 extra_postargs=compile_args,
             )
-            executable = compiler.executable_filename(
-                "openmp_probe", output_dir=directory
-            )
-            compiler.link_executable(
-                objects,
-                executable,
-                libraries=libraries,
-                library_dirs=[str(path) for path in library_dirs],
-                extra_postargs=link_args,
-                target_lang="c++",
-            )
-            subprocess.run(
-                [executable],
-                check=True,
-                capture_output=True,
-                timeout=30,
-            )
+            if sys.platform == "win32":
+                library_name = compiler.shared_object_filename("openmp_probe")
+                compiler.link_shared_object(
+                    objects,
+                    library_name,
+                    output_dir=directory,
+                    libraries=libraries,
+                    library_dirs=[str(path) for path in library_dirs],
+                    extra_postargs=link_args,
+                    target_lang="c++",
+                )
+                library_path = str(Path(directory) / library_name)
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import ctypes, sys; "
+                            "library = ctypes.CDLL(sys.argv[1]); "
+                            "probe = library.taplite_openmp_probe; "
+                            "probe.restype = ctypes.c_int; "
+                            "raise SystemExit(0 if probe() >= 1 else 1)"
+                        ),
+                        library_path,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            else:
+                executable_name = "openmp_probe"
+                compiler.link_executable(
+                    objects,
+                    executable_name,
+                    output_dir=directory,
+                    libraries=libraries,
+                    library_dirs=[str(path) for path in library_dirs],
+                    extra_postargs=link_args,
+                    target_lang="c++",
+                )
+                executable = compiler.executable_filename(
+                    executable_name, output_dir=directory
+                )
+                subprocess.run(
+                    [executable],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
     except Exception as exc:
         return False, str(exc)
     return True, ""
