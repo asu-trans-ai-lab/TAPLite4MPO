@@ -100,14 +100,20 @@ bash kernel/python/build_shared.sh    # -> pytaplite/DTALite.dll | libDTALite.so
 `pip install pybind11 && bash kernel/python/build_native.sh`.
 
 For a native source build with Apple Clang on macOS, install LLVM's OpenMP runtime and
-identify its prefix before installing the package:
+identify its prefix before installing the package. Homebrew is a convenient developer
+fallback because the resulting extension runs on the same machine where it was built:
 ```bash
 brew install libomp
 export LIBOMP_PREFIX="$(brew --prefix libomp)"
 python -m pip install .
 ```
-Published macOS wheels bundle the OpenMP runtime required by `_native`; installing a repaired
-wheel does not require Homebrew. To inspect a native build without running an assignment:
+Published Apple Silicon wheels target macOS 13 and newer. Wheel CI uses the exact conda-forge
+`llvm-openmp 22.1.8` build `hc7d1edf_0` for `osx-arm64`, validates it before compilation, and
+bundles `libomp.dylib` into the repaired wheel. End users do not need Homebrew, Conda, or a
+separate OpenMP installation. Homebrew is not used as the runtime source for published macOS
+wheels because its bottles can inherit the build runner's minimum macOS version.
+
+To inspect a native build without running an assignment:
 ```python
 from pytaplite import _native
 print(_native.openmp_status(2))

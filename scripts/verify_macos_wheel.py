@@ -11,7 +11,17 @@ import zipfile
 
 
 ALLOWED_ABSOLUTE_PREFIXES = ("/usr/lib/", "/System/Library/")
-BUILD_MACHINE_PREFIXES = ("/opt/homebrew/", "/usr/local/", "/home/linuxbrew/", "/Cellar/")
+BUILD_MACHINE_PREFIXES = (
+    "/opt/homebrew/",
+    "/usr/local/",
+    "/home/linuxbrew/",
+    "/Cellar/",
+    "/Users/runner/",
+    "/private/tmp/",
+    "/private/var/folders/",
+)
+DEFAULT_DEPLOYMENT_TARGET = "13.0"
+DELOCATE_INSTALL_ID_PREFIX = "/DLC/"
 NATIVE_EXTENSION_PATTERN = re.compile(r"^pytaplite/_native[^/]*\.so$")
 MACOS_PLATFORM_PATTERN = re.compile(
     r"^macosx_(?P<major>\d+)_(?P<minor>\d+)_(?P<architecture>arm64|x86_64)$"
@@ -59,6 +69,18 @@ def _minimum_macos_version(mach_o_commands: str) -> str | None:
         ):
             return stripped.split()[1]
     return None
+
+
+def _minimum_macos_version_for_binary(
+    binary: Path, mach_o_commands: str
+) -> str | None:
+    try:
+        build_version = _run("xcrun", "vtool", "-show-build", str(binary))
+    except (OSError, subprocess.CalledProcessError):
+        build_version = ""
+    return _minimum_macos_version(build_version) or _minimum_macos_version(
+        mach_o_commands
+    )
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
@@ -143,12 +165,20 @@ def _is_allowed_absolute_path(path: str) -> bool:
     )
 
 
+def _is_allowed_install_id(install_id: str) -> bool:
+    return (
+        not install_id.startswith("/")
+        or _is_allowed_absolute_path(install_id)
+        or install_id.startswith(DELOCATE_INSTALL_ID_PREFIX)
+    )
+
+
 def _verify_binary(
     binary: Path,
     architecture: str,
     deployment_target: str,
     wheel_target: str,
-) -> None:
+) -> str:
     linked_libraries, dependencies = _dependencies(binary)
     mach_o_commands = _run("otool", "-l", str(binary))
     for prefix in BUILD_MACHINE_PREFIXES:
@@ -158,6 +188,10 @@ def _verify_binary(
     _verify_runtime_search_paths(binary, _runtime_search_paths(mach_o_commands))
 
     install_id = _install_id(binary)
+    if install_id and not _is_allowed_install_id(install_id):
+        raise RuntimeError(
+            f"{binary.name} has non-portable absolute install ID {install_id}"
+        )
     for dependency in dependencies:
         if dependency == install_id:
             continue
@@ -172,7 +206,7 @@ def _verify_binary(
             f"{binary.name} has architectures {architectures}, expected {architecture}"
         )
 
-    minimum = _minimum_macos_version(mach_o_commands)
+    minimum = _minimum_macos_version_for_binary(binary, mach_o_commands)
     if minimum is None:
         raise RuntimeError(f"Could not determine the macOS minimum version for {binary.name}")
     if _version_tuple(minimum) > _version_tuple(deployment_target):
@@ -185,6 +219,29 @@ def _verify_binary(
             f"{binary.name} requires macOS {minimum}, but the wheel platform tag "
             f"declares macOS {wheel_target}"
         )
+    return minimum
+
+
+def verify_runtime(
+    runtime: Path,
+    architecture: str,
+    deployment_target: str,
+) -> None:
+    if not runtime.is_file():
+        raise RuntimeError(f"OpenMP runtime does not exist: {runtime}")
+    if runtime.suffix != ".dylib":
+        raise RuntimeError(f"OpenMP runtime is not a dylib: {runtime}")
+
+    minimum = _verify_binary(
+        runtime,
+        architecture,
+        deployment_target,
+        deployment_target,
+    )
+    print(
+        f"verified {runtime.name}: {architecture}, minimum macOS {minimum}, "
+        f"deployment target <= {deployment_target}"
+    )
 
 
 def verify_wheel(
@@ -197,9 +254,9 @@ def verify_wheel(
         raise RuntimeError(
             f"{wheel.name} declares architecture {wheel_architecture}, expected {architecture}"
         )
-    if _version_tuple(wheel_target) > _version_tuple(deployment_target):
+    if _version_tuple(wheel_target) != _version_tuple(deployment_target):
         raise RuntimeError(
-            f"{wheel.name} declares macOS {wheel_target}, newer than the configured "
+            f"{wheel.name} declares macOS {wheel_target}, expected the configured "
             f"deployment target {deployment_target}"
         )
 
@@ -258,12 +315,32 @@ def verify_wheel(
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("wheels", nargs="+", type=Path)
+    parser.add_argument("wheels", nargs="*", type=Path)
+    parser.add_argument(
+        "--verify-runtime",
+        type=Path,
+        help="validate an unpacked libomp dylib before building wheels",
+    )
     parser.add_argument("--architecture", required=True)
-    parser.add_argument("--deployment-target", default="11.0")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--deployment-target", default=DEFAULT_DEPLOYMENT_TARGET
+    )
+    args = parser.parse_args(argv)
+
+    if args.verify_runtime is not None:
+        if args.wheels:
+            parser.error("wheel paths cannot be combined with --verify-runtime")
+        verify_runtime(
+            args.verify_runtime,
+            args.architecture,
+            args.deployment_target,
+        )
+        return 0
+
+    if not args.wheels:
+        parser.error("provide at least one wheel or --verify-runtime")
 
     for wheel in args.wheels:
         verify_wheel(wheel, args.architecture, args.deployment_target)

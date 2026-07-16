@@ -14,6 +14,7 @@ on:
       - "scripts/verify_macos_wheel.py"
       - "tests/test_openmp_native.py"
       - "tests/test_verify_macos_wheel.py"
+      - ".github/actions/setup-macos-libomp/**"
       - ".github/workflows/wheels.yml"
 
 jobs:
@@ -27,24 +28,22 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - name: Install macOS OpenMP runtime
+      - name: Install pinned macOS OpenMP runtime
         if: runner.os == 'macOS'
         id: libomp
-        run: |
-          brew install libomp
-          echo "prefix=$(brew --prefix libomp)" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/setup-macos-libomp
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2
         env:
           CIBW_ARCHS_MACOS: "native"
           CIBW_ENVIRONMENT: "TAPLITE_REQUIRE_OPENMP=1"
-          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=11.0 TAPLITE_REQUIRE_OPENMP=1 LIBOMP_PREFIX=${{ steps.libomp.outputs.prefix }}"
+          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=13.0 TAPLITE_REQUIRE_OPENMP=1 LIBOMP_PREFIX=${{ steps.libomp.outputs.prefix }}"
       - name: Verify repaired macOS wheels
         if: runner.os == 'macOS'
         run: |
           python -m pip install delocate
           delocate-listdeps wheelhouse/*.whl
-          python scripts/verify_macos_wheel.py --architecture "$(uname -m)" wheelhouse/*.whl
+          python scripts/verify_macos_wheel.py --architecture "$(uname -m)" --deployment-target 13.0 wheelhouse/*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
@@ -56,22 +55,20 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install macOS OpenMP runtime
+      - name: Install pinned macOS OpenMP runtime
         id: libomp
-        run: |
-          brew install libomp
-          echo "prefix=$(brew --prefix libomp)" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/setup-macos-libomp
       - name: Build and test strict OpenMP wheel
         uses: pypa/cibuildwheel@v3.2
         env:
           CIBW_BUILD: "cp312-macosx_*"
           CIBW_ARCHS_MACOS: "native"
-          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=11.0 TAPLITE_REQUIRE_OPENMP=1 LIBOMP_PREFIX=${{ steps.libomp.outputs.prefix }}"
+          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=13.0 TAPLITE_REQUIRE_OPENMP=1 LIBOMP_PREFIX=${{ steps.libomp.outputs.prefix }}"
       - name: Inspect and verify repaired wheel
         run: |
           python -m pip install delocate
           delocate-listdeps wheelhouse/*.whl
-          python scripts/verify_macos_wheel.py --architecture "$(uname -m)" wheelhouse/*.whl
+          python scripts/verify_macos_wheel.py --architecture "$(uname -m)" --deployment-target 13.0 wheelhouse/*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-pr-smoke
