@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Canonical cross-platform build for the DTALite/TAPLite C++ kernel.
-#   Windows (Git Bash/MSYS): -> bin/DTALite.exe   (MinGW, static, stripped)
-#   macOS:                   -> bin/DTALite       (clang; OpenMP via `brew install libomp`,
+#   Windows (Git Bash/MSYS): -> bin/TAPLite.exe   (MinGW, static, stripped;
+#                               bin/DTALite.exe kept as a legacy-name copy)
+#   macOS:                   -> bin/TAPLite       (clang; OpenMP via `brew install libomp`,
 #                                                  builds SERIAL if libomp is absent)
-#   Linux:                   -> bin/DTALite       (g++/clang, OpenMP)
+#   Linux:                   -> bin/TAPLite       (g++/clang, OpenMP)
 # Requires: cmake >= 3.10 and a C++ compiler. Ninja is used if available.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,18 +22,19 @@ case "$(uname -s)" in
     [ -d "$WINLIBS" ] && export PATH="$WINLIBS:$PATH"
     CXX_NAME="g++"
     command -v x86_64-w64-mingw32-g++.exe >/dev/null 2>&1 && CXX_NAME="x86_64-w64-mingw32-g++.exe"
-    echo "[build] Windows/MinGW ($CXX_NAME) -> bin/DTALite.exe"
+    echo "[build] Windows/MinGW ($CXX_NAME) -> bin/TAPLite.exe"
     cmake -S "$SRC" -B "$BUILD" "${GEN[@]}" \
         -DCMAKE_CXX_COMPILER="$CXX_NAME" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CXX_FLAGS="-fopenmp -O2 -DNDEBUG" \
         -DCMAKE_EXE_LINKER_FLAGS="-s" >/dev/null
     cmake --build "$BUILD" --target DTALite_exe
-    cp "$BUILD/DTALite_exe.exe" "$HERE/bin/DTALite.exe"
-    OUT="$HERE/bin/DTALite.exe"
+    cp "$BUILD/DTALite_exe.exe" "$HERE/bin/TAPLite.exe"
+    cp "$BUILD/DTALite_exe.exe" "$HERE/bin/DTALite.exe"   # legacy-name compat copy
+    OUT="$HERE/bin/TAPLite.exe"
     ;;
   Darwin)
-    echo "[build] macOS (clang) -> bin/DTALite"
+    echo "[build] macOS (clang) -> bin/TAPLite"
     EXTRA=()
     if command -v brew >/dev/null 2>&1 && brew --prefix libomp >/dev/null 2>&1; then
       OMP="$(brew --prefix libomp)"
@@ -46,15 +48,17 @@ case "$(uname -s)" in
     fi
     cmake -S "$SRC" -B "$BUILD" "${GEN[@]}" -DCMAKE_BUILD_TYPE=Release "${EXTRA[@]}"
     cmake --build "$BUILD" --target DTALite_exe -j
-    cp "$BUILD/DTALite_exe" "$HERE/bin/DTALite"
-    OUT="$HERE/bin/DTALite"
+    cp "$BUILD/DTALite_exe" "$HERE/bin/TAPLite"
+    cp "$BUILD/DTALite_exe" "$HERE/bin/DTALite"   # legacy-name compat copy
+    OUT="$HERE/bin/TAPLite"
     ;;
   *)
-    echo "[build] Linux -> bin/DTALite"
+    echo "[build] Linux -> bin/TAPLite"
     cmake -S "$SRC" -B "$BUILD" "${GEN[@]}" -DCMAKE_BUILD_TYPE=Release
     cmake --build "$BUILD" --target DTALite_exe -j
-    cp "$BUILD/DTALite_exe" "$HERE/bin/DTALite"
-    OUT="$HERE/bin/DTALite"
+    cp "$BUILD/DTALite_exe" "$HERE/bin/TAPLite"
+    cp "$BUILD/DTALite_exe" "$HERE/bin/DTALite"   # legacy-name compat copy
+    OUT="$HERE/bin/TAPLite"
     ;;
 esac
 

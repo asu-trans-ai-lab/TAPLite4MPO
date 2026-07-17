@@ -57,7 +57,9 @@ RAW_SHP = os.path.join(HERE, "arc-Shape", "arc-Shape")            # full shapefi
 RAW_DEMAND = os.path.join(HERE, "TODAM20_asgn", "TODAM20_asgn")   # trip cores (unbundled)
 
 IS_WIN = sys.platform == "win32"
-KERNEL_NAME = "DTALite.exe" if IS_WIN else "DTALite"
+# canonical kernel name is TAPLite; the legacy DTALite name stays accepted
+KERNEL_NAME = "TAPLite.exe" if IS_WIN else "TAPLite"
+KERNEL_NAMES = (("TAPLite.exe", "DTALite.exe") if IS_WIN else ("TAPLite", "DTALite"))
 
 # ARC Section 7.1.2 modified-BPR (A, alpha, beta) by FACTYPE -- the authoritative
 # table gmns/link.csv must already encode. Weave links (WEAVEFLAG=1) may carry the
@@ -114,7 +116,7 @@ def _capture(cmd, cwd=HERE, tail=20):
 
 def kernel_path():
     """Platform-aware kernel binary lookup (never builds; see stage_run)."""
-    cands = [os.path.join(REPO, "bin", KERNEL_NAME)]
+    cands = [os.path.join(REPO, "bin", n) for n in KERNEL_NAMES]
     if IS_WIN:
         cands.append(os.path.join(REPO, "release_v0.2.0", "DTALite.exe"))
     for c in cands:

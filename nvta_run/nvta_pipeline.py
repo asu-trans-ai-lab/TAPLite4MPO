@@ -43,7 +43,9 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, ".."))
 IS_WIN = sys.platform == "win32"
-KERNEL_NAME = "DTALite.exe" if IS_WIN else "DTALite"
+# canonical kernel name is TAPLite; the legacy DTALite name stays accepted
+KERNEL_NAME = "TAPLite.exe" if IS_WIN else "TAPLite"
+KERNEL_NAMES = (("TAPLite.exe", "DTALite.exe") if IS_WIN else ("TAPLite", "DTALite"))
 
 # --- NVTA (MWCOG-family Cube) conventions, as shipped in the dtalite4cube
 # --- workflow's netconfig.py. Model parameters, not agency data.
@@ -112,7 +114,7 @@ def _period_of(d):
 
 
 def kernel_path():
-    cands = [os.path.join(REPO, "bin", KERNEL_NAME)]
+    cands = [os.path.join(REPO, "bin", n) for n in KERNEL_NAMES]
     if IS_WIN:
         cands.append(os.path.join(REPO, "release_v0.2.0", "DTALite.exe"))
     for c in cands:

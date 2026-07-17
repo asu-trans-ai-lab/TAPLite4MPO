@@ -10,6 +10,9 @@ hov3, com, trk, apv) with the TAPLite kernel against the renumbered NVTA dataset
 
 ## ⚡ QA/QC front door — `nvta_pipeline.py` (same gates as the ARC flagship)
 
+Prefer a notebook? **[`NVTA_END_TO_END.ipynb`](NVTA_END_TO_END.ipynb)** walks the same
+stages cell by cell (safe without the data — every cell skips with a clear message).
+
 For a **converted NVTA subarea scenario** (a period folder from the dtalite4cube
 workflow: `node.csv`, `link.csv`, `mode_type.csv`, `settings.csv`, `<mode>_<period>.csv`),
 this is the one entry that reproduces the ARC process on your own data:

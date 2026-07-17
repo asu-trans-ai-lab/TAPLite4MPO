@@ -62,5 +62,8 @@ that's the OD load, not a hang) and saved to `gmns_run*/kernel_console.log`.
 
 - Why each convention matters (PLF, modified BPR, VOT): `examples/arc_atlanta/README.md`
 - Brand-new to the tool? Smallest runnable case: `kernel/data_sets/03_chicago_sketch` via `notebooks/00–02`
+- The same process on private agency data (bring-your-own): `nvta_run/NVTA_END_TO_END.ipynb`
+- The package API (`pytaplite.assign / accessibility / superzone / demand_to_binary`):
+  `docs/API_ARCHITECTURE_REVIEW.md`
 - Onboard **your** agency's model: `docs/MPO_ONBOARDING_GUIDE.md` + `docs/GOLDEN_PATH_CHECKLIST.md`
 - 2× faster scenario runs + original-resolution skims: `examples/arc_atlanta/SUPERZONE.md`
