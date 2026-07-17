@@ -36,7 +36,9 @@ case "$(uname -s)" in
   Darwin)
     echo "[build] macOS (clang) -> bin/TAPLite"
     EXTRA=()
-    if command -v brew >/dev/null 2>&1 && brew --prefix libomp >/dev/null 2>&1; then
+    # NOTE: `brew --prefix libomp` succeeds even when libomp is NOT installed,
+    # so verify the dylib actually exists before wiring it into the build.
+    if command -v brew >/dev/null 2>&1 && [ -f "$(brew --prefix libomp 2>/dev/null)/lib/libomp.dylib" ]; then
       OMP="$(brew --prefix libomp)"
       echo "[build] libomp found at $OMP (parallel kernel)"
       EXTRA=(-DOpenMP_CXX_FLAGS="-Xpreprocessor -fopenmp -I$OMP/include"

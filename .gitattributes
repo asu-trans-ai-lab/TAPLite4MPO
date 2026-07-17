@@ -1,0 +1,3 @@
+# Self-demo fixtures are HASH-PINNED in the golden baselines: bytes must be
+# identical on every platform. Force LF so Windows autocrlf checkouts match.
+dtalite_qa/selfdemo_data/** text eol=lf

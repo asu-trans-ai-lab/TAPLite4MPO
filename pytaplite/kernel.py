@@ -289,7 +289,7 @@ class AccessibilityResult:
 
 
 def accessibility(scenario, exe=None, in_place=True, work_dir=None, timeout=3600,
-                  capture=True):
+                  capture=True, prefer_inproc=True):
     """Zone-to-zone accessibility via an INTERNAL kernel call (no assignment).
 
     Runs the C++ kernel in accessibility-only mode (number_of_iterations = 0):
@@ -304,7 +304,7 @@ def accessibility(scenario, exe=None, in_place=True, work_dir=None, timeout=3600
     kernel's link_performance.csv for congested accessibility.
     """
     result = assign(scenario, exe=exe, in_place=in_place, work_dir=work_dir,
-                    timeout=timeout, capture=capture,
+                    timeout=timeout, capture=capture, prefer_inproc=prefer_inproc,
                     settings_overrides={"number_of_iterations": 0})
     return AccessibilityResult(result.run_dir, result.returncode, result.log)
 

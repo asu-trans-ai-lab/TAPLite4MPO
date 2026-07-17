@@ -196,23 +196,28 @@ def g7_package_api(workdir):
     import pytaplite
     sk = os.path.join(workdir, "g7_sketch")
     shutil.copytree(os.path.join(REPO, "kernel", "data_sets", "03_chicago_sketch"), sk)
-    r = pytaplite.assign(sk, settings_overrides={"number_of_iterations": 3,
-                                                 "route_output": 0})
+    # prefer_inproc=False: this gate runs FOUR kernel calls in one process;
+    # the in-process binding keeps global state (one assignment per process).
+    r = pytaplite.assign(sk, prefer_inproc=False,
+                         settings_overrides={"number_of_iterations": 3,
+                                             "route_output": 0})
     if r.returncode != 0 or not r.links:
         return record("G7 package API", False, f"assign rc={r.returncode}")
-    a = pytaplite.accessibility(sk)
+    a = pytaplite.accessibility(sk, prefer_inproc=False)
     od_rows = len(a.od)          # capture now: later runs in sk rewrite the file
     if a.returncode != 0 or od_rows == 0:
         return record("G7 package API", False, "accessibility produced no od skim")
     pytaplite.demand_to_binary(sk)
-    rb = pytaplite.assign(sk, settings_overrides={"demand_format": 1,
-                                                  "number_of_iterations": 3})
+    rb = pytaplite.assign(sk, prefer_inproc=False,
+                          settings_overrides={"demand_format": 1,
+                                              "number_of_iterations": 3})
     if rb.returncode != 0:
         return record("G7 package API", False, f"binary-demand assign rc={rb.returncode}")
     sz = sk + "_sz"
     pytaplite.superzone(sk, sz, k_target=100)
-    rs = pytaplite.assign(sz, settings_overrides={"number_of_iterations": 3,
-                                                  "route_output": 0})
+    rs = pytaplite.assign(sz, prefer_inproc=False,
+                          settings_overrides={"number_of_iterations": 3,
+                                              "route_output": 0})
     ok = rs.returncode == 0 and len(rs.links) > 0
     return record("G7 package API", ok,
                   f"assign + accessibility ({od_rows:,} od rows) + binary demand "
