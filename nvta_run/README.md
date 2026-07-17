@@ -8,6 +8,30 @@ hov3, com, trk, apv) with the TAPLite kernel against the renumbered NVTA dataset
 > rest of the repo reproduces fully without it — see the open networks in
 > `kernel/data_sets/` and the top-level README.
 
+## ⚡ QA/QC front door — `nvta_pipeline.py` (same gates as the ARC flagship)
+
+For a **converted NVTA subarea scenario** (a period folder from the dtalite4cube
+workflow: `node.csv`, `link.csv`, `mode_type.csv`, `settings.csv`, `<mode>_<period>.csv`),
+this is the one entry that reproduces the ARC process on your own data:
+
+```bash
+cd nvta_run
+python nvta_pipeline.py check    --dir <scenario>   # intake gate + NVTA findings, no run
+python nvta_pipeline.py declare  --dir <scenario>   # write the submission.yml declaration
+python nvta_pipeline.py prepare  --dir <scenario>   # apply declared conventions -> _qa_run/
+python nvta_pipeline.py run      --out <scenario>_qa_run
+python nvta_pipeline.py validate --out <scenario>_qa_run   # vs Cube I4<P>VOL
+```
+
+`check` encodes the NVTA-specific lessons as automatic findings: flat `vdf_plf=1` on a
+peaked period (agency φ table implies PLF=φ/L), `trk pce≠2`, Cube reference volumes
+present but not wired into `ref_volume`, sparse zone ids (renumbering skipped — kernel
+memory scales with the LARGEST id), and capacity/VDF values outside the agency tables.
+`prepare` fixes the fixable ones **explicitly and loudly** — nothing is rewritten
+silently. Verified on the FFX134 PM subarea: %RMSE 8.2 %, R² 0.996 vs the Cube
+reference. Without the data, every stage prints a clear "not configured — EXPECTED"
+message and exits cleanly (so CI and public users are never blocked).
+
 ## 1. Get the data
 Download the `_internal/` folder your instructor shared (it already contains
 `node.csv`, `link.csv`, the per-mode demand `*.csv`/`.bin`, and the CUBE reference
