@@ -68,6 +68,24 @@ pip install taplite4mpo
 taplite self-demo
 ```
 
+```console
+$ taplite self-demo --case arc-superzone
+[PASS] bundled data          -- 9 files from the installed package
+[PASS] intake gate           -- GATE: READY (0 blockers)
+[PASS] crosswalk             -- 6031 zones -> 151 superzones (39.94x), sha256-pinned
+[PASS] demand conservation   -- 3,398,701 == 2,275,731 loaded + 1,122,970 intrazonal (audited)
+[PASS] superzone connectivity-- all 151 superzones connected both directions
+[PASS] native assignment     -- C++ kernel rc=0 (deterministic FW, 1 processor)
+[PASS] output checks         -- 145,969 rows finite and physical
+[PASS] corridor extraction   -- I-285=26,489; I-85=26,806; I-75=22,868; GA-400=18,918; I-20=15,064
+[PASS] golden regression     -- VMT/VHT/volumes at rel 0.00e+00 vs the reviewed baseline
+TAPLite4MPO self-demo: PASS
+```
+
+![ARC Superzone self-demo — assigned AM volumes on the recognizable Atlanta freeway network, 6,031 zones superzoned to 151](https://raw.githubusercontent.com/asu-trans-ai-lab/TAPLite4MPO/main/docs/images/selfdemo_arc_superzone.svg)
+
+Full walkthrough, artifact tree, and guarantees: **[docs/SELF_DEMO.md](https://github.com/asu-trans-ai-lab/TAPLite4MPO/blob/main/docs/SELF_DEMO.md)**.
+
 The command copies the bundled Chicago Sketch scenario to a writable run
 folder, validates its model declarations through the no-guessing intake gate,
 executes the native TAPLite kernel (deterministic Frank-Wolfe, one processor),
