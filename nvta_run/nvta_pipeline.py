@@ -190,9 +190,12 @@ def stage_check(scenario):
     zmax = int(nd["zone_id"].fillna(0).max())
     if zmax > 10 * max(nz, 1):
         findings += 1
-        _record("renumbering", "WARN", f"{nz} zones but zone ids run to {zmax} -- "
-                "kernel arrays scale with the LARGEST id, so runs are far slower "
-                "than needed. Renumber ids (workflow renumbering.py) for speed.")
+        _record("renumbering", "WARN", f"{nz} zones but zone ids run to {zmax}. "
+                "This staging folder keeps ORIGINAL ids by design -- the dtalite4cube "
+                "runner renumbers into a private _internal/ copy before the kernel and "
+                "back-maps outputs. Feeding the kernel THIS folder directly crashes or "
+                "eats GBs (arrays scale with the largest id). `prepare` renumbers the "
+                "same way (id_map.csv for back-mapping).")
     else:
         _record("renumbering", "OK", f"{nz} zones, max id {zmax}")
 
