@@ -25,10 +25,11 @@ jobs:
       - name: Build kernel (DTALite_exe)
         run: cmake --build build --config Release --target DTALite_exe
 
-      - name: Stage executable -> bin/DTALite.exe
+      - name: Stage executable -> bin/TAPLite.exe (+ legacy DTALite.exe copy)
         shell: bash
         run: |
           mkdir -p bin
+          cp build/Release/DTALite_exe.exe bin/TAPLite.exe
           cp build/Release/DTALite_exe.exe bin/DTALite.exe
           ls -la bin/
 
@@ -42,3 +43,12 @@ jobs:
 
       - name: Regression suite
         run: python test_networks/run_regression.py
+
+      # The release gate: every public-network QA/QC gate must pass (kernel,
+      # regression, synthetic sparse-id repro, ARC intake/VDF + smoke run,
+      # NVTA public-safe path, pytaplite APIs). One self-checking command --
+      # the same script a human runs before tagging a release.
+      - name: Release smoke test (public QA/QC gates)
+        run: |
+          python -m pip install pandas numpy pyshp
+          python scripts/release_smoke.py
