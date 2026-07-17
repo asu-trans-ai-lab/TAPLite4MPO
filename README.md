@@ -3,6 +3,10 @@
 [![build-and-test](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+> **New here? Read [START_HERE.md](START_HERE.md)** — one page: install, build the kernel,
+> and reproduce the validated ARC Atlanta assignment with
+> `python arc_pipeline.py check | all --quick | all --full`.
+
 A single-file, reproducible **C++ (CMake) static user-equilibrium traffic-assignment
 kernel** (Frank–Wolfe) for GMNS networks — with the VDF library, generalized cost,
 peak-load-factor, and solver options that **MPO/DOT static highway assignments** need —
@@ -44,6 +48,12 @@ MTC, SANDAG, MWCOG, VDOT, ODOT).
 > kernel updates). It shows every MPO feature wired up, with a clean ARC-requirement →
 > kernel-setting mapping. Background: [`docs/mpo_spec/`](docs/mpo_spec/) (the design spec
 > + multi-agency survey).
+>
+> **One front door runs all of it:** `cd examples/arc_atlanta && python arc_pipeline.py all --full`
+> (auto-detects raw-ARC vs in-repo data, verifies the encoded calibration, builds the kernel
+> if needed, live-streams the run, ends with a PASS/FAIL summary; `check` and `all --quick`
+> are the seconds/minutes-sized versions) — or open the one-click notebook
+> [`examples/arc_atlanta/ARC_END_TO_END.ipynb`](examples/arc_atlanta/ARC_END_TO_END.ipynb).
 
 ---
 

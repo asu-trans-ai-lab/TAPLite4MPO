@@ -310,7 +310,7 @@ side-by-side with its confidence label, so anything mis-set is visible.
 **To absorb other agencies (MAG, TPB, etc.):**
 - Add agency entry in `VDF_INVENTORY` and `MODE_DEFAULTS_<AGENCY>` dicts
 - MAG specifically: introduce `vdf_type=2` ("custom BPR with link length factor"
-  per MAG TransCAD model). Requires engine extension. Currently `confidence:
+  per the MAG regional model). Requires engine extension. Currently `confidence:
   needs_planner_input` in the inventory.
 
 ---
