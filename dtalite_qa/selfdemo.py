@@ -281,6 +281,10 @@ def _dashboard(outdir, case, structure, metrics, baseline, run_seconds,
                     mrow("final gap %", metrics["final_gap_pct"],
                          bm.get("final_gap_pct"))])
     ok = all(g["pass"] for g in GATES)
+    maplink = (' -- interactive map: <a href="network_dashboard.html">'
+               'network_dashboard.html</a> (gui4gmns)'
+               if os.path.exists(os.path.join(outdir, "network_dashboard.html"))
+               else "")
     html = f"""<meta charset="utf-8"><title>TAPLite4MPO self-demo</title>
 <style>body{{font-family:system-ui,sans-serif;margin:24px;max-width:960px}}
 h1{{font-size:22px}} .badge{{display:inline-block;padding:4px 14px;border-radius:6px;
@@ -305,7 +309,7 @@ tr.f td:nth-child(2){{color:#c0392b;font-weight:700}} .k{{color:#666}}</style>
 {extra_html}
 <p>Deep run report: <a href="run/report.html">run/report.html</a> (convergence plot,
 V/C and volume distributions, most-congested links) -- manifest:
-<a href="run/manifest.json">run/manifest.json</a></p>"""
+<a href="run/manifest.json">run/manifest.json</a>{maplink}</p>"""
     p = os.path.join(outdir, "selfdemo_dashboard.html")
     with open(p, "w", encoding="utf-8") as f:
         f.write(html)
@@ -424,6 +428,20 @@ def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
         _gate("manifest + report", True, "manifest.json + report.html written")
     except Exception as exc:
         _gate("manifest + report", False, f"{exc}")
+
+    # optional: interactive network dashboard via gui4gmns (same *4gmns family).
+    # Never a gate -- purely an enhancement when the package is installed.
+    try:
+        import gui4gmns
+        gui4gmns.generate(run_dir,
+                          out=os.path.join(outdir, "network_dashboard.html"))
+        _say("  interactive map: network_dashboard.html (gui4gmns: pan/zoom, "
+             "volume tiers, desire lines, QC layers)")
+    except ImportError:
+        _say("  tip: `pip install gui4gmns` adds an interactive network "
+             "dashboard (OSM basemap, desire lines, QC layers) to these artifacts")
+    except Exception as exc:
+        _say(f"  note: gui4gmns dashboard skipped ({exc})")
 
     # 6b) corridor volumes (ARC case): stable link_id pins
     corridors = None

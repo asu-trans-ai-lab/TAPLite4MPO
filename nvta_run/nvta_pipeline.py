@@ -379,6 +379,15 @@ def stage_run(out, timeout=7200):
             last = time.time()
     rc = proc.wait()
     ok = rc == 0 and os.path.getsize(os.path.join(out, "link_performance.csv")) > 0
+    if ok:
+        try:
+            import gui4gmns
+            gui4gmns.generate(out, out=os.path.join(out, "network_dashboard.html"))
+            _say("  interactive map: network_dashboard.html (gui4gmns)")
+        except ImportError:
+            _say("  tip: `pip install gui4gmns` adds an interactive network dashboard")
+        except Exception as exc:
+            _say(f"  note: gui4gmns dashboard skipped ({exc})")
     _record("run", "OK" if ok else "FAIL",
             f"{(time.time()-t0)/60:.1f} min" if ok else f"kernel exit {rc}; see {logp}")
     return ok

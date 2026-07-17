@@ -128,6 +128,20 @@ class Result:
         import pandas as pd
         return pd.DataFrame(self.links)
 
+    def dashboard(self, out=None):
+        """Generate an interactive network dashboard for this run via the
+        optional gui4gmns package (same *4gmns family): pan/zoom map, volume
+        tiers, desire lines, QC layers, OSM basemap for lon/lat networks.
+        `pip install gui4gmns` to enable. Returns the HTML path."""
+        try:
+            import gui4gmns
+        except ImportError:
+            raise ImportError("pip install gui4gmns to generate interactive "
+                              "network dashboards from run folders")
+        out = out or os.path.join(self.run_dir, "network_dashboard.html")
+        gui4gmns.generate(self.run_dir, out=out)
+        return out
+
 
 def _read_links(run_dir):
     p = os.path.join(run_dir, "link_performance.csv")

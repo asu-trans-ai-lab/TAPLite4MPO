@@ -78,6 +78,12 @@ release. Variants: `taplite self-demo --quick` (Sioux Falls kernel smoke),
 `--output my_demo`, `--json`. The baseline is never rewritten by a normal run
 (`--record-baseline` is an explicit maintainer action).
 
+Optional visualization: `pip install gui4gmns` (the same `*4gmns` family) and every
+self-demo / pipeline run additionally produces an **interactive network dashboard**
+(`network_dashboard.html`: pan/zoom map with an OSM basemap on lon/lat networks,
+volume-tiered links, OD desire lines, and QC layers). Also available per run as
+`pytaplite.assign(...).dashboard()`. Purely additive — nothing requires it.
+
 Two complementary cases:
 
 | Case | Command | Purpose |

@@ -54,6 +54,7 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then VPY=demo_env/Scripts/python; else VPY=demo_env/bin/python; fi
           "$VPY" -m pip install --upgrade pip
           "$VPY" -m pip install dist/taplite4mpo-*.whl
+          "$VPY" -m pip install gui4gmns || true   # optional: interactive dashboards in artifacts
           echo "VPY=$VPY" >> "$GITHUB_ENV"
 
       - name: Run the self-demo from an unrelated empty directory
@@ -89,6 +90,7 @@ jobs:
         run: |
           python -m pip wheel . --wheel-dir dist --no-deps
           python -m pip install dist/taplite4mpo-*.whl
+          python -m pip install gui4gmns || true   # optional: interactive dashboard in artifacts
       - name: Run the ARC Superzone self-demo
         env:
           TAPLITE_EXE: ${{ github.workspace }}/bin/TAPLite

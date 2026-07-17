@@ -476,6 +476,14 @@ def stage_run(quick=False, run_dir=None, timeout=7200):
             _say("  reproducibility record: manifest.json + report.html written")
         except Exception as exc:
             _say(f"  note: run succeeded; manifest/report skipped ({exc})")
+        try:
+            import gui4gmns
+            gui4gmns.generate(rd, out=os.path.join(rd, "network_dashboard.html"))
+            _say("  interactive map: network_dashboard.html (gui4gmns)")
+        except ImportError:
+            _say("  tip: `pip install gui4gmns` adds an interactive network dashboard")
+        except Exception as exc:
+            _say(f"  note: gui4gmns dashboard skipped ({exc})")
     _record("run", "OK" if ok else "FAIL",
             f"{dt:.1f} min, console log: {os.path.relpath(logp, HERE)}" if ok
             else f"kernel exit {rc}; see {os.path.relpath(logp, HERE)}")
