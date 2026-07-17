@@ -39,9 +39,13 @@ import sys
 import time
 
 CASES = {"chicago_sketch": "Chicago Sketch (min. runnable MPO assignment)",
-         "sioux_falls": "Sioux Falls (fast kernel smoke)"}
+         "sioux_falls": "Sioux Falls (fast kernel smoke)",
+         "arc_superzone": "ARC Superzone (MPO-scale workflow demonstration)"}
+# per-case golden baseline location (sketch kept at the root for compatibility)
+BASELINE_PATH = {"chicago_sketch": "golden_baseline.json",
+                 "arc_superzone": "arc_superzone/golden_baseline.json"}
 INPUT_FILES = ("node.csv", "link.csv", "demand.csv", "settings.csv",
-               "mode_type.csv", "submission.yml")
+               "mode_type.csv", "submission.yml", "zone_crosswalk.csv")
 # Deterministic golden configuration (see module docstring).
 DETERMINISTIC = {"assignment_method": 0, "number_of_processors": 1,
                  "number_of_iterations": 20, "convergence_gap_pct": 0.0,
@@ -50,6 +54,7 @@ DETERMINISTIC = {"assignment_method": 0, "number_of_processors": 1,
 QUICK_OVERRIDES = dict(DETERMINISTIC, number_of_iterations=5)
 BASELINE_NAME = "golden_baseline.json"
 GATES = []
+CURRENT_CORRIDORS = None   # set per-run for the ARC corridor comparison
 
 
 def _say(msg=""):
@@ -93,13 +98,17 @@ def _copy_case(case, dest):
     return sorted(names)
 
 
-def _read_baseline():
+def _read_baseline(case="chicago_sketch"):
     root = _data_root()
+    parts = BASELINE_PATH.get(case, BASELINE_NAME).split("/")
     try:
         if isinstance(root, str):
-            with open(os.path.join(root, BASELINE_NAME), encoding="utf-8") as f:
+            with open(os.path.join(root, *parts), encoding="utf-8") as f:
                 return json.load(f)
-        with (root / BASELINE_NAME).open("r", encoding="utf-8") as f:
+        node = root
+        for part in parts:
+            node = node / part
+        with node.open("r", encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
@@ -230,6 +239,14 @@ def _compare_golden(baseline, structure, metrics, volumes, input_hashes):
         elif want and abs(got - want) / abs(want) > bt and abs(got - want) > 1.0:
             fails.append(f"benchmark link {lid}: {got:g} vs {want:g}")
 
+    ct = tol.get("corridor_volume_relative", 0.01)
+    for cname, want in baseline.get("corridor_volumes", {}).items():
+        got = (CURRENT_CORRIDORS or {}).get(cname)
+        if got is None:
+            fails.append(f"corridor {cname} not extracted")
+        elif want and abs(got - want) / abs(want) > ct:
+            fails.append(f"corridor {cname}: {got:,.0f} vs {want:,.0f}")
+
     base_vol = baseline.get("link_volumes", {})
     if base_vol:
         tot = sum(abs(v) for v in base_vol.values()) or 1.0
@@ -245,7 +262,8 @@ def _compare_golden(baseline, structure, metrics, volumes, input_hashes):
     return _gate("golden regression", not fails, detail)
 
 
-def _dashboard(outdir, case, structure, metrics, baseline, run_seconds, kernel_via):
+def _dashboard(outdir, case, structure, metrics, baseline, run_seconds,
+               kernel_via, extra_html=""):
     """One self-contained HTML: Run / Trust / Reproduce panels + gate table."""
     rows = "".join(
         f"<tr class={'p' if g['pass'] else 'f'}><td>{g['gate']}</td>"
@@ -284,6 +302,7 @@ tr.f td:nth-child(2){{color:#c0392b;font-weight:700}} .k{{color:#666}}</style>
 <h2>Reproduce -- current vs golden</h2>
 <table><tr><th>metric</th><th>this run</th><th>golden</th></tr>{mtab}</table>
 <h2>Gates</h2><table><tr><th>gate</th><th>status</th><th>detail</th></tr>{rows}</table>
+{extra_html}
 <p>Deep run report: <a href="run/report.html">run/report.html</a> (convergence plot,
 V/C and volume distributions, most-congested links) -- manifest:
 <a href="run/manifest.json">run/manifest.json</a></p>"""
@@ -294,10 +313,23 @@ V/C and volume distributions, most-congested links) -- manifest:
 
 
 def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
-                 record_baseline=False, as_json=False):
+                 record_baseline=False, as_json=False, rebuild_superzones=False):
     del GATES[:]
     t0 = time.time()
     case = "sioux_falls" if quick else case
+    if rebuild_superzones and case == "arc_superzone":
+        src = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "examples", "arc_atlanta", "gmns")
+        if not os.path.isdir(src):
+            _say("--rebuild-superzones needs a repository checkout (the full "
+                 "6,031-zone ARC source is not shipped in the wheel); using the "
+                 "checked-in deterministic fixture instead.")
+        else:
+            from . import selfdemo_arc
+            _say("rebuilding the superzone fixture from examples/arc_atlanta/gmns ...")
+            selfdemo_arc.build_fixture(src, os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "selfdemo_data", "arc_superzone"))
     outdir = os.path.abspath(output or os.environ.get("TAPLITE_SELFDEMO_OUT")
                              or "taplite_selfdemo_output")
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
@@ -338,10 +370,23 @@ def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
             _gate("intake gate", False, f"intake crashed: {exc}")
             return _finish(outdir, case, t0, as_json)
 
+    # 3b) ARC-specific fixture stages (crosswalk, conservation, connectivity)
+    if case == "arc_superzone":
+        from . import selfdemo_arc
+        arc_ok = True
+        for name, ok_, detail in selfdemo_arc.validate_fixture(run_dir):
+            arc_ok = _gate(name, ok_, detail) and arc_ok
+        if not arc_ok:
+            return _finish(outdir, case, t0, as_json)
+
     # 4) the NATIVE kernel, deterministic configuration
     try:
         import pytaplite
-        overrides = QUICK_OVERRIDES if quick else DETERMINISTIC
+        if case == "arc_superzone":
+            from . import selfdemo_arc
+            overrides = selfdemo_arc.DETERMINISTIC
+        else:
+            overrides = QUICK_OVERRIDES if quick else DETERMINISTIC
         r = pytaplite.assign(run_dir, settings_overrides=dict(overrides))
         via = ("in-process" if "in-process" in (r.log or "") else "subprocess exe")
         _gate("native assignment", r.returncode == 0,
@@ -354,6 +399,15 @@ def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
 
     # 5) output gate + MOEs
     structure = _structure(run_dir)
+    if case == "arc_superzone":
+        try:
+            with open(os.path.join(run_dir, "build_report.json"),
+                      encoding="utf-8") as f:
+                _brep = json.load(f)
+            structure["superzones"] = _brep["superzones"]
+            structure["original_zones"] = _brep["original_zones"]
+        except (OSError, ValueError, KeyError):
+            pass
     metrics, volumes, perf = _metrics(run_dir)
     if not _check_outputs(run_dir, structure, perf):
         return _finish(outdir, case, t0, as_json)
@@ -371,8 +425,19 @@ def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
     except Exception as exc:
         _gate("manifest + report", False, f"{exc}")
 
+    # 6b) corridor volumes (ARC case): stable link_id pins
+    corridors = None
+    if case == "arc_superzone":
+        from . import selfdemo_arc
+        try:
+            corridors = selfdemo_arc.corridor_volumes(run_dir)
+            _gate("corridor extraction", True,
+                  "; ".join(f"{k}={v:,.0f}" for k, v in sorted(corridors.items())))
+        except Exception as exc:
+            _gate("corridor extraction", False, str(exc))
+
     # 7) golden regression (full case only) -- NEVER auto-recorded
-    baseline = _read_baseline() if not quick else None
+    baseline = _read_baseline(case) if not quick else None
     if record_baseline:
         proposed = {
             "schema_version": 1, "case": case,
@@ -392,7 +457,25 @@ def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
             "input_sha256": input_hashes,
             "package_version": _pkg_version(),
         }
-        target = os.path.join(pkg_dir, "selfdemo_data", BASELINE_NAME)
+        if corridors:
+            proposed["corridor_volumes"] = corridors
+            proposed["tolerances"].update({"corridor_volume_relative": 0.01,
+                                           "vmt_relative": 0.0025,
+                                           "vht_relative": 0.0025,
+                                           "total_link_volume_relative": 0.0025,
+                                           "normalized_l1_volume": 0.005})
+            try:
+                with open(os.path.join(run_dir, "build_report.json"),
+                          encoding="utf-8") as f:
+                    brep = json.load(f)
+                proposed["structure"]["superzones"] = brep["superzones"]
+                proposed["structure"]["original_zones"] = brep["original_zones"]
+                proposed["crosswalk_sha256"] = brep["crosswalk_sha256"]
+                proposed["intrazonal_demand"] = brep["intrazonal_demand"]
+            except (OSError, ValueError, KeyError):
+                pass
+        target = os.path.join(pkg_dir, "selfdemo_data",
+                              *BASELINE_PATH.get(case, BASELINE_NAME).split("/"))
         try:
             with open(target, "w", encoding="utf-8") as f:
                 json.dump(proposed, f, indent=1, sort_keys=True)
@@ -407,6 +490,8 @@ def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
                  "\n*** copy it into dtalite_qa/selfdemo_data/ in the repo and commit.")
         _gate("golden regression", True, "baseline recorded (maintainer mode)")
     elif not quick:
+        global CURRENT_CORRIDORS
+        CURRENT_CORRIDORS = corridors
         _compare_golden(baseline, structure, metrics, volumes, input_hashes)
 
     return _finish(outdir, case, t0, as_json, structure, metrics,
@@ -421,16 +506,51 @@ def _pkg_version():
         return "source-tree"
 
 
+def _arc_extra_html(outdir):
+    """Panel A (compression) + Panel B (superzone map) for the ARC case."""
+    run_dir = os.path.join(outdir, "run")
+    try:
+        with open(os.path.join(run_dir, "build_report.json"), encoding="utf-8") as f:
+            rep_ = json.load(f)
+        from . import selfdemo_arc
+        svg = selfdemo_arc.svg_map(run_dir)
+        rows = "".join(
+            f"<tr><td class=k>{k.replace('_', ' ')}</td><td>{v}</td></tr>"
+            for k, v in (("original zones", rep_["original_zones"]),
+                         ("superzones", rep_["superzones"]),
+                         ("compression ratio", f"{rep_['compression_ratio']}x"),
+                         ("original OD pairs", f"{rep_['original_od_pairs']:,}"),
+                         ("aggregated OD pairs", f"{rep_['aggregated_od_pairs']:,}"),
+                         ("total demand (original)",
+                          f"{rep_['total_demand_original']:,.0f}"),
+                         ("network-loaded demand",
+                          f"{rep_['total_demand_aggregated']:,.0f}"),
+                         ("intrazonal (audited, excluded)",
+                          f"{rep_['intrazonal_demand']:,.0f} "
+                          f"({rep_['intrazonal_share_pct']}%)"),
+                         ("demand conserved",
+                          rep_["demand_conserved_machine_precision"])))
+        return (f"<h2>Model compression (superzoning)</h2><table>{rows}</table>"
+                "<h2>Superzone map -- recognizable ARC freeway network</h2>"
+                "<p class=k>Freeways/ramps colored and scaled by assigned volume; "
+                "green dots are the superzone centroids. This superzone model is a "
+                "computational demonstration and QA case, NOT a replacement for "
+                "the production ARC model.</p>" + svg)
+    except Exception as exc:
+        return f"<p class=k>(ARC panels unavailable: {exc})</p>"
+
+
 def _finish(outdir, case, t0, as_json, structure=None, metrics=None,
             baseline=None):
     ok = all(g["pass"] for g in GATES)
     try:
+        extra = _arc_extra_html(outdir) if case == "arc_superzone" else ""
         _dashboard(outdir, case,
                    structure or {"nodes": "-", "links": "-", "zones": "-",
                                  "od_records": "-", "total_demand": "-"},
                    metrics or {"vmt": "-", "vht": "-", "total_link_volume": "-",
                                "final_gap_pct": "-"},
-                   baseline, time.time() - t0, "native kernel")
+                   baseline, time.time() - t0, "native kernel", extra_html=extra)
     except Exception:
         pass
     summary = {"case": case, "pass": ok, "gates": GATES,
@@ -463,14 +583,21 @@ def _finish(outdir, case, t0, as_json, structure=None, metrics=None,
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="taplite self-demo",
                                  description=__doc__.splitlines()[0])
+    ap.add_argument("--case", default="chicago-sketch",
+                    choices=["chicago-sketch", "arc-superzone"],
+                    help="chicago-sketch: fast deterministic regression (default); "
+                         "arc-superzone: MPO-scale workflow demonstration")
     ap.add_argument("--output", default=None)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--record-baseline", action="store_true")
+    ap.add_argument("--rebuild-superzones", action="store_true")
     ap.add_argument("--json", action="store_true", dest="as_json")
     a = ap.parse_args(argv)
-    return run_selfdemo(output=a.output, keep=a.keep, quick=a.quick,
-                        record_baseline=a.record_baseline, as_json=a.as_json)
+    return run_selfdemo(case=a.case.replace("-", "_"), output=a.output,
+                        keep=a.keep, quick=a.quick,
+                        record_baseline=a.record_baseline, as_json=a.as_json,
+                        rebuild_superzones=a.rebuild_superzones)
 
 
 if __name__ == "__main__":

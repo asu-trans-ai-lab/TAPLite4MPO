@@ -1,0 +1,23 @@
+{
+ "aggregated_od_pairs": 20148,
+ "compression_ratio": 39.94,
+ "corridor_links": {
+  "GA-400": "49155",
+  "I-20": "34697",
+  "I-285": "13932",
+  "I-75": "37381",
+  "I-85": "62907"
+ },
+ "crosswalk_sha256": "7b92abf4aee078345f8173fe6b048f6da653e08be207cf2e835fe492cf570637",
+ "demand_conserved_machine_precision": true,
+ "intrazonal_demand": 1122969.79,
+ "intrazonal_share_pct": 33.041,
+ "intrazonal_treatment": "excluded from network loading, retained in this audit",
+ "merged_od_pairs_one_class": 1191527,
+ "original_od_pairs": 1424034,
+ "original_zones": 6031,
+ "superzones": 151,
+ "top_demand_own_superzones": 30,
+ "total_demand_aggregated": 2275731.04,
+ "total_demand_original": 3398700.83
+}

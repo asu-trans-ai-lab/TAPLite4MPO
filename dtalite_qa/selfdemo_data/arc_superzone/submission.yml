@@ -1,0 +1,33 @@
+# ARC Superzone self-demo -- declaration (derived PUBLIC demonstration model)
+agency: ARC Atlanta (superzoned demonstration derived from the public bundled GMNS case)
+model_year: 2020 AM (demonstration)
+contact: taplite4mpo maintainers
+capacity_basis: per_lane
+capacity_period: hourly
+capacity_source_field: AMCAPACITY/lanes (inherited from the ARC conversion)
+capacity_period_hours: 1
+assignment_period: AM
+period_start_hour: 6
+period_end_hour: 10
+peak_load_factor: 0.915
+phi_hour_to_period: 3.66
+plf_by_facility: none
+length_unit: m
+speed_unit: kmh
+time_unit: min
+demand_kind: vehicle_trips
+demand_period_hours: 4
+occupancy: 1
+pce: 1
+zone_id_basis: superzone ids 1..S; zone_crosswalk.csv maps original ARC TAZs
+vot: 21.5
+operating_cost_per_mi: 0.1729
+toll_coding: none in this demonstration extract
+vdf_type: 0
+vdf_source: ARC Sec 7.1.2 per-FACTYPE modified BPR (inherited)
+count_field: none (validated against the reviewed self-demo golden baseline)
+restriction_coding: allowed_use inherited from the ARC conversion
+# INTRAZONAL DECLARATION: demand whose origin and destination fall in the same
+# superzone is EXCLUDED from network loading and RETAINED in the demand audit
+# (see build_report.json). This is the standard superzone treatment; the audit
+# reports its exact magnitude and share.

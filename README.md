@@ -78,6 +78,13 @@ release. Variants: `taplite self-demo --quick` (Sioux Falls kernel smoke),
 `--output my_demo`, `--json`. The baseline is never rewritten by a normal run
 (`--record-baseline` is an explicit maintainer action).
 
+Two complementary cases:
+
+| Case | Command | Purpose |
+|---|---|---|
+| Chicago Sketch (default) | `taplite self-demo` | fast deterministic kernel + packaging regression — every PR and release |
+| ARC Superzone | `taplite self-demo --case arc-superzone` (alias `taplite demo arc-superzone`) | MPO-scale workflow demonstration: 6,031 ARC zones superzoned to 151 (demand conserved, intrazonal audited), the full recognizable regional freeway network, corridor checks on I-75/I-85/I-20/I-285/GA-400, a superzone map in the dashboard — scheduled CI and user validation (~1–3 min) |
+
 ## 1. Build the kernel (the solver — required)
 
 `bin/DTALite.exe` is the C++ engine that actually runs the assignment; the Python tools just

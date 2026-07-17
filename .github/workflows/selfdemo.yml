@@ -10,6 +10,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"     # weekly: the MPO-scale ARC Superzone demo
 
 jobs:
   contract:
@@ -67,3 +69,35 @@ jobs:
         with:
           name: taplite-selfdemo-${{ matrix.os }}
           path: demo_cwd/selfdemo_artifacts/
+
+  # MPO-scale demonstration: NOT run on pull requests (keeps small PRs fast).
+  # Runs on main pushes, the weekly schedule, and manual dispatch; wheels.yml
+  # gates releases with the Chicago Sketch case.
+  arc-superzone-selfdemo:
+    name: ARC Superzone self-demo
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the standalone kernel
+        run: bash build.sh
+      - name: Build and install the wheel
+        run: |
+          python -m pip wheel . --wheel-dir dist --no-deps
+          python -m pip install dist/taplite4mpo-*.whl
+      - name: Run the ARC Superzone self-demo
+        env:
+          TAPLITE_EXE: ${{ github.workspace }}/bin/TAPLite
+        run: |
+          mkdir demo_cwd && cd demo_cwd
+          python -m dtalite_qa self-demo --case arc-superzone --output arc_superzone_artifacts
+      - name: Upload ARC artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-superzone-selfdemo
+          path: demo_cwd/arc_superzone_artifacts/

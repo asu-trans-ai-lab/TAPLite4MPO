@@ -70,6 +70,23 @@ class SelfDemoContractTests(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertEqual(os.path.getmtime(target), before)
 
+    def test_arc_superzone_baseline_and_fixture(self):
+        b = selfdemo._read_baseline("arc_superzone")
+        self.assertIsNotNone(b, "arc_superzone golden_baseline.json missing")
+        self.assertEqual(b["case"], "arc_superzone")
+        self.assertEqual(b["structure"]["superzones"], 151)
+        self.assertEqual(b["structure"]["original_zones"], 6031)
+        self.assertIn("crosswalk_sha256", b)
+        self.assertEqual(len(b["corridor_volumes"]), 5)
+        for c in ("I-75", "I-85", "I-20", "I-285", "GA-400"):
+            self.assertIn(c, b["corridor_volumes"])
+        root = selfdemo._data_root()
+        arc = root / "arc_superzone" if not isinstance(root, str) else None
+        names = [e.name for e in arc.iterdir()] if arc else []
+        for req in ("zone_crosswalk.csv", "build_report.json", "corridors.json",
+                    "demand.csv", "link.csv", "node.csv", "submission.yml"):
+            self.assertIn(req, names)
+
     def test_output_path_guard(self):
         pkg = os.path.dirname(os.path.abspath(selfdemo.__file__))
         self.assertEqual(selfdemo.run_selfdemo(output=os.path.join(pkg, "x")), 2)
