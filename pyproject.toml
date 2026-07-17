@@ -59,8 +59,9 @@ dtalite_qa = ["templates/*.yml"]
 build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
 skip = "*-musllinux_i686 *_i686 pp*"
 build-verbosity = 1
+test-command = "python -c \"from pytaplite import _native; before = _native.openmp_status(0); probe = _native.openmp_status(2); after = _native.openmp_status(0); print(before, probe, after); assert probe['compiled']; assert probe['probe_team_size'] >= min(2, probe['num_procs']); assert before['max_threads'] == after['max_threads']; assert before['dynamic'] == after['dynamic']\""
 
 [tool.cibuildwheel.macos]
-# C++17 needs a modern deployment target (arm64 requires >=11.0 anyway); this makes the
-# binary's min-OS match the wheel's platform tag so delocate accepts the repaired wheel.
-environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
+# Published arm64 wheels support macOS 13 and newer. The native extension and the pinned
+# llvm-openmp runtime must both satisfy this target before delocate repairs the wheel.
+environment = { MACOSX_DEPLOYMENT_TARGET = "13.0" }

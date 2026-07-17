@@ -1,0 +1,39 @@
+name: Set up pinned macOS OpenMP runtime
+description: Install and validate the deployment-compatible arm64 libomp used by wheel CI.
+
+outputs:
+  prefix:
+    description: Prefix containing include/omp.h and lib/libomp.dylib.
+    value: ${{ steps.verify.outputs.prefix }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install locked llvm-openmp environment
+      id: micromamba
+      uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3
+      with:
+        environment-file: ${{ github.action_path }}/macos-arm64-libomp.lock
+        environment-name: taplite-libomp
+        micromamba-version: "2.6.2-1"
+        micromamba-root-path: ${{ runner.temp }}/taplite-micromamba
+        micromamba-binary-path: ${{ runner.temp }}/taplite-micromamba-bin/micromamba
+        init-shell: none
+        generate-run-shell: false
+        post-cleanup: all
+
+    - name: Validate locked llvm-openmp runtime
+      id: verify
+      shell: bash
+      env:
+        LIBOMP_PREFIX: ${{ steps.micromamba.outputs.environment-path }}
+      run: |
+        set -euo pipefail
+        test -f "$LIBOMP_PREFIX/include/omp.h"
+        test -f "$LIBOMP_PREFIX/lib/libomp.dylib"
+        test -f "$LIBOMP_PREFIX/conda-meta/llvm-openmp-22.1.8-hc7d1edf_0.json"
+        python "$GITHUB_WORKSPACE/scripts/verify_macos_wheel.py" \
+          --verify-runtime "$LIBOMP_PREFIX/lib/libomp.dylib" \
+          --architecture "$(uname -m)" \
+          --deployment-target 13.0
+        printf 'prefix=%s\n' "$LIBOMP_PREFIX" >> "$GITHUB_OUTPUT"

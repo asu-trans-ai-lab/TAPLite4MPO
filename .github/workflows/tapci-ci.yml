@@ -43,6 +43,9 @@ jobs:
         run: python -m unittest tests.test_kpi -v
       - name: City Brain orchestration tests (fan-out, per-region routing, KPI totals)
         run: python -m unittest tests.test_citybrain -v
+      - name: Inclusive allocator leak test
+        if: matrix.python-version == '3.12'
+        run: python -m unittest tests.test_memory_allocators -v
 
   kernel:
     name: kernel loop (Chicago Sketch)

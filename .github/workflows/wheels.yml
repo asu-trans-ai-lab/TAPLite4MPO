@@ -6,33 +6,77 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "setup.py"
+      - "pyproject.toml"
+      - "kernel/**"
+      - "scripts/verify_macos_wheel.py"
+      - "tests/test_openmp_native.py"
+      - "tests/test_verify_macos_wheel.py"
+      - ".github/actions/setup-macos-libomp/**"
+      - ".github/workflows/wheels.yml"
 
 jobs:
   wheels:
     name: wheels on ${{ matrix.os }}
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    # macOS is best-effort: the native extension is OPTIONAL by design (pytaplite falls
-    # back to the CLI kernel), and the x86_64 cross-build's delocate gate failed twice in
-    # CI. Build native arm64 wheels only (Intel macs install from the sdist); a macOS
-    # failure must not block publishing the Windows/Linux wheels + sdist.
-    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install pinned macOS OpenMP runtime
+        if: runner.os == 'macOS'
+        id: libomp
+        uses: ./.github/actions/setup-macos-libomp
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2
         env:
           CIBW_ARCHS_MACOS: "native"
+          CIBW_ENVIRONMENT: "TAPLITE_REQUIRE_OPENMP=1"
+          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=13.0 TAPLITE_REQUIRE_OPENMP=1 LIBOMP_PREFIX=${{ steps.libomp.outputs.prefix }}"
+      - name: Verify repaired macOS wheels
+        if: runner.os == 'macOS'
+        run: |
+          python -m pip install delocate
+          delocate-listdeps wheelhouse/*.whl
+          python scripts/verify_macos_wheel.py --architecture "$(uname -m)" --deployment-target 13.0 wheelhouse/*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
+  macos-wheel-smoke:
+    name: macOS CPython 3.12 wheel smoke
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned macOS OpenMP runtime
+        id: libomp
+        uses: ./.github/actions/setup-macos-libomp
+      - name: Build and test strict OpenMP wheel
+        uses: pypa/cibuildwheel@v3.2
+        env:
+          CIBW_BUILD: "cp312-macosx_*"
+          CIBW_ARCHS_MACOS: "native"
+          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=13.0 TAPLITE_REQUIRE_OPENMP=1 LIBOMP_PREFIX=${{ steps.libomp.outputs.prefix }}"
+      - name: Inspect and verify repaired wheel
+        run: |
+          python -m pip install delocate
+          delocate-listdeps wheelhouse/*.whl
+          python scripts/verify_macos_wheel.py --architecture "$(uname -m)" --deployment-target 13.0 wheelhouse/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-pr-smoke
+          path: ./wheelhouse/*.whl
+
   sdist:
     name: sdist
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

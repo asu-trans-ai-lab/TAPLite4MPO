@@ -9,6 +9,9 @@
 
 #include <pybind11/pybind11.h>
 #include <string>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #ifdef _WIN32
 #include <direct.h>
 #define portable_chdir _chdir
@@ -18,6 +21,7 @@
 #endif
 
 int AssignmentAPI();    // defined in TAPLite.cpp (compiled here without BUILD_EXE)
+int ProcessorCountValidationStatus(int requested_processors);
 
 namespace py = pybind11;
 
@@ -32,6 +36,50 @@ static int run_in_dir(const std::string& path) {
     return rc;
 }
 
+static py::dict openmp_status(int requested_threads) {
+    if (requested_threads < 0)
+        throw py::value_error("requested_threads must be >= 0");
+
+    bool compiled = false;
+    int openmp_version = 0;
+    int max_threads = 1;
+    int num_procs = 1;
+    bool dynamic = false;
+    int probe_team_size = 1;
+
+#ifdef _OPENMP
+    compiled = true;
+    openmp_version = _OPENMP;
+    max_threads = omp_get_max_threads();
+    num_procs = omp_get_num_procs();
+    dynamic = omp_get_dynamic() != 0;
+
+    if (requested_threads > 0) {
+#pragma omp parallel num_threads(requested_threads)
+        {
+#pragma omp single
+            probe_team_size = omp_get_num_threads();
+        }
+    } else {
+#pragma omp parallel
+        {
+#pragma omp single
+            probe_team_size = omp_get_num_threads();
+        }
+    }
+#endif
+
+    py::dict status;
+    status["compiled"] = compiled;
+    status["openmp_version"] = openmp_version;
+    status["max_threads"] = max_threads;
+    status["num_procs"] = num_procs;
+    status["dynamic"] = dynamic;
+    status["requested_threads"] = requested_threads;
+    status["probe_team_size"] = probe_team_size;
+    return status;
+}
+
 PYBIND11_MODULE(_native, m) {
     m.doc() = "In-process TAPLite assignment kernel (calls AssignmentAPI()).";
     m.def("run_in_dir", &run_in_dir, py::arg("path") = "",
@@ -39,4 +87,9 @@ PYBIND11_MODULE(_native, m) {
           "directory) and writing link_performance.csv there. Returns the kernel exit code.\n"
           "NOTE: the kernel keeps global state, so run ONE assignment per process — for many\n"
           "runs use subprocess / multiprocessing (pytaplite.assign does this for you).");
+    m.def("openmp_status", &openmp_status, py::arg("requested_threads") = 0,
+          "Return native OpenMP build and runtime diagnostics without running an assignment.");
+    m.def("_processor_count_validation_status", &ProcessorCountValidationStatus,
+          py::arg("requested_processors"),
+          "Return the kernel settings-validation status for a processor count.");
 }

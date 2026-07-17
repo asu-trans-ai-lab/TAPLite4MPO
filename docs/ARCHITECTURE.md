@@ -84,10 +84,12 @@ It locates the binary, runs the assignment, and loads `link_performance.csv` bac
 the fastest of three execution paths automatically (all call the same C++ kernel):
 
 **2. ctypes shared library — the Path4GMNS / DTALite pattern (in-process, no pybind11).**
-The kernel exports the C-ABI symbols `DTA_AssignmentAPI()` / `DTA_SimulationAPI()`
-(`extern "C"` in `kernel/src/TAPLite.h`), so it builds as a shared library that Python loads
-with stdlib **`ctypes`** — exactly how [Path4GMNS](https://github.com/jdlph/Path4GMNS) ships
-the `DTALite` engine:
+The kernel retains the void C-ABI symbols `DTA_AssignmentAPI()` / `DTA_SimulationAPI()` for
+compatibility with existing callers. New integrations should prefer
+`DTA_AssignmentAPIWithStatus()` / `DTA_SimulationAPIWithStatus()` (`extern "C"` in
+`kernel/src/TAPLite.h`), which return zero on success and a nonzero status on failure. Invalid
+processor settings return status 2. The shared library can be loaded with stdlib **`ctypes`** —
+exactly how [Path4GMNS](https://github.com/jdlph/Path4GMNS) ships the `DTALite` engine:
 ```bash
 bash kernel/python/build_shared.sh    # -> pytaplite/DTALite.dll | libDTALite.so | libDTALite.dylib
 ```
@@ -96,6 +98,33 @@ bash kernel/python/build_shared.sh    # -> pytaplite/DTALite.dll | libDTALite.so
 
 **3. pybind11 binding — `pytaplite._native` (alternative in-process; releases the GIL).**
 `pip install pybind11 && bash kernel/python/build_native.sh`.
+
+For a native source build with Apple Clang on macOS, install LLVM's OpenMP runtime and
+identify its prefix before installing the package. Homebrew is a convenient developer
+fallback because the resulting extension runs on the same machine where it was built:
+```bash
+brew install libomp
+export LIBOMP_PREFIX="$(brew --prefix libomp)"
+python -m pip install .
+```
+Published Apple Silicon wheels target macOS 13 and newer. Wheel CI uses the exact conda-forge
+`llvm-openmp 22.1.8` build `hc7d1edf_0` for `osx-arm64`, validates it before compilation, and
+bundles `libomp.dylib` into the repaired wheel. End users do not need Homebrew, Conda, or a
+separate OpenMP installation. Homebrew is not used as the runtime source for published macOS
+wheels because its bottles can inherit the build runner's minimum macOS version.
+
+To inspect a native build without running an assignment:
+```python
+from pytaplite import _native
+print(_native.openmp_status(2))
+```
+The `number_of_processors` setting controls both the requested OpenMP team and the assignment's
+origin-zone processor buckets. The accepted range is 1 through 128; the upper bound is an input
+safety ceiling against unreasonable thread requests and processor-dependent allocations, not a
+recommended processor count or a return to the old 50-bucket implementation. Requests above the
+runtime's processor count or the network's assignable origin count are accepted with warnings.
+External OpenMP controls, process limits, or machine capacity can reduce the actual team size;
+the kernel records the requested and probed sizes in `summary_log_file.txt`.
 
 **Caveat (both in-process paths):** the kernel keeps global state, so run **one assignment
 per process**; for many runs use a fresh `work_dir` per call, `multiprocessing`, or
