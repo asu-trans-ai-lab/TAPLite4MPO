@@ -1,0 +1,105 @@
+name: TAPLite4MPO self-demo
+
+# The installed-package proof: build the wheel, install ONLY the wheel into a
+# clean environment, run `taplite self-demo` from an unrelated directory, and
+# fail on any gate -- including golden-baseline drift. Artifacts (dashboard,
+# summary, run outputs) upload even on failure.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"     # weekly: the MPO-scale ARC Superzone demo
+
+jobs:
+  contract:
+    name: contract tests (fast, no kernel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest tests.test_selfdemo_contract -v
+
+  self-demo:
+    name: installed-wheel self-demo (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The subprocess kernel for installs whose wheel lacks the compiled
+      # binding (the cibuildwheel release wheels DO carry pytaplite._native;
+      # this job proves the packaged data + gates on every OS regardless).
+      - name: Build the standalone kernel
+        shell: bash
+        run: bash build.sh
+
+      - name: Build wheel
+        run: python -m pip wheel . --wheel-dir dist --no-deps
+
+      - name: Install ONLY the built wheel into a clean venv
+        shell: bash
+        run: |
+          python -m venv demo_env
+          if [ "$RUNNER_OS" = "Windows" ]; then VPY=demo_env/Scripts/python; else VPY=demo_env/bin/python; fi
+          "$VPY" -m pip install --upgrade pip
+          "$VPY" -m pip install dist/taplite4mpo-*.whl
+          "$VPY" -m pip install gui4gmns || true   # optional: interactive dashboards in artifacts
+          echo "VPY=$VPY" >> "$GITHUB_ENV"
+
+      - name: Run the self-demo from an unrelated empty directory
+        shell: bash
+        run: |
+          mkdir demo_cwd && cd demo_cwd
+          if [ "$RUNNER_OS" = "Windows" ]; then export TAPLITE_EXE="$GITHUB_WORKSPACE/bin/TAPLite.exe"; else export TAPLITE_EXE="$GITHUB_WORKSPACE/bin/TAPLite"; fi
+          "../$VPY" -m dtalite_qa self-demo --output selfdemo_artifacts
+
+      - name: Upload self-demo artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: taplite-selfdemo-${{ matrix.os }}
+          path: demo_cwd/selfdemo_artifacts/
+
+  # MPO-scale demonstration: NOT run on pull requests (keeps small PRs fast).
+  # Runs on main pushes, the weekly schedule, and manual dispatch; wheels.yml
+  # gates releases with the Chicago Sketch case.
+  arc-superzone-selfdemo:
+    name: ARC Superzone self-demo
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the standalone kernel
+        run: bash build.sh
+      - name: Build and install the wheel
+        run: |
+          python -m pip wheel . --wheel-dir dist --no-deps
+          python -m pip install dist/taplite4mpo-*.whl
+          python -m pip install gui4gmns || true   # optional: interactive dashboard in artifacts
+      - name: Run the ARC Superzone self-demo
+        env:
+          TAPLITE_EXE: ${{ github.workspace }}/bin/TAPLite
+        run: |
+          mkdir demo_cwd && cd demo_cwd
+          python -m dtalite_qa self-demo --case arc-superzone --output arc_superzone_artifacts
+      - name: Upload ARC artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-superzone-selfdemo
+          path: demo_cwd/arc_superzone_artifacts/

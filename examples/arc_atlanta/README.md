@@ -11,6 +11,49 @@ restrictions, equilibrium convergence, and validation.
 
 ---
 
+## ⚡ Start here — the pipeline (one command, or one notebook)
+
+You do **not** need to figure out the script order below. **[`arc_pipeline.py`](arc_pipeline.py)**
+is the single front door; every stage also runs alone, and a full-scale run is **never
+launched without your say-so**:
+
+```bash
+cd examples/arc_atlanta
+python arc_pipeline.py check        # seconds: deps, kernel, data audit, intake, VDF/PLF verify
+python arc_pipeline.py all --quick  # ~1-2 min: 1-iteration smoke run, live streamed output
+python arc_pipeline.py all --full   # ~5-6 min: full 6,031-zone equilibrium -> %RMSE ~22%
+# every stage also runs alone:
+#   check (alias: doctor) | inspect | convert [--source-root DIR] | build
+#   | prepare | run [--quick] [--timeout S] | validate
+```
+
+Each run folder also gets a machine-readable record: `arc_validation.json` (per-group
+%RMSE), `manifest.json` (inputs, settings, convergence — the reproducibility record),
+and a self-contained `report.html`.
+
+Prefer a notebook? **[`ARC_END_TO_END.ipynb`](ARC_END_TO_END.ipynb)** — *Run All* is safe
+(quick smoke by default; the full run is behind an explicit `RUN_MODE = "full"` flag).
+
+The pipeline settles the two questions that confuse everyone first:
+
+- **The full raw ARC data (~125 MB shapefiles + trip cores) is NOT in this repo — that
+  is expected, not an error.** The bundled `gmns/` case is complete (PATH A). If you *do*
+  place the full data in `arc-Shape/arc-Shape/` and `TODAM20_asgn/`, `convert` re-derives
+  `gmns/` from scratch (PATH B, via `arc_atlanta_to_gmns.py` + `arc_demand_to_csv.py`).
+- **`gmns/link.csv` already encodes ARC's calibration** (per-FACTYPE modified BPR, weave
+  overrides, `vdf_plf = 0.915`). `prepare` **verifies** that encoding, copies the network
+  and demand **verbatim**, and sets the solver parameters explicitly in one printed place.
+  (`arc_calibrate.py` remains only as the legacy tool that first derived the encoding —
+  it is *not* part of the default flow.)
+
+The kernel's first ~30 s are quiet (loading 26 M OD pairs) — `run` streams every kernel
+line with an elapsed clock and a heartbeat, so silence never looks like a hang. Stages are
+strictly serial: one demand period (AM 6–10), one kernel process at a time.
+
+Everything below is the *explanation* of what those stages do, step by step.
+
+---
+
 ## 0. Read first — the ARC model documentation
 
 Before running, read ARC's published Travel Demand Model documentation,

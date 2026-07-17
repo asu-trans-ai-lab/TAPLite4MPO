@@ -3,6 +3,11 @@
 [![build-and-test](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+> **New here? One entry:** open
+> **[notebooks/03_arc_atlanta_end_to_end.ipynb](notebooks/03_arc_atlanta_end_to_end.ipynb)**
+> — it walks you into the flagship ARC Atlanta reproduction (validated, %RMSE 22 %).
+> Prefer text? The same one page is [START_HERE.md](START_HERE.md).
+
 A single-file, reproducible **C++ (CMake) static user-equilibrium traffic-assignment
 kernel** (Frank–Wolfe) for GMNS networks — with the VDF library, generalized cost,
 peak-load-factor, and solver options that **MPO/DOT static highway assignments** need —
@@ -44,8 +49,65 @@ MTC, SANDAG, MWCOG, VDOT, ODOT).
 > kernel updates). It shows every MPO feature wired up, with a clean ARC-requirement →
 > kernel-setting mapping. Background: [`docs/mpo_spec/`](docs/mpo_spec/) (the design spec
 > + multi-agency survey).
+>
+> **One front door runs all of it:** `cd examples/arc_atlanta && python arc_pipeline.py all --full`
+> (auto-detects raw-ARC vs in-repo data, verifies the encoded calibration, builds the kernel
+> if needed, live-streams the run, ends with a PASS/FAIL summary; `check` and `all --quick`
+> are the seconds/minutes-sized versions) — or open the one-click notebook
+> [`examples/arc_atlanta/ARC_END_TO_END.ipynb`](examples/arc_atlanta/ARC_END_TO_END.ipynb).
 
 ---
+
+## Self-demonstrating installation
+
+Verify that the installed package, bundled public data, native assignment
+kernel, validation gate, reporting pipeline, and regression baseline all work:
+
+```bash
+pip install taplite4mpo
+taplite self-demo
+```
+
+```console
+$ taplite self-demo --case arc-superzone
+[PASS] bundled data          -- 9 files from the installed package
+[PASS] intake gate           -- GATE: READY (0 blockers)
+[PASS] crosswalk             -- 6031 zones -> 151 superzones (39.94x), sha256-pinned
+[PASS] demand conservation   -- 3,398,701 == 2,275,731 loaded + 1,122,970 intrazonal (audited)
+[PASS] superzone connectivity-- all 151 superzones connected both directions
+[PASS] native assignment     -- C++ kernel rc=0 (deterministic FW, 1 processor)
+[PASS] output checks         -- 145,969 rows finite and physical
+[PASS] corridor extraction   -- I-285=26,489; I-85=26,806; I-75=22,868; GA-400=18,918; I-20=15,064
+[PASS] golden regression     -- VMT/VHT/volumes at rel 0.00e+00 vs the reviewed baseline
+TAPLite4MPO self-demo: PASS
+```
+
+![ARC Superzone self-demo — assigned AM volumes on the recognizable Atlanta freeway network, 6,031 zones superzoned to 151](https://raw.githubusercontent.com/asu-trans-ai-lab/TAPLite4MPO/main/docs/images/selfdemo_arc_superzone.svg)
+
+Full walkthrough, artifact tree, and guarantees: **[docs/SELF_DEMO.md](https://github.com/asu-trans-ai-lab/TAPLite4MPO/blob/main/docs/SELF_DEMO.md)**.
+
+The command copies the bundled Chicago Sketch scenario to a writable run
+folder, validates its model declarations through the no-guessing intake gate,
+executes the native TAPLite kernel (deterministic Frank-Wolfe, one processor),
+generates an HTML dashboard, and compares VMT, VHT, convergence, and link
+volumes with the reviewed golden baseline. A successful run exits with code 0;
+numerical or packaging drift exits nonzero — the same check gates every
+release. Variants: `taplite self-demo --quick` (Sioux Falls kernel smoke),
+`--output my_demo`, `--json`. The baseline is never rewritten by a normal run
+(`--record-baseline` is an explicit maintainer action).
+
+Optional visualization: `pip install gui4gmns` (the same `*4gmns` family) and every
+self-demo / pipeline run additionally produces an **interactive network dashboard**
+(`network_dashboard.html`: pan/zoom map with an OSM basemap on lon/lat networks,
+volume-tiered links, OD desire lines, and QC layers). Also available per run as
+`pytaplite.assign(...).dashboard()`. Purely additive — nothing requires it.
+
+Two complementary cases:
+
+| Case | Command | Purpose |
+|---|---|---|
+| Chicago Sketch (default) | `taplite self-demo` | fast deterministic kernel + packaging regression — every PR and release |
+| ARC Superzone | `taplite self-demo --case arc-superzone` (alias `taplite demo arc-superzone`) | MPO-scale workflow demonstration: 6,031 ARC zones superzoned to 151 (demand conserved, intrazonal audited), the full recognizable regional freeway network, corridor checks on I-75/I-85/I-20/I-285/GA-400, a superzone map in the dashboard — scheduled CI and user validation (~1–3 min) |
 
 ## 1. Build the kernel (the solver — required)
 

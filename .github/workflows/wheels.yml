@@ -44,6 +44,26 @@ jobs:
           python -m pip install delocate
           delocate-listdeps wheelhouse/*.whl
           python scripts/verify_macos_wheel.py --architecture "$(uname -m)" --deployment-target 13.0 wheelhouse/*.whl
+      # Release gate: the built wheel must pass the installed-package
+      # self-demo (native in-process kernel, no fallback exe) before anything
+      # is published. Fails on golden-baseline drift.
+      - name: Installed-wheel self-demo (release gate)
+        shell: bash
+        run: |
+          python -m venv selfdemo_env
+          if [ "$RUNNER_OS" = "Windows" ]; then VPY=selfdemo_env/Scripts/python; else VPY=selfdemo_env/bin/python; fi
+          "$VPY" -m pip install --upgrade pip
+          "$VPY" -m pip install --no-index --find-links wheelhouse taplite4mpo
+          mkdir selfdemo_cwd && cd selfdemo_cwd
+          "../$VPY" -m dtalite_qa self-demo --output selfdemo_artifacts
+
+      - name: Upload self-demo artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfdemo-release-${{ matrix.os }}
+          path: selfdemo_cwd/selfdemo_artifacts/
+
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}

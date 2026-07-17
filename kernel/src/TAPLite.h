@@ -32,6 +32,11 @@ int g_accessibility_only_mode = 0;
 std::map<int, int> g_map_external_node_id_2_node_seq_no;
 std::map<int, int> g_map_node_seq_no_2_external_node_id;
 std::map<int, int> g_map_internal_zone_no_2_node_seq_no;
+// Internal renumbering (sparse agency ids -> dense 1..Z, zones first). All
+// zone-dimensioned arrays and loops use the dense seq; every output reports
+// the ORIGINAL ids through these maps.
+std::map<int, int> g_map_old_zone_id_2_zone_seq;   // external zone id -> dense 1..Z
+std::vector<int> g_zone_seq_2_old_zone_id;         // dense 1..Z -> external zone id
 class CDTACSVParser {
 public:
     char Delimiter;

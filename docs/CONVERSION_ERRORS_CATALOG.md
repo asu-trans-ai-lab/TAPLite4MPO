@@ -1,6 +1,6 @@
 # Conversion Error Catalog — every way an MPO hand-off goes wrong
 
-**Audience: anyone converting an agency travel-demand model (TransCAD / Cube / NeXTA /
+**Audience: anyone converting an agency travel-demand model (vendor GIS / Cube / NeXTA /
 shapefile) to a TAPLite/DTALite GMNS assignment.**
 
 > **The one principle:** onboarding is *model-meaning* conversion, not file-format
@@ -40,7 +40,7 @@ Capacity has **two independent axes**, and getting either wrong silently rescale
 - **Symptom:** V/C 2–4× too low; freeways barely congest; speeds far too high; VHT far
   below the reference even though volumes look right.
 - **Cause:** the kernel treats the `capacity` field as **per-lane** (`Lane_Capacity =
-  capacity; Link_Capacity = lanes × capacity`). TransCAD/Cube usually deliver **total**
+  capacity; Link_Capacity = lanes × capacity`). Commercial exports usually deliver **total**
   (all-lane) capacity. Writing the total into the per-lane field inflates `Link_Capacity`
   by the lane count.
 - **Correct convention:** `capacity = total_hourly_capacity / lanes` (per-lane, per-hour).
@@ -48,7 +48,7 @@ Capacity has **two independent axes**, and getting either wrong silently rescale
   1800; arterial fac 40 = 1500 = 2 × 750); the converter wrote it straight into the
   per-lane field, so V/C ran 4× low on freeways. Gentle default BPR *hid* it; the steep
   calibrated VDF (β=8) *exposed* it (freeway speeds ~69 mph vs reference ~42). Fix:
-  `capacity = HRCAPAC / lanes`. Every TransCAD model (GSATS, ARC) divides by lanes.
+  `capacity = HRCAPAC / lanes`. Every agency model seen so far (GSATS, ARC) divides by lanes.
 - **Detection:** compute per-lane capacity by facility and sanity-check (freeway ≈
   1800–2000, arterial ≈ 600–900). A freeway "per-lane" capacity of 7200 is the tell.
 
@@ -198,14 +198,14 @@ Capacity has **two independent axes**, and getting either wrong silently rescale
 ## 7. Directionality & field-name truncation
 
 ### 7a. Two-way vs one-way split
-- **Correct convention:** TransCAD AB/BA records carry a `DIR` field — `0` ⇒ emit both
+- **Correct convention:** vendor AB/BA records carry a `DIR` field — `0` ⇒ emit both
   directions, `1` ⇒ AB only, `-1` ⇒ BA only. (SCAG: 124,076 records → 224,288 directed.)
   Already-directed networks (ARC) instead need closed-in-period links (`AMCAPACITY=0`)
   dropped.
 
 ### 7b. DBF 255-field / 10-char truncation
 - **Symptom:** a critical join/zone field is simply **absent** from the shapefile.
-- **Cause:** shapefile DBF caps at **255 fields** and **10-char** names; a rich TransCAD
+- **Cause:** shapefile DBF caps at **255 fields** and **10-char** names; a rich agency
   table (SCAG had 471 fields) loses columns on export.
 - **Seen in:** **SCAG** — the tier-2 zone field (`T2TAZ`/`ccportzone`) was truncated away,
   which *was* the demand-mapping blocker (§5b). **Fix:** ask the agency for the dropped

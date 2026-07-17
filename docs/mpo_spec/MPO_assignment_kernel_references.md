@@ -21,7 +21,7 @@ Agencies covered: **ARC** (Atlanta, our base), **SERPM 8** (SE Florida), **TRPA*
 |--|--|--|--|--|--|--|
 | ARC | bi-conjugate FW | rgap < 1e-4, **3 consec iters**, max 20 | 5 (EA/AM/MD/PM/EV) | 10 | **modified BPR + linear term** | time·VOT + toll + dist·opcost |
 | SERPM 8 | Frank-Wolfe | rgap = 1e-4, **3 consec iters** | 5 | 8 (+2 AV) | modified BPR (by FTC2) | time + toll only |
-| TRPA | MSA capacity-restraint (TransCAD) | avg link-vol change < 1e-4, ~50 iters | 4 (AM/MD/PM/LN) | 2 (DA, SR) | standard BPR | time only |
+| TRPA | MSA capacity-restraint (vendor GIS platform) | avg link-vol change < 1e-4, ~50 iters | 4 (AM/MD/PM/LN) | 2 (DA, SR) | standard BPR | time only |
 | MTC TM1 | not stated (Cube) | not stated | 5 (EA/AM/MD/PM/EV) | 10 (5×pay/no-pay) | **modified BPR, 4/3 factor** | not stated (toll via classes) |
 | SANDAG ABM3 | **SOLA** (Emme, path-based) | rgap = **5e-4** | 5 (EA/AM/MD/PM/EV) | 15 (3 income × SOV/HOV + trucks) | modified BPR + intersection delay | time·VOT + toll + opcost per class |
 | MWCOG/TPB | bi-conjugate FW | **progressive** 1e-2→1e-4 over feedback; backup ≥1000 UE iters | 4 (AM/MD/PM/NT) | 6 | **conical** | time + cost (min/$ by class) |
@@ -185,7 +185,7 @@ feedback via **MSA**; feedback target demand-weighted %RMSE AM&PM DA time **<1%*
 numeric lookup tables + TOD hour ranges live in external Google Sheets (not machine-readable).
 
 ### TRPA (Tahoe) — trpa-agency.github.io/travel_demand_model
-**TransCAD MSA capacity-restraint**, AoN inner step; converge at avg link-vol change **1e-4**,
+**Vendor-GIS MSA capacity-restraint**, AoN inner step; converge at avg link-vol change **1e-4**,
 ~**50 iters**. Paths by **time only**. **4 periods** AM 7–10, MD 10–16, PM 16–19, LN 19–7.
 **2 classes** (drive-alone, shared-auto). **Standard BPR**; full α/β table by area-type×speed×lanes
 (Rural/Suburban/Urban; e.g. Rural60 2+ →0.09/6, Urban35 →1.00/5). Per-lane cap: principal 1100,

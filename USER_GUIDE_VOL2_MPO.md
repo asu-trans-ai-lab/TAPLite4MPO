@@ -141,7 +141,7 @@ empty/`all` = all modes; `hov2;hov3` = HOV-only; `trk` = truck-only/closed-to-au
 **Turn restrictions (`movement.csv`) are bans-only:** a movement row with
 `penalty >= 10` hard-bans that turn (exact link-state search); **`penalty < 10` is
 currently IGNORED — there are no graded/soft turn penalties yet** (planned; see
-WORK_PACKAGES WP-12). Don't encode TransCAD-style seconds-per-left-turn tables and
+WORK_PACKAGES WP-12). Don't encode vendor-style seconds-per-left-turn tables and
 expect them to apply.
 
 ---

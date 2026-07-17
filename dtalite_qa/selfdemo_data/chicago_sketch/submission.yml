@@ -1,0 +1,37 @@
+# Chicago Sketch -- self-demo declaration (public teaching network)
+agency: Chicago Sketch (public benchmark network, bundled for the self-demo)
+model_year: benchmark
+contact: taplite4mpo maintainers
+
+capacity_basis: per_link            # 'capacity' is total link capacity per hour
+capacity_period: hourly
+capacity_source_field: capacity (bundled GMNS)
+capacity_period_hours: 1
+
+assignment_period: AM1
+period_start_hour: 7
+period_end_hour: 8
+peak_load_factor: 1.0               # one-hour period -> PLF = 1 is CORRECT here
+phi_hour_to_period: 1.0
+plf_by_facility: none
+
+length_unit: m                      # GMNS length column is meters; vdf_length_mi carries miles
+speed_unit: mph
+time_unit: min
+
+demand_kind: vehicle_trips
+demand_period_hours: 1
+occupancy: 1
+pce: 1
+zone_id_basis: matrix label = centroid node id (zone_id == node_id)
+
+vot: 10
+operating_cost_per_mi: 0
+toll_coding: vdf_toll column (0 in this network)
+
+vdf_type: 0
+vdf_source: standard BPR alpha=0.15 beta=4 (benchmark convention)
+
+count_field: ref_volume (bundled reference assignment volumes)
+
+restriction_coding: none

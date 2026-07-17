@@ -1,0 +1,2 @@
+number_of_iterations,number_of_processors,assignment_method,convergence_gap_pct,convergence_consecutive,route_output,log_file,odme_mode,demand_format,demand_period_starting_hours,demand_period_ending_hours,first_through_node_id
+20,1,0,0.0,99,0,0,0,0,6,10,-1

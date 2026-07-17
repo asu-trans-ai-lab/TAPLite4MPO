@@ -3,6 +3,16 @@
 Two audiences: **(A)** users learning the pipeline (start below), and **(B)** maintainers
 cutting a PyPI release (§0 onward).
 
+> **The release gate (run before every tag):**
+> ```bash
+> python scripts/release_smoke.py --full
+> ```
+> One self-checking command covering every public-network QA/QC gate — kernel build,
+> regression suite, the synthetic sparse-id repro (issue #6), ARC intake/VDF gates,
+> the full ARC equilibrium (region %RMSE must be <= 38), the NVTA public-safe path,
+> and the pytaplite APIs. CI runs the quick version on every push/PR; `--full` is the
+> pre-tag requirement. Exit code 0 = safe to ship.
+
 ---
 
 ## What's in this release — for users
