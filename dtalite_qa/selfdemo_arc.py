@@ -201,6 +201,8 @@ def build_fixture(gmns, out_dir, k_target=K_TARGET, top_own=TOP_DEMAND_OWN):
                     except ValueError:
                         pass
             w.writerow(r)
+    # Reproject GA State Plane West feet -> lon/lat so interactive dashboards
+    # (gui4gmns) can place an OSM basemap under the recognizable ARC network.
     np_ = os.path.join(out_dir, "node.csv")
     nrows = _read_rows(np_)
     with open(np_, "w", newline="", encoding="utf-8") as f:
@@ -208,11 +210,12 @@ def build_fixture(gmns, out_dir, k_target=K_TARGET, top_own=TOP_DEMAND_OWN):
         w.writeheader()
         for r in nrows:
             r = {k: r.get(k, "") for k in ("node_id", "zone_id", "x_coord", "y_coord")}
-            for c in ("x_coord", "y_coord"):
-                try:
-                    r[c] = round(float(r[c]), 5)
-                except (TypeError, ValueError):
-                    pass
+            try:
+                lon, lat = sp_georgia_west_to_lonlat(float(r["x_coord"]),
+                                                     float(r["y_coord"]))
+                r["x_coord"], r["y_coord"] = lon, lat
+            except (TypeError, ValueError):
+                pass
             w.writerow(r)
 
     # deterministic settings + declaration
@@ -407,3 +410,62 @@ def svg_map(run_dir, width=880, height=660):
                      'fill-opacity="0.85"/>')
     parts.append("</svg>")
     return "".join(parts)
+
+
+# ------------------------------------------------- coordinate reprojection
+# NAD83 State Plane Georgia West (FIPS 1002), US survey feet -> WGS84-ish
+# lon/lat. Inverse Transverse Mercator per Snyder (1987), constants from the
+# ARC shapefile .prj. Pure stdlib, deterministic; accurate to << 1 m, which is
+# far below the fixture's 6-decimal rounding. Reprojection lets the gui4gmns
+# interactive dashboard place an OSM basemap under the ARC network.
+_SP_A = 6378137.0
+_SP_INVF = 298.257222101
+_SP_K0 = 0.9999
+_SP_LAT0 = 30.0
+_SP_LON0 = -84.16666666666667
+_SP_FE_FT = 2296583.333333333
+_SP_FT2M = 0.3048006096012192
+
+
+def sp_georgia_west_to_lonlat(x_ft, y_ft):
+    import math
+    a = _SP_A
+    f = 1.0 / _SP_INVF
+    e2 = f * (2 - f)
+    ep2 = e2 / (1 - e2)
+    k0 = _SP_K0
+    x = (x_ft - _SP_FE_FT) * _SP_FT2M
+    y = y_ft * _SP_FT2M
+    lat0 = math.radians(_SP_LAT0)
+
+    def arc_m(phi):
+        return a * ((1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256) * phi
+                    - (3 * e2 / 8 + 3 * e2 ** 2 / 32 + 45 * e2 ** 3 / 1024)
+                    * math.sin(2 * phi)
+                    + (15 * e2 ** 2 / 256 + 45 * e2 ** 3 / 1024)
+                    * math.sin(4 * phi)
+                    - (35 * e2 ** 3 / 3072) * math.sin(6 * phi))
+
+    m = arc_m(lat0) + y / k0
+    mu = m / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256))
+    e1 = (1 - math.sqrt(1 - e2)) / (1 + math.sqrt(1 - e2))
+    phi1 = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * math.sin(2 * mu)
+            + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * math.sin(4 * mu)
+            + (151 * e1 ** 3 / 96) * math.sin(6 * mu)
+            + (1097 * e1 ** 4 / 512) * math.sin(8 * mu))
+    sin1, cos1, tan1 = math.sin(phi1), math.cos(phi1), math.tan(phi1)
+    c1 = ep2 * cos1 ** 2
+    t1 = tan1 ** 2
+    n1 = a / math.sqrt(1 - e2 * sin1 ** 2)
+    r1 = a * (1 - e2) / (1 - e2 * sin1 ** 2) ** 1.5
+    d = x / (n1 * k0)
+    lat = phi1 - (n1 * tan1 / r1) * (
+        d ** 2 / 2
+        - (5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * ep2) * d ** 4 / 24
+        + (61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * ep2 - 3 * c1 ** 2)
+        * d ** 6 / 720)
+    lon = math.radians(_SP_LON0) + (
+        d - (1 + 2 * t1 + c1) * d ** 3 / 6
+        + (5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * ep2 + 24 * t1 ** 2)
+        * d ** 5 / 120) / cos1
+    return round(math.degrees(lon), 6), round(math.degrees(lat), 6)
