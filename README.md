@@ -3,9 +3,10 @@
 [![build-and-test](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-> **New here? Read [START_HERE.md](START_HERE.md)** — one page: install, build the kernel,
-> and reproduce the validated ARC Atlanta assignment with
-> `python arc_pipeline.py check | all --quick | all --full`.
+> **New here? One entry:** open
+> **[notebooks/03_arc_atlanta_end_to_end.ipynb](notebooks/03_arc_atlanta_end_to_end.ipynb)**
+> — it walks you into the flagship ARC Atlanta reproduction (validated, %RMSE 22 %).
+> Prefer text? The same one page is [START_HERE.md](START_HERE.md).
 
 A single-file, reproducible **C++ (CMake) static user-equilibrium traffic-assignment
 kernel** (Frank–Wolfe) for GMNS networks — with the VDF library, generalized cost,

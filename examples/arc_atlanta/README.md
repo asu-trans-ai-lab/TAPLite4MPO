@@ -22,8 +22,14 @@ cd examples/arc_atlanta
 python arc_pipeline.py check        # seconds: deps, kernel, data audit, intake, VDF/PLF verify
 python arc_pipeline.py all --quick  # ~1-2 min: 1-iteration smoke run, live streamed output
 python arc_pipeline.py all --full   # ~5-6 min: full 6,031-zone equilibrium -> %RMSE ~22%
-# stage-by-stage: convert | prepare | run [--quick] | validate
+# every stage also runs alone:
+#   check (alias: doctor) | inspect | convert [--source-root DIR] | build
+#   | prepare | run [--quick] [--timeout S] | validate
 ```
+
+Each run folder also gets a machine-readable record: `arc_validation.json` (per-group
+%RMSE), `manifest.json` (inputs, settings, convergence — the reproducibility record),
+and a self-contained `report.html`.
 
 Prefer a notebook? **[`ARC_END_TO_END.ipynb`](ARC_END_TO_END.ipynb)** — *Run All* is safe
 (quick smoke by default; the full run is behind an explicit `RUN_MODE = "full"` flag).

@@ -5,11 +5,15 @@ Every stage is a subcommand you can run alone; `all` chains them SERIALLY and
 never launches the big kernel run unless you say so explicitly:
 
     python arc_pipeline.py check            # seconds: deps, kernel, data, intake, VDF/PLF
+                                            #   (alias: doctor)
+    python arc_pipeline.py inspect          # scenario summary: zones, links, VDF, modes
     python arc_pipeline.py convert          # PATH B only: full raw ARC data -> gmns/
+    python arc_pipeline.py convert --source-root D:/ARC_Model   # find raw files anywhere
+    python arc_pipeline.py build            # explicit kernel build (build.sh, else CMake)
     python arc_pipeline.py prepare          # verify + copy gmns/ -> gmns_run/, set solver
-    python arc_pipeline.py run --quick      # 1-iteration smoke run (~2 min, live output)
+    python arc_pipeline.py run --quick      # 1-iteration smoke run (~1-2 min, live output)
     python arc_pipeline.py run              # FULL 6,031-zone equilibrium (~5-6 min)
-    python arc_pipeline.py validate         # %RMSE vs ARC's own AM counts
+    python arc_pipeline.py validate         # %RMSE vs ARC's own AM counts (+ JSON)
     python arc_pipeline.py all              # check+prepare, then PRINTS the run command
     python arc_pipeline.py all --quick      # ... + smoke run + approximate validation
     python arc_pipeline.py all --full       # ... + full run + validation (the real thing)
@@ -33,8 +37,11 @@ full run ~5 min (converges at iteration ~8, gap<0.5% x3); validation: region-wid
 %RMSE 22% vs ARC's ~38% target, assigned/ref = 1.00.
 """
 import argparse
+import glob
+import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -212,8 +219,55 @@ def verify_vdf():
 
 
 # ---------------------------------------------------------------- stage: convert
-def stage_convert(from_raw=False):
+RAW_CORES = ("SOVF", "SOVT", "HOV2F", "HOV2T", "HOV3F", "HOV3T")
+
+
+def _find_shallowest(root, pattern):
+    hits = sorted(glob.glob(os.path.join(root, "**", pattern), recursive=True),
+                  key=lambda p: (p.count(os.sep), p.lower()))
+    return hits[0] if hits else None
+
+
+def _collect_raw(source_root):
+    """Find the raw ARC files anywhere below source_root and stage them into the
+    layout the faithful provenance converters expect (arc-Shape/, TODAM20_asgn/)."""
+    root = os.path.abspath(os.path.expanduser(source_root))
+    if not os.path.isdir(root):
+        _record("collect raw", "FAIL", f"--source-root {root} is not a directory")
+        return False
+    missing, plan = [], []
+    for base in ("AMNode2020", "AMLink2020"):
+        shp = _find_shallowest(root, base + ".shp")
+        if not shp:
+            missing.append(base + ".shp")
+            continue
+        for sidecar in glob.glob(os.path.splitext(shp)[0] + ".*"):
+            plan.append((sidecar, os.path.join(RAW_SHP, os.path.basename(sidecar))))
+    for core in RAW_CORES:
+        p = _find_shallowest(root, core + ".csv")
+        (plan.append((p, os.path.join(RAW_DEMAND, core + ".csv")))
+         if p else missing.append(core + ".csv"))
+    if missing:
+        _record("collect raw", "FAIL",
+                f"not found below {root}: " + ", ".join(missing))
+        return False
+    os.makedirs(RAW_SHP, exist_ok=True)
+    os.makedirs(RAW_DEMAND, exist_ok=True)
+    _say(f"  staging {len(plan)} raw files from {root}")
+    _say("  NOTE: this replaces the bundled trimmed teaching shapefile in arc-Shape/ "
+         "with the full one (restore it from git if you want the trimmed copy back).")
+    for src, dst in plan:
+        shutil.copy2(src, dst)
+    _record("collect raw", "OK", f"{len(plan)} files staged for conversion")
+    return True
+
+
+def stage_convert(from_raw=False, source_root=None):
     """PATH B only: rebuild gmns/ from the full raw ARC data. Skips cleanly on PATH A."""
+    if source_root and not _collect_raw(source_root):
+        return False
+    if source_root:
+        from_raw = True
     path = data_path(from_raw=from_raw)
     if path is None:
         return False
@@ -264,6 +318,68 @@ def stage_prepare(quick=False, **solver):
     return True
 
 
+# ------------------------------------------------------------------ stage: build
+def stage_build():
+    """Explicit kernel build: bash build.sh when available, else direct CMake."""
+    if shutil.which("bash") and os.path.exists(os.path.join(REPO, "build.sh")):
+        rc, _ = _capture(["bash", "build.sh"], cwd=REPO, tail=6)
+    elif shutil.which("cmake"):
+        bdir = os.path.join(REPO, "cmake_build_rel")
+        cfg = ["cmake", "-S", os.path.join(REPO, "kernel"), "-B", bdir,
+               "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_DTALITE_EXE=ON"]
+        if shutil.which("ninja"):
+            cfg[1:1] = ["-G", "Ninja"]
+        rc, _ = _capture(cfg, cwd=REPO, tail=4)
+        if rc == 0:
+            rc, _ = _capture(["cmake", "--build", bdir, "--target", "DTALite_exe",
+                              "--config", "Release"], cwd=REPO, tail=4)
+        if rc == 0:
+            os.makedirs(os.path.join(REPO, "bin"), exist_ok=True)
+            for name in ("DTALite_exe.exe", "Release/DTALite_exe.exe", "DTALite_exe"):
+                built = os.path.join(bdir, name)
+                if os.path.exists(built):
+                    shutil.copy2(built, os.path.join(REPO, "bin", KERNEL_NAME))
+                    break
+    else:
+        _record("build", "FAIL", "neither bash nor cmake found -- install CMake "
+                "(macOS: brew install cmake libomp)")
+        return False
+    exe = kernel_path()
+    ok = rc == 0 and exe is not None
+    _record("build", "OK" if ok else "FAIL",
+            os.path.relpath(exe, REPO) if ok else "see build output above")
+    return ok
+
+
+# ---------------------------------------------------------------- stage: inspect
+def stage_inspect():
+    """Scenario summary: what is actually coded in gmns/ (no files changed)."""
+    import pandas as pd
+    nodes = pd.read_csv(os.path.join(GMNS, "node.csv"), usecols=["node_id", "zone_id"])
+    lk = pd.read_csv(os.path.join(GMNS, "link.csv"), low_memory=False)
+    _say(f"  nodes       : {len(nodes):,}")
+    _say(f"  zones       : {int((nodes['zone_id'].fillna(0) > 0).sum()):,}")
+    _say(f"  links       : {len(lk):,}")
+    if "ref_volume" in lk.columns:
+        _say(f"  ref links   : {int((lk['ref_volume'].fillna(0) > 0).sum()):,}")
+    if "allowed_use" in lk.columns:
+        uses = lk["allowed_use"].fillna("(all)").replace("", "(all)").value_counts()
+        _say("  allowed_use : " + ", ".join(f"{k}={v:,}" for k, v in uses.items()))
+    _say(f"  vdf_plf     : {sorted(lk['vdf_plf'].dropna().round(4).unique().tolist())}")
+    combos = lk[lk["factype"].fillna(0) != 0][["vdf_A", "vdf_alpha", "vdf_beta"]]
+    _say(f"  VDF sets    : {len(combos.drop_duplicates())} distinct (road links)")
+    _say("  settings.csv:")
+    for k, v in pd.read_csv(os.path.join(GMNS, "settings.csv")).iloc[0].items():
+        _say(f"    {k:32} = {v}")
+    _say("  mode_type.csv:")
+    mt = pd.read_csv(os.path.join(GMNS, "mode_type.csv"))
+    for _, r in mt.iterrows():
+        _say(f"    {r['mode_type']:6} vot={r['vot']} occ={r['occ']} "
+             f"op_cost={r['operating_cost']} demand={r['demand_file']}")
+    _record("inspect", "OK", f"{len(lk):,} links, {len(mt)} demand classes")
+    return True
+
+
 # -------------------------------------------------------------------- stage: run
 def _ensure_kernel():
     exe = kernel_path()
@@ -281,8 +397,9 @@ def _ensure_kernel():
     return exe
 
 
-def stage_run(quick=False, run_dir=None):
-    """Run the kernel with LIVE streamed output + heartbeat. Strictly one process."""
+def stage_run(quick=False, run_dir=None, timeout=7200):
+    """Run the kernel with LIVE streamed output + heartbeat. Strictly one process.
+    The timeout fires even while the kernel is silent (checked every second)."""
     rd = run_dir or (RUN_QUICK_DIR if quick else RUN_FULL_DIR)
     if not os.path.exists(os.path.join(rd, "settings.csv")):
         _record("run", "FAIL", f"{os.path.basename(rd)}/ not prepared -- run "
@@ -313,8 +430,15 @@ def stage_run(quick=False, run_dir=None):
 
     threading.Thread(target=_reader, daemon=True).start()
     last_out = time.time()
+    timed_out = False
     with open(logp, "w", encoding="utf-8") as log:
         while True:
+            if timeout and time.time() - t0 > timeout:
+                proc.kill()
+                timed_out = True
+                _say(f"  TIMEOUT: kernel exceeded {timeout} s -- killed "
+                     f"(raise with --timeout; log: {os.path.relpath(logp, HERE)})")
+                break
             try:
                 item = q.get(timeout=1.0)
             except queue.Empty:
@@ -331,9 +455,25 @@ def stage_run(quick=False, run_dir=None):
             log.write(item + "\n")
             last_out = time.time()
     rc = proc.wait()
+    if timed_out:
+        _record("run", "FAIL", f"timed out after {timeout} s")
+        return False
     dt = (time.time() - t0) / 60
     ok = rc == 0 and os.path.exists(os.path.join(rd, "link_performance.csv")) \
         and os.path.getsize(os.path.join(rd, "link_performance.csv")) > 0
+    if ok:
+        try:
+            sys.path.insert(0, REPO)
+            from dtalite_qa import manifest as _manifest, report_html as _report_html
+            man = _manifest.build_run_manifest(rd, scenario=GMNS, exe=exe,
+                                               intake_gate="READY")
+            with open(os.path.join(rd, "manifest.json"), "w", encoding="utf-8") as f:
+                json.dump(man, f, indent=1, default=str)
+            _report_html.build_report(rd, out_html=os.path.join(rd, "report.html"),
+                                      project_name="ARC Atlanta 2020 AM")
+            _say("  reproducibility record: manifest.json + report.html written")
+        except Exception as exc:
+            _say(f"  note: run succeeded; manifest/report skipped ({exc})")
     _record("run", "OK" if ok else "FAIL",
             f"{dt:.1f} min, console log: {os.path.relpath(logp, HERE)}" if ok
             else f"kernel exit {rc}; see {os.path.relpath(logp, HERE)}")
@@ -354,12 +494,23 @@ def stage_validate(quick=False, run_dir=None):
             _record("validate", "FAIL", "arc_benchmark.py could not build the reference")
             return False
     rc, out = _capture([sys.executable, "arc_validate_run.py", rd], tail=15)
-    import re
     m = re.search(r"region-wide %RMSE = (\d+)%", out)
     if rc != 0 or not m:
         _record("validate", "FAIL", "could not compute %RMSE")
         return False
     rmse = int(m.group(1))
+    # machine-readable record next to the run (per-group rows parsed from the report)
+    ratio_m = re.search(r"assigned/ref total = ([\d.]+)", out)
+    rows = [dict(group=g[0], n=int(g[1].replace(",", "")), rmse_pct=int(g[2]),
+                 target_pct=int(g[3]), assigned_ref_ratio=float(g[4]),
+                 passed=g[5] == "Y")
+            for g in re.findall(
+                r"(\d+k-\S+)\s+([\d,]+)\s+(\d+)%\s+(\d+)%\s+([\d.]+)\s+(Y|n)", out)]
+    with open(os.path.join(rd, "arc_validation.json"), "w", encoding="utf-8") as f:
+        json.dump({"region_rmse_pct": rmse,
+                   "assigned_ref_ratio": float(ratio_m.group(1)) if ratio_m else None,
+                   "arc_target_pct": 38, "quick_smoke": bool(quick),
+                   "groups": rows}, f, indent=2)
     if quick:
         _record("validate", "INFO", f"%RMSE {rmse}% after the 1-iteration smoke run -- "
                 "NOT the converged number; run the full pipeline for the real ~22%")
@@ -394,10 +545,16 @@ def main(argv=None):
         prog="arc_pipeline.py",
         description="ARC Atlanta stage-by-stage pipeline (see module docstring)")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("check", help="fast preflight: deps, kernel, data, intake, VDF/PLF")
+    sub.add_parser("check", aliases=["doctor"],
+                   help="fast preflight: deps, kernel, data, intake, VDF/PLF")
+    sub.add_parser("inspect", help="scenario summary: zones, links, VDF, modes, settings")
     sp = sub.add_parser("convert", help="PATH B only: raw ARC data -> gmns/")
     sp.add_argument("--from-raw", action="store_true",
                     help="fail loudly if the raw data is absent (default: skip cleanly)")
+    sp.add_argument("--source-root", default=None,
+                    help="folder to search recursively for the raw ARC files "
+                         "(AMNode2020/AMLink2020 shapefiles + the six trip cores)")
+    sub.add_parser("build", help="build the kernel (bash build.sh, else direct CMake)")
     sp = sub.add_parser("prepare", help="verify + copy gmns/ -> run folder, set solver")
     sp.add_argument("--quick", action="store_true", help="1-iteration smoke configuration")
     sp.add_argument("--iterations", type=int, dest="number_of_iterations")
@@ -407,6 +564,8 @@ def main(argv=None):
     sp = sub.add_parser("run", help="run the kernel (live output; --quick = smoke)")
     sp.add_argument("--quick", action="store_true")
     sp.add_argument("--dir", default=None, help="run folder (default gmns_run[/quick])")
+    sp.add_argument("--timeout", type=int, default=7200,
+                    help="kill the kernel after this many seconds (default 7200)")
     sp = sub.add_parser("validate", help="%RMSE vs the ARC count benchmark")
     sp.add_argument("--quick", action="store_true")
     sp.add_argument("--dir", default=None)
@@ -417,17 +576,21 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     ok = True
-    if a.cmd == "check":
+    if a.cmd in ("check", "doctor"):
         ok = stage_check()
+    elif a.cmd == "inspect":
+        ok = stage_inspect()
     elif a.cmd == "convert":
-        ok = stage_convert(from_raw=a.from_raw)
+        ok = stage_convert(from_raw=a.from_raw, source_root=a.source_root)
+    elif a.cmd == "build":
+        ok = stage_build()
     elif a.cmd == "prepare":
         ok = stage_prepare(quick=a.quick,
                            number_of_iterations=a.number_of_iterations,
                            convergence_gap_pct=a.convergence_gap_pct,
                            number_of_processors=a.number_of_processors)
     elif a.cmd == "run":
-        ok = stage_run(quick=a.quick, run_dir=a.dir)
+        ok = stage_run(quick=a.quick, run_dir=a.dir, timeout=a.timeout)
     elif a.cmd == "validate":
         ok = stage_validate(quick=a.quick, run_dir=a.dir)
     elif a.cmd == "all":
