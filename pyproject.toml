@@ -50,7 +50,7 @@ packages = ["dtalite_qa", "pytaplite", "taplite4mpo"]
 # back gracefully when no C++ compiler is present (pytaplite then uses subprocess).
 
 [tool.setuptools.package-data]
-dtalite_qa = ["templates/*.yml"]
+dtalite_qa = ["templates/*.yml", "selfdemo_data/*.json", "selfdemo_data/*/*"]
 
 [tool.cibuildwheel]
 # cp38 dropped: Python 3.8 is EOL (Oct 2024) and its macOS wheels default to the

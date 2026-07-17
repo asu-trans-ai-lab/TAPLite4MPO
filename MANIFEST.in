@@ -5,6 +5,7 @@ include kernel/python/binding.cpp kernel/python/CMakeLists.txt
 include kernel/python/build_native.sh kernel/python/build_shared.sh
 include kernel/CMakeLists.txt build.sh
 recursive-include dtalite_qa *.yml
+recursive-include dtalite_qa/selfdemo_data *
 include docs/ARCHITECTURE.md docs/GOLDEN_PATH_CHECKLIST.md pytaplite/README.md
 
 # Keep the sdist small — exclude the large example / benchmark / agency data.

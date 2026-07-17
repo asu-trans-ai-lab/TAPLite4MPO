@@ -198,11 +198,27 @@ def main(argv=None):
     sp.add_argument("--out", default=None, help="output .html (default: <run_dir>/report.html)")
     sp.add_argument("--name", default=None, help="project name shown in the report header")
 
+    sp = sub.add_parser("self-demo", help="prove the installed package end-to-end "
+                        "(bundled Chicago Sketch -> intake gate -> native kernel -> "
+                        "golden baseline); exit 0 only when every gate passes")
+    sp.add_argument("--output", default=None)
+    sp.add_argument("--keep", action="store_true")
+    sp.add_argument("--quick", action="store_true")
+    sp.add_argument("--record-baseline", action="store_true")
+    sp.add_argument("--json", action="store_true", dest="as_json")
+    sp.set_defaults(_selfdemo=True)
+
     sp = sub.add_parser("compare", help="manifest diff + side-by-side MOE of two runs")
     sp.add_argument("run_a", help="run folder or manifest.json")
     sp.add_argument("run_b", help="run folder or manifest.json")
 
     args = ap.parse_args(argv)
+    if getattr(args, "_selfdemo", False):
+        from . import selfdemo as _selfdemo
+        return _selfdemo.run_selfdemo(output=args.output, keep=args.keep,
+                                      quick=args.quick,
+                                      record_baseline=args.record_baseline,
+                                      as_json=args.as_json)
     return {
         "validate": cmd_validate, "run": cmd_run,
         "report": cmd_report, "compare": cmd_compare,

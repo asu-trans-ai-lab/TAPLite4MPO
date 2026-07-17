@@ -37,6 +37,11 @@ def _print_report(rep):
 
 
 def main(argv=None):
+    import sys as _sys
+    argv_l = list(argv) if argv is not None else _sys.argv[1:]
+    if argv_l and argv_l[0] == "self-demo":       # taplite self-demo, module form
+        from . import selfdemo as _selfdemo
+        return _selfdemo.main(argv_l[1:])
     ap = argparse.ArgumentParser(prog="dtalite_qa")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("validate", "inventory", "accessibility", "check"):

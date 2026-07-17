@@ -58,6 +58,26 @@ MTC, SANDAG, MWCOG, VDOT, ODOT).
 
 ---
 
+## Self-demonstrating installation
+
+Verify that the installed package, bundled public data, native assignment
+kernel, validation gate, reporting pipeline, and regression baseline all work:
+
+```bash
+pip install taplite4mpo
+taplite self-demo
+```
+
+The command copies the bundled Chicago Sketch scenario to a writable run
+folder, validates its model declarations through the no-guessing intake gate,
+executes the native TAPLite kernel (deterministic Frank-Wolfe, one processor),
+generates an HTML dashboard, and compares VMT, VHT, convergence, and link
+volumes with the reviewed golden baseline. A successful run exits with code 0;
+numerical or packaging drift exits nonzero — the same check gates every
+release. Variants: `taplite self-demo --quick` (Sioux Falls kernel smoke),
+`--output my_demo`, `--json`. The baseline is never rewritten by a normal run
+(`--record-baseline` is an explicit maintainer action).
+
 ## 1. Build the kernel (the solver — required)
 
 `bin/DTALite.exe` is the C++ engine that actually runs the assignment; the Python tools just
