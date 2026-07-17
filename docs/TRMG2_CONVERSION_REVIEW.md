@@ -1,13 +1,13 @@
-# TRMG2 — systematic TransCAD→GMNS conversion review
+# TRMG2 — systematic vendor-binary→GMNS conversion review
 
-Rigorous validation of the config-driven converter (`dtalite_qa/net2gmns.py`,
-`dtalite_qa/transcad_bin.py`) on a **real, full agency TransCAD model** — the Triangle
-Regional Model G2 (TRMG2, WSP, TransCAD 9) — going beyond the GSATS shapefile test to a
+Rigorous validation of the config-driven converter (`dtalite_qa/net2gmns.py` and
+the dtalite_qa FFB reader) on a **real, full agency vendor-GIS model** — the Triangle
+Regional Model G2 (TRMG2, WSP, vendor GIS v9) — going beyond the GSATS shapefile test to a
 135k-record model with an *independent* reference decode to check against.
 
 ## Method
-Two independent decode paths of the **same** TransCAD model, cross-checked:
-1. **Ours:** `transcad_bin` reads `master_links.BIN` + `.DCB` (FFB attributes); `net2gmns`
+Two independent decode paths of the **same** vendor model, cross-checked:
+1. **Ours:** the FFB reader reads `master_links.BIN` + `.DCB` (FFB attributes); `net2gmns`
    converts the links shapefile (geometry + attributes) → GMNS via `net2gmns_trmg2.json`.
 2. **Reference:** an earlier, completely separate decode from TRMG2's compiled `net.net`
    (`4step/trmg2_gmns/`) — different code, different path.
@@ -17,7 +17,7 @@ If both agree, the converter is right independent of any single decoder's bugs.
 
 | Check | Result |
 |---|---|
-| FFB reader at scale | `transcad_bin` parsed `master_links.BIN` = **135k records × 50 fields** (speeds, per-direction lanes/caps, `DailyCount`, `Screenline`, HCMType) — vs the earlier Cleveland 1,127-link test |
+| FFB reader at scale | the FFB reader parsed `master_links.BIN` = **135k records × 50 fields** (speeds, per-direction lanes/caps, `DailyCount`, `Screenline`, HCMType) — vs the earlier Cleveland 1,127-link test |
 | **net2gmns vs independent net.net decode** | **75,939 drive links — EXACT count match**, identical GMNS structure (from/to/lanes/capacity/speed/length columns) |
 | Drive-link filter | `DTWB` contains `D` correctly isolates the 75,939 drive links from the full multimodal network |
 | GSATS regression | re-ran after the net2gmns changes — **still 0 mismatches** on 5,362 links (no regression) |
@@ -57,7 +57,7 @@ Re-deriving ARC via net2gmns + the preset produces **146,177 links vs the refere
 link filtering (a config option), not the access logic.
 
 ## Verdict / what the converter handles
-- **Handles (verified):** TransCAD AB/BA + DIR directed split, per-lane/hourly capacity,
+- **Handles (verified):** vendor AB/BA + DIR directed split, per-lane/hourly capacity,
   categorical facility types (string-preserving), centroid renumbering, drive-mode
   filtering, PROHIBIT→access presets, FFB `.BIN`/`.DCB` attribute recovery at 135k scale.
 - **Standard hand-off:** shapefile (network) + OMX (demand). The FFB reader is a
@@ -66,5 +66,5 @@ link filtering (a config option), not the access logic.
 - **Not claimed:** count-level model reproduction on interim demand — that waits for the
   agency OMX at a matching basis.
 
-*(The raw TransCAD `.dbd/.BIN/.dln` binaries are not committed — TRMG2 is a public model;
+*(The raw vendor `.dbd/.BIN/.dln` binaries are not committed — TRMG2 is a public model;
 the derived GMNS + this recipe are the shareable artifacts.)*
