@@ -12,9 +12,9 @@ package (WP-13).
 
 ## P0 — blocks adoption
 
-**WP-01 · ✅ Vendor-GIS/FFB converter (one engine: `dtalite_qa/net2gmns.py`)** — VERIFIED 2026-07-04
-on a full real model: **TRMG2 (Triangle Regional Model, vendor GIS v9) → 75,939 drive links,
-EXACT match to an independent net.net decode**; the FFB reader parsed master_links.BIN at
+**WP-01 · ✅ TransCAD converter (one engine: `dtalite_qa/net2gmns.py`)** — VERIFIED 2026-07-04
+on a full real model: **TRMG2 (Triangle Regional Model, TransCAD 9) → 75,939 drive links,
+EXACT match to an independent net.net decode**; transcad_bin parsed master_links.BIN at
 135k×50-field scale; converted GMNS converged 0.044%/24it. Second public agency example
 after ARC: `examples/trmg2/` + `docs/TRMG2_CONVERSION_REVIEW.md` (count validation deferred
 pending agency OMX — interim demand + daily-vs-AM basis, honest two-tier framing).
@@ -24,12 +24,12 @@ connector codes, zone-field centroid renumbering (with exclusion values), emits
 `conversion_log.json` for intake.
 *Verified:* **GSATS equivalence test — 10,264 directed links, 5,362 org links, 0
 attribute mismatches** vs the hand-written converter (capacity/fftt/lanes/length per
-direction). **FFB `.BIN`+`.DCB` reader DONE** (in `dtalite_qa`): reads
-vendor fixed-format binary (FFB) attribute tables (int/short/real/float/char + null
+direction). **FFB `.BIN`+`.DCB` reader DONE** (`dtalite_qa/transcad_bin.py`): reads
+TransCAD fixed-format binary attribute tables (int/short/real/float/char + null
 sentinels) → CSV; *verified on Cleveland TN* — links 1,127×50 fields (speeds, facility
 types, per-direction lanes/caps, AADT2018 counts), nodes 812 (centroid flags), and the
-turn-penalty table. All public FFB-format model repos' attributes (TRMG2 83 MB, Oahu 8.6 MB) are
-now recoverable without the vendor software. (Provenance: independent implementation from the
+turn-penalty table. All public TransCAD repos' attributes (TRMG2 83 MB, Oahu 8.6 MB) are
+now recoverable without TransCAD. (Provenance: independent implementation from the
 self-describing text `.DCB` dictionary only — same interoperability posture as the
 open-source `wsp-sag/tcadr` package; note in the module docstring.)
 **STANDARD HAND-OFF (decision 2026-07): ask planners for a network SHAPEFILE + OMX
@@ -55,8 +55,8 @@ fingerprint caught. Remaining: binary `.mtx` reader (test target: Cleveland's 17
 `BY_2018_EETRIPS.mtx`) — Cube `.mat` stays out of scope (export CSV per WP-04 recipe).
 
 **WP-04 · ✅ Per-tool export how-tos** — DONE 2026-07-04
-the vendor-GIS export guide (DBF-truncation defense, AB/BA/DIR
-crosswalk, multi-capacity-column declaration; kept in `private/`), [CUBE_EXPORT_RECIPE.md](CUBE_EXPORT_RECIPE.md)
+[TRANSCAD_EXPORT_GUIDE.md](TRANSCAD_EXPORT_GUIDE.md) (DBF-truncation defense, AB/BA/DIR
+crosswalk, multi-capacity-column declaration), [CUBE_EXPORT_RECIPE.md](CUBE_EXPORT_RECIPE.md)
 (ARC-anchored: period factor ≠ period length, PROHIBIT access-vs-toll split),
 [VISUM_TO_GMNS.md](VISUM_TO_GMNS.md) (attribute lists/OMX, CapPrT basis check, TSysSet →
 allowed_use; web-sourced menu paths). Remaining nice-to-have: annotated ARC submission.yml

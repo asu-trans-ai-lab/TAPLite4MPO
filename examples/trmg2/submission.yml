@@ -1,6 +1,6 @@
 # TRMG2 (Triangle Regional Model G2) — declared conventions for the TAPLite intake gate.
-# Public model (WSP / Triangle-Modeling-and-Analytics, vendor GIS v9). Derived GMNS + this
-# recipe are shareable; raw vendor .dbd/.BIN/.dln binaries are NOT redistributed.
+# Public model (WSP / Triangle-Modeling-and-Analytics, TransCAD 9). Derived GMNS + this
+# recipe are shareable; raw TransCAD .dbd/.BIN/.dln binaries are NOT redistributed.
 
 network:
   source: shapefile derived from the TRMG2 master network (.dbd/.dln geometry + .BIN attrs)

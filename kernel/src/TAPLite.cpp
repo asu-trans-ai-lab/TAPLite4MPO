@@ -5453,7 +5453,6 @@ int AssignmentAPI()
 		std::chrono::duration<double> el = std::chrono::high_resolution_clock::now() - start;
 		printf("iter No = %d, sys. TT =  %lf, least TT =  %lf, gap = %f %%, elapsed = %.2f s\n", iteration_no,
 			system_wide_travel_time, system_least_travel_time, gap, el.count());
-		fflush(stdout);   // per-iteration progress must reach pipes/notebooks live
 		fprintf(summary_log_file, "iter No = %d, sys. TT =  %lf, least TT =  %lf, gap = %f %%, elapsed = %.2f s\n", iteration_no,
 			system_wide_travel_time, system_least_travel_time, gap, el.count());
 	}
@@ -5566,7 +5565,6 @@ int AssignmentAPI()
 			std::chrono::duration<double> el = std::chrono::high_resolution_clock::now() - start;
 			printf("iter No = %d, Lambda = %f, g_System_VMT = %.1f, sys. TT =  %.1f, least TT =  %.1f, gap = %f %%, elapsed = %.2f s\n",
 				iteration_no, Lambda, g_System_VMT, system_wide_travel_time, system_least_travel_time, gap, el.count());
-			fflush(stdout);   // per-iteration progress must reach pipes/notebooks live
 			fprintf(summary_log_file, "iter No = %d, Lambda = %f, g_System_VMT = %f, sys. TT =  %lf, least TT =  %lf, gap = %f %%, elapsed = %.2f s \n",
 				iteration_no, Lambda, g_System_VMT, system_wide_travel_time, system_least_travel_time, gap, el.count());
 		}

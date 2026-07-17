@@ -68,8 +68,3 @@ updated_nvta_dtalite_package/
 nvta_dtalite_package_*.zip
 DTALite_*.zip
 legacy-profiling-scripts/
-
-# per-run folders created by examples/arc_atlanta/arc_pipeline.py
-examples/**/gmns_run/
-examples/**/gmns_run_quick/
-examples/**/kernel_console.log

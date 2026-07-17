@@ -51,7 +51,7 @@ table and are written **into `link.csv` by the converter** — they are *not* on
 
 | axis | wrong looks like | the rule |
 |---|---|---|
-| **Basis** (per-lane vs total) | V/C 2–4× low, freeway speeds too high, VHT low | kernel `capacity` is **per-lane**: `Link_Capacity = lanes × capacity`. Commercial exports give **total** → set `capacity = total_hourly / lanes`. |
+| **Basis** (per-lane vs total) | V/C 2–4× low, freeway speeds too high, VHT low | kernel `capacity` is **per-lane**: `Link_Capacity = lanes × capacity`. TransCAD/Cube give **total** → set `capacity = total_hourly / lanes`. |
 | **Period** (hourly vs period vs daily) | daily-as-hourly ⇒ median V/C ≈ 0.007; hourly-as-period ⇒ over-congested | declare `capacity_period` **and the exact source column**; convert to hourly per-lane `c_h`. |
 
 **Sanity check (do this every time):** per-lane hourly capacity should be **freeway ≈

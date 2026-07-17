@@ -1,7 +1,7 @@
-# TRMG2 — Triangle Regional Model (vendor binary → GMNS example)
+# TRMG2 — Triangle Regional Model (TransCAD → GMNS example)
 
-A **public-model** example of the config-driven vendor-binary→GMNS conversion, using the
-**Triangle Regional Model G2** (TRMG2, WSP / Triangle-Modeling-and-Analytics, vendor GIS v9,
+A **public-model** example of the config-driven TransCAD→GMNS conversion, using the
+**Triangle Regional Model G2** (TRMG2, WSP / Triangle-Modeling-and-Analytics, TransCAD 9,
 ~76k drive links). This is the second agency example after `arc_atlanta/`.
 
 > **What this example proves — and what it does not (read first).** The **converter** is
@@ -13,7 +13,7 @@ A **public-model** example of the config-driven vendor-binary→GMNS conversion,
 > fidelity, not on a count %RMSE.
 
 ## What TRMG2 ships (upstream)
-vendor `.dbd` network (geometry in `.dln/.pts` sidecars) + `.BIN`/`.DCB` attribute
+TransCAD `.dbd` network (geometry in `.dln/.pts` sidecars) + `.BIN`/`.DCB` attribute
 tables + `.mtx` demand. The link table carries observed `DailyCount` / `DailyCountSUT` /
 `DailyCountMUT` and `Screenline` / `Cutline` groupings — so a real screenline validation
 is *possible* once the demand basis matches.
@@ -29,9 +29,9 @@ python -m dtalite_qa.intake gmns/          # declare conventions -> GATE READY
 ( cd gmns && ../../../release_v0.2.0/DTALite.exe )   # run the assignment
 ```
 
-Field map (`net2gmns_trmg2.json`) — GMNS ← source fields:
+Field map (`net2gmns_trmg2.json`) — GMNS ← TransCAD:
 
-| GMNS | Source field | Note |
+| GMNS | TransCAD field | Note |
 |---|---|---|
 | from/to_node_id | `FROM_ID` / `TO_ID` | directed endpoints |
 | lanes | `ABLANES` / `BALANES` | per direction (DIR split) |
@@ -58,7 +58,7 @@ python -m dtalite_qa.matrixio  trmg2_am.omx  --scenario gmns/  --out gmns/demand
 - `net2gmns` produced **75,939 drive links — an exact match** to an *independent* decode
   of the same model from `net.net` (75,939), with identical GMNS structure. Two separate
   decode paths agree on the network.
-- the FFB reader parsed the full `master_links.BIN` (135k records × 50 fields) — the
+- `transcad_bin` parsed the full `master_links.BIN` (135k records × 50 fields) — the
   FFB reader at real-model scale.
 
 **Tier 2 — runnable assignment (confirms the network solves):**

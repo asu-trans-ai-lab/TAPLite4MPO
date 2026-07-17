@@ -18,24 +18,23 @@ add_library(DTALite SHARED src/TAPLite.cpp)
 # avoids the Windows Application Control block on loading unsigned DLLs.
 option(BUILD_DTALITE_EXE "Build the standalone TAPLite executable" ON)
 
-# OpenMP is strongly recommended (parallel shortest paths) but OPTIONAL: on
-# Apple clang without libomp (`brew install libomp`) the kernel builds serial --
-# TAPLite.cpp carries inline fallbacks for the two OpenMP APIs it calls.
-find_package(OpenMP)
-if(OpenMP_CXX_FOUND)
-    target_link_libraries(DTALite PRIVATE OpenMP::OpenMP_CXX)
-else()
-    message(WARNING "OpenMP not found -- building a SERIAL kernel (correct but slower). "
-                    "macOS: brew install libomp, then re-run cmake.")
+if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        set(CMAKE_CXX_FLAGS "-Xpreprocessor -fopenmp -fpic")
+    else()
+        set(CMAKE_CXX_FLAGS "-fopenmp -fpic")
+    endif()
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(CMAKE_CXX_FLAGS "-fopenmp -fpic")
 endif()
-set_target_properties(DTALite PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+find_package(OpenMP REQUIRED)
+target_link_libraries(DTALite PRIVATE OpenMP::OpenMP_CXX)
 
 if(BUILD_DTALITE_EXE)
     add_executable(DTALite_exe src/TAPLite.cpp)
     target_compile_definitions(DTALite_exe PRIVATE BUILD_EXE)
-    if(OpenMP_CXX_FOUND)
-        target_link_libraries(DTALite_exe PRIVATE OpenMP::OpenMP_CXX)
-    endif()
+    target_link_libraries(DTALite_exe PRIVATE OpenMP::OpenMP_CXX)
     if(MINGW)
         # static runtime so the exe is self-contained; large stack for the
         # CSV parser's buffers on big networks.

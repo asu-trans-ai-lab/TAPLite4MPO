@@ -150,7 +150,7 @@ OD · validating against the wrong volume column · super-zones before a trusted
 - `examples/arc_atlanta/` — the agency-reproduction worked example
 - **[MPO_ONBOARDING_GUIDE.md](MPO_ONBOARDING_GUIDE.md)** — the detailed declare→…→workflow process
 - **[MPO_REVIEW_PANEL.md](MPO_REVIEW_PANEL.md)** — six simulated MPO reviewer personas
-  (vendor GIS / Cube / Visum / small-MPO-OSM / QA / visualization) on this package, with the
+  (TransCAD / Cube / Visum / small-MPO-OSM / QA / visualization) on this package, with the
   prioritized P0-P2 improvement list; work packages: [WORK_PACKAGES.md](WORK_PACKAGES.md)
 - **Replication index** — `soft/README.md` (kernel repo root): six one-command
   replications of every headline claim (regression 30/30, ARC 22%, Tempe OSM, calibration

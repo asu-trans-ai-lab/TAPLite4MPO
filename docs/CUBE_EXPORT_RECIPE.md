@@ -64,5 +64,5 @@ definition + **period factor** (⇒ `vdf_plf`), units, demand kind per class, VD
 table source, access-code table, `count_field` (+ its period).
 
 *See also:* [CONVERSION_ERRORS_CATALOG.md](CONVERSION_ERRORS_CATALOG.md) ·
-[VISUM_TO_GMNS.md](VISUM_TO_GMNS.md) ·
+[TRANSCAD_EXPORT_GUIDE.md](TRANSCAD_EXPORT_GUIDE.md) · [VISUM_TO_GMNS.md](VISUM_TO_GMNS.md) ·
 [peak_load_factor.md](peak_load_factor.md) · the flagship: `examples/arc_atlanta/README.md`
