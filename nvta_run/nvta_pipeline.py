@@ -189,13 +189,11 @@ def stage_check(scenario):
     nz = int((nd["zone_id"].fillna(0) > 0).sum())
     zmax = int(nd["zone_id"].fillna(0).max())
     if zmax > 10 * max(nz, 1):
-        findings += 1
-        _record("renumbering", "WARN", f"{nz} zones but zone ids run to {zmax}. "
-                "This staging folder keeps ORIGINAL ids by design -- the dtalite4cube "
-                "runner renumbers into a private _internal/ copy before the kernel and "
-                "back-maps outputs. Feeding the kernel THIS folder directly crashes or "
-                "eats GBs (arrays scale with the largest id). `prepare` renumbers the "
-                "same way (id_map.csv for back-mapping).")
+        _record("renumbering", "INFO", f"{nz} zones with sparse ids (max {zmax}). "
+                "The current kernel renumbers internally (zones-first, dense 1..Z) and "
+                "reports outputs in the ORIGINAL ids, so this folder is directly "
+                "runnable. Kernels older than 2026-07 crash on sparse ids (issue #6); "
+                "the dtalite4cube runner's _internal/ renumbering covers those.")
     else:
         _record("renumbering", "OK", f"{nz} zones, max id {zmax}")
 
@@ -278,40 +276,18 @@ def stage_prepare(scenario, period=None, out=None, iterations=10, processors=8):
     out = out or (d.rstrip("/\\") + "_qa_run")
     os.makedirs(out, exist_ok=True)
 
-    # Renumber to contiguous ids (zones first) when the id space is pathological:
-    # kernel arrays scale with the LARGEST zone id, and sparse ids have crashed
-    # runs outright. id_map.csv records old -> new for output back-mapping.
-    nd = pd.read_csv(os.path.join(d, "node.csv"), low_memory=False)
-    nz = int((nd["zone_id"].fillna(0) > 0).sum())
-    zmax = int(nd["zone_id"].fillna(0).max())
-    remap = None
-    if zmax > 10 * max(nz, 1):
-        zones = nd[nd["zone_id"].fillna(0) > 0].sort_values("node_id")
-        others = nd[~(nd["zone_id"].fillna(0) > 0)].sort_values("node_id")
-        remap = {int(o): i + 1 for i, o in
-                 enumerate(list(zones["node_id"]) + list(others["node_id"]))}
-        nd["node_id"] = nd["node_id"].astype(int).map(remap)
-        nd["zone_id"] = nd.apply(
-            lambda r: r["node_id"] if r["zone_id"] > 0 else 0, axis=1).astype(int)
-        pd.DataFrame([{"old_node_id": o, "new_node_id": n} for o, n in remap.items()]
-                     ).to_csv(os.path.join(out, "id_map.csv"), index=False)
-        _say(f"  RENUMBERED: {nz} zones -> 1..{nz}, nodes -> 1..{len(nd)} "
-             "(sparse ids blow up kernel memory; id_map.csv written for back-mapping)")
-    nd.sort_values("node_id").to_csv(os.path.join(out, "node.csv"), index=False)
-
+    # Ids are staged VERBATIM: since 2026-07 the kernel renumbers sparse
+    # node/zone ids internally (zones first, dense 1..Z) and writes all outputs
+    # back in the ORIGINAL ids -- no user-space renumber/backmap step needed.
+    # (Older kernels crash on sparse ids; see GitHub issue #6.)
+    shutil.copy(os.path.join(d, "node.csv"), os.path.join(out, "node.csv"))
     for m in MODES:
-        dm = pd.read_csv(os.path.join(d, f"{m}_{period}.csv"))
-        if remap:
-            dm["o_zone_id"] = dm["o_zone_id"].astype(int).map(remap)
-            dm["d_zone_id"] = dm["d_zone_id"].astype(int).map(remap)
-        dm.to_csv(os.path.join(out, f"{m}_{period}.csv"), index=False)
-    _say(f"  node + {len(MODES)} demand files staged"
-         + (" (ids remapped)" if remap else " verbatim"))
+        shutil.copy(os.path.join(d, f"{m}_{period}.csv"),
+                    os.path.join(out, f"{m}_{period}.csv"))
+    _say(f"  node + {len(MODES)} demand files staged verbatim "
+         "(kernel renumbers sparse ids internally)")
 
     lk = pd.read_csv(os.path.join(d, "link.csv"), low_memory=False)
-    if remap:
-        lk["from_node_id"] = lk["from_node_id"].astype(int).map(remap)
-        lk["to_node_id"] = lk["to_node_id"].astype(int).map(remap)
     h0, h1 = PERIOD_HOURS[period]
     plf = PHI[period] / (h1 - h0)
     lk["vdf_plf"] = round(plf, 6)

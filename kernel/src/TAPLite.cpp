@@ -587,6 +587,14 @@ static inline bool g_sp_heap_gt(const std::pair<double, int>& a, const std::pair
 // Same FirstThruNode gating / mode_allowed_use / movement-restriction rules as the
 // deque Minpath (settings sp_algorithm=1). Each node settled once; correct for
 // non-negative link costs (BPR/conic/QVDF all >= 0).
+// External zone id (agency data) -> dense zone seq 1..Z (internal renumbering).
+// Returns 0 when the id is not a zone in node.csv.
+static inline int ZoneSeqFromExternal(int external_zone_id)
+{
+	std::map<int, int>::iterator it = g_map_old_zone_id_2_zone_seq.find(external_zone_id);
+	return (it == g_map_old_zone_id_2_zone_seq.end()) ? 0 : it->second;
+}
+
 int Minpath_Dijkstra(int mode, int Orig, int* PredLink, double* CostTo)
 {
 	int tid = GetSPScratchThreadIndex();
@@ -600,7 +608,7 @@ int Minpath_Dijkstra(int mode, int Orig, int* PredLink, double* CostTo)
 		PredLink[node] = INVALID;
 		PrevLink[node] = INVALID;
 	}
-	int origin = g_map_external_node_id_2_node_seq_no[Orig];
+	int origin = Orig;   // dense zone seq == centroid node seq (internal renumbering)
 	CostTo[origin] = 0.0;
 	heap.push_back(std::make_pair(0.0, origin));
 
@@ -658,7 +666,7 @@ int Minpath(int mode, int Orig, int* PredLink, double* CostTo)
 		PrevLink[node] = INVALID;
 	}
 
-	now = g_map_external_node_id_2_node_seq_no[Orig];
+	now = Orig;   // dense zone seq == centroid node seq (internal renumbering)
 	int internal_node_id_for_origin_zone = now;
 	QueueNext[now] = WAS_IN_QUEUE;
 	PredLink[now] = INVALID;
@@ -745,7 +753,7 @@ int Minpath(int mode, int Orig, int* PredLink, double* CostTo)
    is O(links + movements) per origin; arrays are O(links). */
 int Minpath_TR(int mode, int Orig, int* PredLink, int* PredLinkOfLink, double* CostTo)
 {
-	int origin_node = g_map_external_node_id_2_node_seq_no[Orig];
+	int origin_node = Orig;   // dense zone seq == centroid node seq (internal renumbering)
 
 	double* link_cost = (double*)Alloc_1D(number_of_links, sizeof(double));
 	int* QueueNextLink = (int*)Alloc_1D(number_of_links, sizeof(int));
@@ -1073,7 +1081,7 @@ double FindMinCostRoutes(int*** MinPathPredLink)
 								(double)cost_row[Dest], Orig, Dest);
 
 						// CostTo is coded as internal node id
-						int  internal_node_id_for_destination_zone  = g_map_external_node_id_2_node_seq_no[Dest];
+						int  internal_node_id_for_destination_zone  = Dest;   // dense zone seq == node seq
 
 						if (cost_row[internal_node_id_for_destination_zone] <= BIGM - 1)  // feasible cost
 						{
@@ -1318,7 +1326,7 @@ int ComputeAccessibilityAndODCosts_v1(const char* filename)
 			int Orig = Processor_origin_zones[p][i];  // get origin zone id
 
 			if (p == 0)
-				cout << "Accessibility computing for zone " << Orig << endl;
+				cout << "Accessibility computing for zone " << g_zone_seq_2_old_zone_id[Orig] << endl;
 
 			// Process each mode
 			for (int m = 1; m <= number_of_modes; m++)
@@ -1339,7 +1347,7 @@ int ComputeAccessibilityAndODCosts_v1(const char* filename)
 							double freeFlowTime = 0.0;
 							double congestionTime = 0.0;
 
-							int currentNode = g_map_external_node_id_2_node_seq_no[Dest];
+							int currentNode = Dest;   // dense zone seq == node seq
 
 							while (currentNode != Orig && currentNode != 0)
 							{
@@ -1352,7 +1360,7 @@ int ComputeAccessibilityAndODCosts_v1(const char* filename)
 								currentNode = Link[linkId].internal_from_node_id;
 							}
 
-							int internal_node_id = g_map_external_node_id_2_node_seq_no[Orig];
+							int internal_node_id = Orig;   // dense zone seq == node seq
 							int internal_o_zone_no = g_node_vector[internal_node_id].internal_zone_no;
 							int internal_d_zone_no = g_node_vector[j].internal_zone_no;
 							// Store in our 2D matrix
@@ -1365,7 +1373,7 @@ int ComputeAccessibilityAndODCosts_v1(const char* filename)
 						}
 						else
 						{
-							int internal_node_id = g_map_external_node_id_2_node_seq_no[Orig];
+							int internal_node_id = Orig;   // dense zone seq == node seq
 							int internal_o_zone_no = g_node_vector[internal_node_id].internal_zone_no;
 							int internal_d_zone_no = g_node_vector[j].internal_zone_no;
 							// Store in our 2D matrix
@@ -1484,7 +1492,7 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 							double freeFlowTime = 0.0;
 							double congestionTime = 0.0;
 
-							int currentNode = g_map_external_node_id_2_node_seq_no[Dest];
+							int currentNode = Dest;   // dense zone seq == node seq
 							// Backtrack using predecessor links to accumulate path metrics.
 							while (currentNode != Orig && currentNode != 0) {
 								int linkId = PredLink[0][currentNode];
@@ -1496,7 +1504,7 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 								currentNode = Link[linkId].internal_from_node_id;
 							}
 
-							int internal_node_id = g_map_external_node_id_2_node_seq_no[Orig];
+							int internal_node_id = Orig;   // dense zone seq == node seq
 							int internal_o_zone_no = g_node_vector[internal_node_id].internal_zone_no;
 							int internal_d_zone_no = g_node_vector[j].internal_zone_no;
 
@@ -1523,7 +1531,7 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 						}
 						else {
 							// Unreachable destination.
-							int internal_node_id = g_map_external_node_id_2_node_seq_no[Orig];
+							int internal_node_id = Orig;   // dense zone seq == node seq
 							int internal_o_zone_no = g_node_vector[internal_node_id].internal_zone_no;
 							int internal_d_zone_no = g_node_vector[j].internal_zone_no;
 							ODPathInfo& pathInfo = batchMatrix[localOrigin][internal_d_zone_no];
@@ -1682,9 +1690,9 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 		for (int Orig = 1; Orig <= no_zones; Orig++)
 		{
 			
-			if (g_map_external_node_id_2_node_seq_no.find(Orig) != g_map_external_node_id_2_node_seq_no.end() && TotalOFlow[Orig] < 0.00001)  // only work on positive zone flow 
+			if (TotalOFlow[Orig] < 0.00001)  // only work on positive zone flow 
 			{ 
-				printf("%d,", Orig);
+				printf("%d,", g_zone_seq_2_old_zone_id[Orig]);
 			}
 
 		}
@@ -1695,9 +1703,9 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 		for (int Orig = 1; Orig <= no_zones; Orig++)
 		{
 
-			if (g_map_external_node_id_2_node_seq_no.find(Orig) != g_map_external_node_id_2_node_seq_no.end()  && zone_outbound_link_size[Orig] == 0)  // there is no outbound link from the origin 
+			if (zone_outbound_link_size[Orig] == 0)  // there is no outbound link from the origin 
 			{
-				printf("%d,", Orig);
+				printf("%d,", g_zone_seq_2_old_zone_id[Orig]);
 			}
 		}
 		printf("\n");
@@ -1753,8 +1761,8 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 					}
 
 					CurrentNode = Dest;
-					CurrentNode = g_map_external_node_id_2_node_seq_no[Dest];  // mapping from external  zone id of Dest (which is defined in demand.csv_ to the corresponding node id (== zone_id) and then to the node internal number 
-					int internal_node_for_origin_node = g_map_external_node_id_2_node_seq_no[Orig];  // mapping from external  zone id of Orig (which is defined in demand.csv_ to the corresponding node id (== zone_id) and then to the node internal number 
+					CurrentNode = Dest;   // dense zone seq == node seq (internal renumbering)
+					int internal_node_for_origin_node = Orig;   // dense zone seq == node seq (internal renumbering)
 					// MinPathPredLink is coded as internal node id 
 					// 
 					//double total_travel_time = 0;
@@ -1785,7 +1793,7 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 							printf("A problem in All_or_Nothing_Assign() path-trace exceeded %d hops (cycle?) for node seq no %d Orig zone= %d (OD skipped)\n", _hop_cap, CurrentNode, Orig);
 #ifdef DUMP_CYCLE
 							{
-								int cn = g_map_external_node_id_2_node_seq_no[Dest];
+								int cn = Dest;   // dense zone seq == node seq
 								printf("  CYCLE Orig=%d Dest=%d chain(node<-predlink->fromnode,cost):", Orig, Dest);
 								for (int hh = 0; hh < 50 && cn != internal_node_for_origin_node; hh++)
 								{
@@ -2670,8 +2678,8 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 
 					outputFile << g_mode_type_vector[m].mode_type.c_str() << ","
 						<< rd.firstRouteID << ","  // or route_id (the first candidate id)
-						<< Orig << ","
-						<< Dest << ","
+						<< g_zone_seq_2_old_zone_id[Orig] << ","
+						<< g_zone_seq_2_old_zone_id[Dest] << ","
 						<< rd.unique_route_id << ","
 						<< accumulatedTheta << ","
 						<< rd.nodeIDsStr << ","
@@ -2952,7 +2960,7 @@ void OutputVehicleDetails(const std::string& filename, std::vector<double> theta
 								outputFile << agent_id << "," << departure_time << ","
 									<< departure_time_hhmmss << ","
 									<< g_mode_type_vector[m].mode_type.c_str() << ","
-									<< rd.firstRouteID << "," << Orig << "," << Dest << "," << unique_route_id << ","
+									<< rd.firstRouteID << "," << g_zone_seq_2_old_zone_id[Orig] << "," << g_zone_seq_2_old_zone_id[Dest] << "," << unique_route_id << ","
 									<< rd.nodeIDsStr << "," << rd.linkIDsStr << ","
 									<< rd.totalDistance << "," << rd.totalDistance * 1.609 << "," << rd.totalFreeFlowTravelTime << ","
 									<< rd.totalTravelTime << "," << rd.firstRouteID << "," << route_volume << "\n";
@@ -3105,8 +3113,8 @@ void OutputODPerformance(const std::string& filename)
 							grand_totalTravelTime += totalTravelTime * volume;
 							grand_total_count += volume;
 
-							int internal_o_node_id = g_map_external_node_id_2_node_seq_no[Orig];
-							int internal_d_node_id = g_map_external_node_id_2_node_seq_no[Dest];
+							int internal_o_node_id = Orig;   // dense zone seq == node seq
+							int internal_d_node_id = Dest;   // dense zone seq == node seq
 							double o_x_coord = g_node_vector[internal_o_node_id].x;
 							double o_y_coord = g_node_vector[internal_o_node_id].y;
 							double d_x_coord = g_node_vector[internal_d_node_id].x;
@@ -3120,7 +3128,7 @@ void OutputODPerformance(const std::string& filename)
 							grand_total_straight_line_distance += straight_line_distance_mile * volume;
 							grand_total_distance_ratio += distance_ratio * volume;
 
-							outputFile << routeKey << "," << g_mode_type_vector[m].mode_type << "," << Orig << "," << Dest << ","
+							outputFile << routeKey << "," << g_mode_type_vector[m].mode_type << "," << g_zone_seq_2_old_zone_id[Orig] << "," << g_zone_seq_2_old_zone_id[Dest] << ","
 								<< o_x_coord << "," << o_y_coord << "," << d_x_coord << "," << d_y_coord << ","
 								<< totalDistance << "," << totalDistance * 1.609 << "," << straight_line_distance_mile << "," << straight_line_distance_km << ","
 								<< distance_ratio << "," << totalFreeFlowTravelTime << "," << totalTravelTime << "," << volume << ",\"" << WKT_geometry << "\"\n";
@@ -3130,7 +3138,7 @@ void OutputODPerformance(const std::string& filename)
 							{
 								std::string googleMapsLink = "https://www.google.com/maps/dir/" + std::to_string(o_y_coord) + "," + std::to_string(o_x_coord) + "/" + std::to_string(d_y_coord) + "," + std::to_string(d_x_coord) + "/";
 
-								googleMapsFile << routeKey << "," << g_mode_type_vector[m].mode_type << "," << Orig << "," << Dest << "," << volume << ","
+								googleMapsFile << routeKey << "," << g_mode_type_vector[m].mode_type << "," << g_zone_seq_2_old_zone_id[Orig] << "," << g_zone_seq_2_old_zone_id[Dest] << "," << volume << ","
 									<< totalDistance << "," << totalDistance * 1.609 << "," << straight_line_distance_mile << "," << straight_line_distance_km << ","
 									<< distance_ratio << "," << totalFreeFlowTravelTime << "," << totalTravelTime << ",\"" << googleMapsLink << "\",\"" << WKT_geometry << "\"\n";
 							}
@@ -3296,15 +3304,14 @@ void GenerateAggregatedPerformanceAndAccessibility()
 		double avg_distance = (vol > 0) ? (originStats[o].total_distance / vol) : 0.0;
 		double avg_travel_time = (vol > 0) ? (originStats[o].total_travel_time / vol) : 0.0;
 		std::string googleLink = "";
-		if (g_map_external_node_id_2_node_seq_no[o] < g_node_vector.size())
+		if (o < (int)g_node_vector.size())   // dense zone seq == centroid node seq
 		{
-			int node_index = g_map_external_node_id_2_node_seq_no[o];
-			double x = g_node_vector[node_index].x;
-			double y = g_node_vector[node_index].y;
+			double x = g_node_vector[o].x;
+			double y = g_node_vector[o].y;
 			googleLink = "https://www.google.com/maps/search/?api=1&query=" + std::to_string(y) + "," + std::to_string(x);
 		}
 		// Enclose the google link in double quotes.
-		originFile << o << ","
+		originFile << g_zone_seq_2_old_zone_id[o] << ","
 			<< vol << ","
 			<< originStats[o].count_dest << ","
 			<< avg_distance << ","
@@ -3328,14 +3335,13 @@ void GenerateAggregatedPerformanceAndAccessibility()
 		double avg_distance = (vol > 0) ? (destinationStats[d].total_distance / vol) : 0.0;
 		double avg_travel_time = (vol > 0) ? (destinationStats[d].total_travel_time / vol) : 0.0;
 		std::string googleLink = "";
-		if (g_map_external_node_id_2_node_seq_no[d] < g_node_vector.size())
+		if (d < (int)g_node_vector.size())   // dense zone seq == centroid node seq
 		{
-			int node_index = g_map_external_node_id_2_node_seq_no[d];
-			double x = g_node_vector[node_index].x;
-			double y = g_node_vector[node_index].y;
+			double x = g_node_vector[d].x;
+			double y = g_node_vector[d].y;
 			googleLink = "https://www.google.com/maps/search/?api=1&query=" + std::to_string(y) + "," + std::to_string(x);
 		}
-		destFile << d << ","
+		destFile << g_zone_seq_2_old_zone_id[d] << ","
 			<< vol << ","
 			<< destinationStats[d].count_orig << ","
 			<< avg_distance << ","
@@ -3375,13 +3381,11 @@ void GenerateAggregatedPerformanceAndAccessibility()
 				if (!routeExists && MDODflow[m][Orig][Dest] > 0)
 				{
 					std::string googleLink = "";
-					if (Orig < g_map_external_node_id_2_node_seq_no.size() &&
-						Dest < g_map_external_node_id_2_node_seq_no.size() &&
-						g_map_external_node_id_2_node_seq_no[Orig] < g_node_vector.size() &&
-						g_map_external_node_id_2_node_seq_no[Dest] < g_node_vector.size())
+					if (Orig < (int)g_node_vector.size() &&
+						Dest < (int)g_node_vector.size())   // dense zone seq == node seq
 					{
-						int originNodeIndex = g_map_external_node_id_2_node_seq_no[Orig];
-						int destNodeIndex = g_map_external_node_id_2_node_seq_no[Dest];
+						int originNodeIndex = Orig;
+						int destNodeIndex = Dest;
 						double o_x = g_node_vector[originNodeIndex].x;
 						double o_y = g_node_vector[originNodeIndex].y;
 						double d_x = g_node_vector[destNodeIndex].x;
@@ -3391,8 +3395,8 @@ void GenerateAggregatedPerformanceAndAccessibility()
 							std::to_string(d_y) + "," + std::to_string(d_x) + "/";
 					}
 					inacFile << modeStr << ","
-						<< Orig << ","
-						<< Dest << ","
+						<< g_zone_seq_2_old_zone_id[Orig] << ","
+						<< g_zone_seq_2_old_zone_id[Dest] << ","
 						<< "\"" << googleLink << "\"" << "\n";
 				}
 			}
@@ -3411,84 +3415,96 @@ int get_number_of_nodes_from_node_file(int& number_of_zones, int& l_FirstThruNod
 	number_of_zones = 0;
 	CDTACSVParser parser_node;
 	l_FirstThruNode = 1;
-	int number_of_nodes = 0;
+
+	// INTERNAL RENUMBERING. The kernel historically required dense ids with
+	// zone_id == node_id (1..Z centroids first); sparse agency ids made every
+	// zone-dimensioned array scale with the LARGEST zone id (GBs of memory and
+	// crashes on small subareas). We now renumber internally: centroids take
+	// node seq 1..Z in file order (dense zone id == centroid node seq), other
+	// nodes follow. Every output still reports the ORIGINAL ids via
+	// g_node_vector[].node_id / g_map_node_seq_no_2_external_node_id /
+	// g_zone_seq_2_old_zone_id; zone-id inputs (demand, stored routes) are
+	// translated through g_map_old_zone_id_2_zone_seq at read time.
+	struct NodeRow { int node_id; int zone_id; double x; double y; };
+	std::vector<NodeRow> rows;
+	int max_zone_id = 0;
 
 	if (parser_node.OpenCSVFile("node.csv", true))
 	{
-		while (parser_node.ReadRecord())  // if this line contains [] mark, then we will also read
-			// field headers.
+		while (parser_node.ReadRecord())
 		{
-			// Read node id
-			int node_id = 0;
-			int zone_id = 0;
-			parser_node.GetValueByFieldName("node_id", node_id);
-			parser_node.GetValueByFieldName("zone_id", zone_id);
-
-			if (zone_id >= 1 && zone_id != node_id)
-			{
-				printf("Error: zone_id should be the same as node_id but zone_id  = %d, node_id = %d\n", zone_id, node_id);
-			}
-
-			g_map_node_seq_no_2_external_node_id[number_of_nodes + 1] = node_id;
-			g_map_external_node_id_2_node_seq_no[node_id] =
-				number_of_nodes + 1;  // this code node sequential number starts from 1
-
-			if (zone_id >= 1 && zone_id > number_of_zones)
-				number_of_zones = zone_id;
-
-			if(first_through_node_id_input == -1)  // auto identification
-			{
-			if (zone_id == 0 && l_FirstThruNode == 1 /* not initialized*/)
-				l_FirstThruNode = number_of_nodes + 1;  //use sequential node id
-			}
-
-			if (g_tap_log_file == 1)
-			{
-				fprintf(logfile, "node_id = %d, node_seq_no = %d\n", node_id, g_map_external_node_id_2_node_seq_no[node_id]);
-
-			}
-
-			number_of_nodes++;
+			NodeRow r; r.node_id = 0; r.zone_id = 0; r.x = 0.0; r.y = 0.0;
+			parser_node.GetValueByFieldName("node_id", r.node_id);
+			parser_node.GetValueByFieldName("zone_id", r.zone_id);
+			parser_node.GetValueByFieldName("x_coord", r.x);
+			parser_node.GetValueByFieldName("y_coord", r.y);
+			if (r.zone_id >= 1 && r.zone_id > max_zone_id)
+				max_zone_id = r.zone_id;
+			rows.push_back(r);
 		}
-
-
 		parser_node.CloseCSVFile();
 	}
+	int number_of_nodes = (int)rows.size();
 
+	std::vector<const NodeRow*> ordered;
+	ordered.reserve(rows.size());
+	for (size_t i = 0; i < rows.size(); i++)
+		if (rows[i].zone_id >= 1)
+			ordered.push_back(&rows[i]);
+	int Z = (int)ordered.size();
+	for (size_t i = 0; i < rows.size(); i++)
+		if (rows[i].zone_id < 1)
+			ordered.push_back(&rows[i]);
+
+	if (Z > 0 && max_zone_id != Z)
+		printf("NOTE: sparse zone ids detected (%d zones, max zone id %d). "
+			"Renumbered internally to 1..%d; all outputs keep the original ids.\n",
+			Z, max_zone_id, Z);
+
+	g_map_external_node_id_2_node_seq_no.clear();
+	g_map_node_seq_no_2_external_node_id.clear();
+	g_map_internal_zone_no_2_node_seq_no.clear();
+	g_map_old_zone_id_2_zone_seq.clear();
+	g_node_vector.clear();
 	g_node_vector.resize(number_of_nodes + 1);
+	g_zone_seq_2_old_zone_id.assign(Z + 1, 0);
 
-	int internal_zone_no_count = 0;
-	if (parser_node.OpenCSVFile("node.csv", true))
+	for (int seq = 1; seq <= number_of_nodes; seq++)
 	{
-		while (parser_node.ReadRecord())  // if this line contains [] mark, then we will also read
-			// field headers.
+		const NodeRow* r = ordered[seq - 1];
+		if (g_map_external_node_id_2_node_seq_no.find(r->node_id) !=
+			g_map_external_node_id_2_node_seq_no.end())
+			printf("WARNING: duplicate node_id %d in node.csv; keeping the first.\n",
+				r->node_id);
+		g_map_external_node_id_2_node_seq_no[r->node_id] = seq;
+		g_map_node_seq_no_2_external_node_id[seq] = r->node_id;
+		g_node_vector[seq].x = r->x;
+		g_node_vector[seq].y = r->y;
+		g_node_vector[seq].node_id = r->node_id;       // ORIGINAL id, for outputs
+		if (r->zone_id >= 1)                            // seq <= Z by construction
 		{
-			// Read node id
-			int node_id = 0;
-			parser_node.GetValueByFieldName("node_id", node_id);
-
-
-			int internal_node_id = g_map_external_node_id_2_node_seq_no[node_id];
-			double x_coord, y_coord;
-			parser_node.GetValueByFieldName("x_coord", x_coord);
-			parser_node.GetValueByFieldName("y_coord", y_coord);
-			int zone_id = -1;
-			parser_node.GetValueByFieldName("zone_id", zone_id);
-			
-			g_node_vector[internal_node_id].x = x_coord;
-			g_node_vector[internal_node_id].y = y_coord;
-			g_node_vector[internal_node_id].node_id = node_id; 
-			if(zone_id>=1)
-			{ 
-			g_node_vector[internal_node_id].zone_id = zone_id;
-
-			g_node_vector[internal_node_id].internal_zone_no = internal_zone_no_count;
-			g_map_internal_zone_no_2_node_seq_no[g_node_vector[internal_node_id].internal_zone_no] = internal_node_id;
-			internal_zone_no_count++;
-			}
+			g_node_vector[seq].zone_id = seq;           // dense internal zone id
+			g_node_vector[seq].internal_zone_no = seq - 1;
+			g_map_internal_zone_no_2_node_seq_no[seq - 1] = seq;
+			if (g_map_old_zone_id_2_zone_seq.find(r->zone_id) !=
+				g_map_old_zone_id_2_zone_seq.end())
+				printf("WARNING: zone_id %d appears on more than one node; "
+					"demand maps to the first.\n", r->zone_id);
+			else
+				g_map_old_zone_id_2_zone_seq[r->zone_id] = seq;
+			g_zone_seq_2_old_zone_id[seq] = r->zone_id;
 		}
+		if (g_tap_log_file == 1)
+			fprintf(logfile, "node_id = %d, node_seq_no = %d\n", r->node_id, seq);
+	}
 
-		parser_node.CloseCSVFile();
+	number_of_zones = Z;
+	if (first_through_node_id_input == -1)
+	{
+		// auto: first non-centroid seq (zones-first ordering). When EVERY node
+		// is a zone (small teaching networks), keep the legacy behavior of
+		// FirstThruNode = 1 so all nodes remain through-traversable.
+		l_FirstThruNode = (Z < number_of_nodes) ? (Z + 1) : 1;
 	}
 
 	return number_of_nodes;
@@ -4288,11 +4304,10 @@ static void WriteColumnsDTAC(const char* filename, int*** MinPathPredLink)
 			offsets.clear();
 			links_out.clear();
 			offsets.push_back(0);
-			bool orig_ok = (g_map_external_node_id_2_node_seq_no.find(Orig) != g_map_external_node_id_2_node_seq_no.end()
-				&& TotalOFlow[Orig] >= 0.00001 && zone_outbound_link_size[Orig] != 0);
+			bool orig_ok = (TotalOFlow[Orig] >= 0.00001 && zone_outbound_link_size[Orig] != 0);
 			if (orig_ok)
 			{
-				int internal_origin = g_map_external_node_id_2_node_seq_no[Orig];
+				int internal_origin = Orig;   // dense zone seq == node seq
 				for (int Dest = 1; Dest <= no_zones; Dest++)
 				{
 					if (Dest == Orig)
@@ -4303,7 +4318,7 @@ static void WriteColumnsDTAC(const char* filename, int*** MinPathPredLink)
 						continue;
 
 					path.clear();
-					int CurrentNode = g_map_external_node_id_2_node_seq_no[Dest];
+					int CurrentNode = Dest;   // dense zone seq == node seq
 					int prev_k = INVALID;
 					int _trace_hops = 0;
 					int _hop_cap = g_has_movement_restrictions ? (number_of_links + 2) : (no_nodes + 2);
@@ -4328,7 +4343,7 @@ static void WriteColumnsDTAC(const char* filename, int*** MinPathPredLink)
 						skipped++;
 						continue;
 					}
-					dests.push_back(Dest);
+					dests.push_back(g_zone_seq_2_old_zone_id[Dest]);   // file stores EXTERNAL zone ids
 					for (int i = (int)path.size() - 1; i >= 0; --i)  // reverse: origin -> destination
 						links_out.push_back(Link[path[i]].external_link_id);
 					offsets.push_back((int)links_out.size());
@@ -4433,8 +4448,8 @@ static void ColPoolFlatten()
 static bool TraceMinPath(int mpred, int Orig, int Dest, int*** MinPathPredLink, std::vector<int>& path)
 {
 	path.clear();
-	int internal_origin = g_map_external_node_id_2_node_seq_no[Orig];
-	int CurrentNode = g_map_external_node_id_2_node_seq_no[Dest];
+	int internal_origin = Orig;   // dense zone seq == node seq (internal renumbering)
+	int CurrentNode = Dest;
 	int prev_k = INVALID;
 	int hops = 0;
 	int hop_cap = g_has_movement_restrictions ? (number_of_links + 2) : (no_nodes + 2);
@@ -4616,7 +4631,7 @@ static void WriteColumnsDTACv2(const char* filename)
 					link_offsets.push_back((int)links_out.size());
 					n_written = 1;
 				}
-				dests.push_back(od.dest);
+				dests.push_back(g_zone_seq_2_old_zone_id[od.dest]);   // file stores EXTERNAL zone ids
 				path_offsets.push_back((int)thetas.size());
 			}
 			int n_dest = (int)dests.size();
@@ -4794,24 +4809,22 @@ static bool ApplyWarmStartColumns(double* MainVolume, int*** MDMinPathPredLink)
 			link_buf.resize(n_links_blk);
 			if (n_links_blk > 0 && fread(link_buf.data(), sizeof(int), n_links_blk, f) != (size_t)n_links_blk) { truncated = true; break; }
 
-			if (Orig > no_zones ||
-				g_map_external_node_id_2_node_seq_no.find(Orig) == g_map_external_node_id_2_node_seq_no.end())
-				continue;   // origin zone gone from this network
-			int internal_origin = g_map_external_node_id_2_node_seq_no[Orig];
+			if (Orig < 1 || Orig > no_zones)
+				continue;   // origin block outside this network's zone range
+			int internal_origin = Orig;   // positional origin == dense zone seq
 			std::vector<ColOD>& row = ColPoolRow(m, Orig);
 			for (int d = 0; d < n_dest; d++)
 			{
-				int Dest = dest_buf[d];
+				int Dest = ZoneSeqFromExternal(dest_buf[d]);   // file stores EXTERNAL zone ids
 				stored_ods_read++;
-				if (Dest <= 0 || Dest > no_zones || Dest == Orig ||
-					g_map_external_node_id_2_node_seq_no.find(Dest) == g_map_external_node_id_2_node_seq_no.end())
+				if (Dest == 0 || Dest == Orig)
 					continue;
 				if (MDODflow[m][Orig][Dest] <= 0.0)
 				{
 					stored_ods_no_demand++;
 					continue;   // stored policy for an OD the current demand does not use
 				}
-				int internal_dest = g_map_external_node_id_2_node_seq_no[Dest];
+				int internal_dest = Dest;   // dense zone seq == node seq
 				ColOD* od = NULL;
 				int kept_here = 0, dropped_here = 0;
 				for (int j = poff_buf[d]; j < poff_buf[d + 1]; j++)
@@ -4909,8 +4922,7 @@ static bool ApplyWarmStartColumns(double* MainVolume, int*** MDMinPathPredLink)
 	{
 		for (int Orig = 1; Orig <= no_zones; Orig++)
 		{
-			bool orig_ok = (g_map_external_node_id_2_node_seq_no.find(Orig) != g_map_external_node_id_2_node_seq_no.end()
-				&& TotalOFlow[Orig] >= 0.00001 && zone_outbound_link_size[Orig] != 0);
+			bool orig_ok = (TotalOFlow[Orig] >= 0.00001 && zone_outbound_link_size[Orig] != 0);
 			std::vector<ColOD>& row = ColPoolRow(m, Orig);
 			for (int Dest = 1; Dest <= no_zones; Dest++)
 			{
@@ -5287,17 +5299,11 @@ int AssignmentAPI()
 	if(g_accessibility_only_mode ==0)
 		 InitializeLinkIndices(number_of_modes, no_zones, TotalAssignIterations);
 
-	int assignable_origin_zones = 0;
-	for (int i = 1; i <= no_nodes; i++)
-		{
-			int p = i % g_number_of_processors;
-			if(g_node_vector[i].zone_id>=0)
-			{ 
-
-			assignable_origin_zones++;
-			Processor_origin_zones[p].push_back(g_node_vector[i].node_id);
-			}
-		}
+	// Origins are the dense zone seq 1..no_zones (zones-first renumbering makes
+	// zone seq == centroid node seq, so downstream Minpath uses it directly).
+	int assignable_origin_zones = no_zones;
+	for (int z = 1; z <= no_zones; z++)
+		Processor_origin_zones[z % g_number_of_processors].push_back(z);
 	WarnIfProcessorsExceedOrigins(assignable_origin_zones);
 
 
@@ -6466,12 +6472,15 @@ static bool ReadBinaryDemandFile(const std::string& path, int m,
 			memcpy(&o, p, 4);
 			memcpy(&d, p + 4, 4);
 			memcpy(&vol, p + 8, 8);
-			if (o >= 1 && o <= no_zones && d >= 1 && d <= no_zones)
+			// external agency zone ids -> dense internal zone seq (renumbering)
+			int o_seq = ZoneSeqFromExternal(o);
+			int d_seq = ZoneSeqFromExternal(d);
+			if (o_seq >= 1 && d_seq >= 1)
 			{
-				ODtable[m][o][d] = vol;
-				DiffODtable[m][o][d] = vol;
+				ODtable[m][o_seq][d_seq] = vol;
+				DiffODtable[m][o_seq][d_seq] = vol;
 				if (write_seed)
-					Seed_ODtable[m][o][d] = vol;   // Seed only needed for ODME / route output
+					Seed_ODtable[m][o_seq][d_seq] = vol;   // Seed only needed for ODME / route output
 				total_volume += vol;
 				n_loaded++;
 			}
@@ -6520,15 +6529,13 @@ static void ReadOneModeDemand(int m, double*** ODtable, double*** DiffODtable,
 			printf("Failed to open demand file %s\n", g_mode_type_vector[m].demand_file.c_str());
 			if (number_of_modes == 1)
 			{
-				for (int o = 1; o <= no_zones; o++)
+				for (int o = 1; o <= no_zones; o++)      // dense zone seq: all valid
 					for (int d = 1; d <= no_zones; d++)
-						if (g_map_external_node_id_2_node_seq_no.find(o) != g_map_external_node_id_2_node_seq_no.end()
-							&& g_map_external_node_id_2_node_seq_no.find(d) != g_map_external_node_id_2_node_seq_no.end())
-						{
-							ODtable[m][o][d] = 1.0;
-							DiffODtable[m][o][d] = 1.0;
-							if (write_seed) Seed_ODtable[m][o][d] = 1.0;
-						}
+					{
+						ODtable[m][o][d] = 1.0;
+						DiffODtable[m][o][d] = 1.0;
+						if (write_seed) Seed_ODtable[m][o][d] = 1.0;
+					}
 			}
 		}
 		return;   // skip this mode; its OD stays zero
@@ -6545,6 +6552,7 @@ static void ReadOneModeDemand(int m, double*** ODtable, double*** DiffODtable,
 	}
 
 	double total_volume = 0;
+	long long unknown_zone_rows = 0;
 	int result;
 	while ((result = fscanf(file, "%d,%d,%lf", &o_zone_id, &d_zone_id, &volume)) != EOF)
 	{
@@ -6553,17 +6561,26 @@ static void ReadOneModeDemand(int m, double*** ODtable, double*** DiffODtable,
 			printf("Error reading %s (o=%d)\n", g_mode_type_vector[m].demand_file.c_str(), o_zone_id);
 			break;
 		}
-		if (o_zone_id < 1 || d_zone_id < 1 || o_zone_id > no_zones || d_zone_id > no_zones)
+		// external agency zone ids -> dense internal zone seq (renumbering)
+		int o_seq = ZoneSeqFromExternal(o_zone_id);
+		int d_seq = ZoneSeqFromExternal(d_zone_id);
+		if (o_seq == 0 || d_seq == 0)
 		{
-			printf("Error zone id out of range (o=%d d=%d, # zones=%d) in %s\n",
-				o_zone_id, d_zone_id, no_zones, g_mode_type_vector[m].demand_file.c_str());
-			break;
+			if (unknown_zone_rows < 3)
+				printf("WARNING: demand row (o=%d, d=%d) references a zone id not in "
+					"node.csv (%s); row skipped.\n",
+					o_zone_id, d_zone_id, g_mode_type_vector[m].demand_file.c_str());
+			unknown_zone_rows++;
+			continue;
 		}
-		ODtable[m][o_zone_id][d_zone_id] = volume;
-		DiffODtable[m][o_zone_id][d_zone_id] = volume;
-		if (write_seed) Seed_ODtable[m][o_zone_id][d_zone_id] = volume;
+		ODtable[m][o_seq][d_seq] = volume;
+		DiffODtable[m][o_seq][d_seq] = volume;
+		if (write_seed) Seed_ODtable[m][o_seq][d_seq] = volume;
 		total_volume += volume;
 	}
+	if (unknown_zone_rows > 0)
+		printf("WARNING: %lld demand rows skipped in %s (zone ids not in node.csv).\n",
+			unknown_zone_rows, g_mode_type_vector[m].demand_file.c_str());
 
 	printf(" mode type = %s, total_volume = %f\n", g_mode_type_vector[m].mode_type.c_str(), total_volume);
 #pragma omp critical
@@ -6647,8 +6664,13 @@ int Read_ODtable(double*** ODtable, double*** DiffODtable, double*** Seed_ODtabl
 							volume);
 
 					}
-					DiffODtable[m][o_zone_id][d_zone_id] = ODtable[m][o_zone_id][d_zone_id] - volume;  // diff OD demand  = current demand - base demand 
-					total_volume_diff += ODtable[m][o_zone_id][d_zone_id] - volume;
+					int o_seq = ZoneSeqFromExternal(o_zone_id);
+					int d_seq = ZoneSeqFromExternal(d_zone_id);
+					if (o_seq >= 1 && d_seq >= 1)
+					{
+					DiffODtable[m][o_seq][d_seq] = ODtable[m][o_seq][d_seq] - volume;  // diff OD demand  = current demand - base demand 
+					total_volume_diff += ODtable[m][o_seq][d_seq] - volume;
+					}
 					line_count++;
 				}
 				else
@@ -6719,7 +6741,12 @@ int Read_ODtable(double*** ODtable, double*** DiffODtable, double*** Seed_ODtabl
 			int result;
 			while ((result = fscanf(file, "%d,%d,%lf", &o_zone_id, &d_zone_id, &volume)) != EOF)
 			{
-				target_ODtable[m][o_zone_id][d_zone_id] = volume;  // target
+				{
+					int o_seq = ZoneSeqFromExternal(o_zone_id);
+					int d_seq = ZoneSeqFromExternal(d_zone_id);
+					if (o_seq >= 1 && d_seq >= 1)
+						target_ODtable[m][o_seq][d_seq] = volume;  // target
+				}
 
 				if (result == 3)  // we have read all the 3 values correctly
 				{
@@ -7346,10 +7373,12 @@ int Read_ODflow(double* TotalODflow, int* number_of_modes, int* no_zones)
 	}
 	for (int k = 1; k <= number_of_links; k++)
 	{
-		int from_node_id = Link[k].external_from_node_id;
-		if (from_node_id <= *no_zones)
+		// centroids occupy node seq 1..Z after the internal renumbering, so the
+		// INTERNAL from-node seq doubles as the dense zone seq.
+		int from_node_seq = Link[k].internal_from_node_id;
+		if (from_node_seq >= 1 && from_node_seq <= *no_zones)
 		{
-			zone_outbound_link_size[from_node_id] += 1;  // from_node_id is the zone_id; 
+			zone_outbound_link_size[from_node_seq] += 1;
 		}
 	}
 
@@ -7359,11 +7388,12 @@ int Read_ODflow(double* TotalODflow, int* number_of_modes, int* no_zones)
 	int total_infeasible_outbound_zones = 0; 
 	float total_infeasible_outbound_zone_demand = 0;
 	float total_zone_demand = 0;
-	for (int z = 1; z < *no_zones; z++)
+	for (int z = 1; z <= *no_zones; z++)
 	{
 		if (zone_outbound_link_size[z] == 0 && TotalOFlow[z]>0.01)
 		{
-			printf("Error: There is no outbound link from zone %d with positive demand %f\n", z, TotalOFlow[z]);
+			printf("Error: There is no outbound link from zone %d with positive demand %f\n",
+				g_zone_seq_2_old_zone_id[z], TotalOFlow[z]);
 			total_infeasible_outbound_zones++; 
 			total_infeasible_outbound_zone_demand += TotalOFlow[z];
 		}
@@ -8880,14 +8910,15 @@ int mapmatchingAPI() {
 
 		if (gpsTraces_originNodeId[agentId] >= 1 && gpsTraces_destinationNodeId[agentId] >= 1)
 		{
-			int Orig = gpsTraces_originNodeId[agentId];
-			int Dest = gpsTraces_destinationNodeId[agentId];
+			// external GPS node ids -> internal seq (renumbering boundary)
+			int Orig = g_map_external_node_id_2_node_seq_no[gpsTraces_originNodeId[agentId]];
+			int Dest = g_map_external_node_id_2_node_seq_no[gpsTraces_destinationNodeId[agentId]];
 			std::vector<int> currentLinkSequence; // Temporary vector to store link indices
 
 
 			int m = 1;
 			Minpath(m, Orig, MDMinPathPredLink[m][Orig], CostTo[Orig]);
-			int CurrentNode = g_map_external_node_id_2_node_seq_no[Dest];
+			int CurrentNode = Dest;   // already internal seq
 
 			// MinPathPredLink is coded as internal node id 
 			// 
