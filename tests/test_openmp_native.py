@@ -17,6 +17,7 @@ import unittest
 
 REPO = Path(__file__).resolve().parents[1]
 NETWORK = REPO / "kernel" / "data_sets" / "01_4_node_network"
+SPARSE_NETWORK = REPO / "test_networks" / "sparse_internal_ids"
 STATUS_FIELDS = {
     "compiled",
     "openmp_version",
@@ -197,6 +198,61 @@ class ProcessorConfigurationTests(unittest.TestCase):
                     ),
                     f"{field} differs for link {first['link_id']}",
                 )
+
+
+@unittest.skipIf(_native is None, "pytaplite._native is not built")
+class NativeAccessibilityLifecycleTests(unittest.TestCase):
+    def test_accessibility_outputs_can_be_reopened_after_inprocess_run(self):
+        with tempfile.TemporaryDirectory(prefix="taplite-accessibility-") as directory:
+            scenario = Path(directory)
+            for source in SPARSE_NETWORK.iterdir():
+                if source.is_file():
+                    shutil.copy2(source, scenario / source.name)
+            code = (
+                "import pytaplite, sys; "
+                "result = pytaplite.accessibility(sys.argv[1]); "
+                "print('__ACCESSIBILITY__=' + str(len(result.od)))"
+            )
+            environment = os.environ.copy()
+            pythonpath = environment.get("PYTHONPATH")
+            environment["PYTHONPATH"] = str(REPO) + (
+                os.pathsep + pythonpath if pythonpath else ""
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", code, str(scenario)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+                timeout=120,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            )
+            match = re.search(r"__ACCESSIBILITY__=(\d+)", result.stdout)
+            self.assertIsNotNone(match, result.stdout)
+            self.assertGreater(int(match.group(1)), 0)
+            external_zone_ids = {"2025", "2147483000"}
+            with (scenario / "od_performance.csv").open(
+                newline="", encoding="utf-8-sig"
+            ) as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertTrue(rows)
+            self.assertLessEqual(
+                {row["o_zone_id"] for row in rows}
+                | {row["d_zone_id"] for row in rows},
+                external_zone_ids,
+            )
+            with (scenario / "zone_accessibility.csv").open(
+                newline="", encoding="utf-8-sig"
+            ) as stream:
+                zone_rows = list(csv.DictReader(stream))
+            self.assertEqual(
+                {row["zone_id"] for row in zone_rows},
+                external_zone_ids,
+            )
 
 
 class SharedLibraryExportTests(unittest.TestCase):

@@ -16,8 +16,8 @@ For each network (sf_multimodal, cs_multimodal) and each iteration count
 
 Then:
   (a) join link_performance back to the INPUT link.csv on (from_node_id,
-      to_node_id). The engine RESEQUENCES link_id to 1..N internal order, so the
-      output link_id does NOT match the input link_id -- always join on (from,to).
+      to_node_id). Current kernels preserve the original external link_id; the
+      endpoint join remains a useful independent guard against mapping errors.
   (b) allowed_use enforcement: for each restricted link, verify the disallowed
       modes carry ZERO volume (PASS/FAIL per link). Also report whether ALLOWED
       modes actually USE the link (so the test is not vacuous).

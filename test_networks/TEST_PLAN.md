@@ -100,15 +100,15 @@ DTALite.assignment()            # writes link_performance.csv into the folder
 ```
 
 IMPORTANT runtime gotchas (both encoded in `test_harness.py`):
-1. **Output `link_id` is RESEQUENCED** to contiguous 1..N internal order and does
-   NOT match the input `link_id`. ALWAYS join `link_performance.csv` back to the
-   input `link.csv` on `(from_node_id, to_node_id)`.
+1. **Output `link_id` preserves the original external id.** Joining
+   `link_performance.csv` back to `link.csv` on `(from_node_id, to_node_id)` is
+   still a useful independent guard against an id-mapping regression.
 2. **State persists across `assignment()` calls in the SAME Python process** — the
    DLL accumulates link volume, so repeated calls inflate volumes (confirmed:
    call1=1.07M, call2=2.25M). Run each assignment in a FRESH subprocess. The
    harness does this via `subprocess.run([sys.executable, "-c", ...])`.
 
-`link_performance.csv` key columns: `link_id` (reseq), `from_node_id`,
+`link_performance.csv` key columns: `link_id` (original external id), `from_node_id`,
 `to_node_id`, `volume` (total), per-mode `mod_vol_sov..mod_vol_apv`,
 `travel_time`, `vdf_fftt`, `speed_mph`, `VMT`.
 
