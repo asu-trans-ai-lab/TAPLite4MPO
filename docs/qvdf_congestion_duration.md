@@ -17,7 +17,7 @@ For every link, QVDF writes (in addition to volume / `doc` / speed / VMT / VHT):
 |---|---|
 | **`P`** | **congestion duration (hours)** — how long inflow exceeds capacity: `P = Q_cd · (D/C)^Q_n` |
 | **`Severe_Congestion_P`** | duration (h) below the severe-congestion threshold |
-| `t0,t2,t3` | queue onset / peak / recovery times within the period |
+| `t0,t2,t3` | band-limited queue onset / observed trough / recovery times; optional observed episode endpoints can make the analytical `P` split asymmetric around `t2` |
 | `vt2_mph` | speed at the peak of the queue |
 | `congestion_ref_speed_mph`, `avg_queue_speed_mph` | the queue speed model |
 | `avg_QVDF_period_speed_mph`, `avg_QVDF_period_travel_time` | period-average speed/time the assignment uses as the link cost |
@@ -35,7 +35,36 @@ vdf_type = 2
 cutoff_speed                 # speed at capacity (v_congestion_cutoff)
 vdf_cp, vdf_cd, vdf_n, vdf_s # queue VDF parameters (cp, cd, n, s)
 vdf_alpha, vdf_beta          # speed-flow shape
+t0_hour, t3_hour             # optional observed episode start/end
+t2_hour                      # optional observed trough time, decimal hour-of-day
 ```
+
+`t2_hour` is link- and assignment-period-specific. For example, `7.5` means
+07:30. Put the appropriate period-specific values in that period's `link.csv`;
+the kernel joins nothing by row order or across periods. A blank cell or an
+absent column uses `(demand_period_starting_hours +
+demand_period_ending_hours) / 2`, preserving prior behavior. A supplied value
+must be finite and within the configured period. Invalid values are reported
+with the link ID and rejected in favor of the midpoint; they are never clamped.
+The compatibility alias `t2` is also accepted, but `t2_hour` is the documented
+input name used by the CBI handoff. `t2` remains the output column name in
+`link_performance.csv`.
+
+When a valid ordered `t0_hour < t2_hour < t3_hour` trio is present, the kernel
+uses the guarded observed before-trough fraction
+`(t2_hour-t0_hour)/(t3_hour-t0_hour)`, limited to `[0.05,0.95]`. It projects
+that fraction of analytical `P` before `t2` and the remainder after `t2`.
+No new QVDF parameter or output field is introduced. Missing, partial,
+malformed, or unordered endpoints silently use the historical `P/2` split.
+Observed endpoints may extend outside the selected period because only their
+proportion is used.
+
+Only the profile's time position changes: `P`, DOC, `vt2_mph`, period-average
+QVDF speed, and assignment travel time use the same demand and QVDF parameters
+as before. The reported `t0` and `t3` and the five-minute profile are clipped
+to the configured assignment-period band. When clipping occurs, `P` remains
+the analytical QVDF duration and can therefore exceed `t3-t0`; the in-band
+profile becomes asymmetric but retains its minimum speed exactly at `t2`.
 A transparent reference implementation + spreadsheet are in
 [`../test_networks/qvdf_reference/`](../test_networks/qvdf_reference/)
 (`qvdf_ref.py`, `QVDF_clean_reference.xlsx`) — use it to check the kernel's `P`, speeds,
@@ -59,9 +88,11 @@ a *sister project* to TAPLite4MPO. Clean pipeline:
    4. mu → QVDF   back out queue discharge rate -> QVDF params (cutoff_speed, cp/cd/n/s)
         │            (+ quality gates: predicted vs observed mu, S3-prior for TMC w/o volume)
         ▼
-   per-corridor QVDF parameters
+   per-link / corridor QVDF parameters and observed t0/t2/t3 hours
         │
-        ▼   write into the GMNS link.csv (vdf_type=2 + cutoff_speed + vdf_cp/cd/n/s)
+        ▼   write into the period GMNS link.csv
+            (vdf_type=2 + cutoff_speed + vdf_cp/cd/n/s
+             + optional t0_hour/t2_hour/t3_hour)
    TAPLite4MPO QVDF assignment
         │
         ▼

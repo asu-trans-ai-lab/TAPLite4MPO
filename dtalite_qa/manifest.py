@@ -24,6 +24,7 @@ UNITS = {
     "capacity": "veh/hour/lane",
     "travel_time_output": "minutes",
     "volume": "vehicles over the analysis period",
+    "time_of_day": "decimal hour (link.csv 't0_hour', 't2_hour', 't3_hour')",
 }
 
 # Column documentation (merged with required/default info from schema.py).
@@ -47,6 +48,21 @@ _FIELD_DOC = {
         "vdf_cd": ("number", "QVDF queue parameter"),
         "vdf_n": ("number", "QVDF queue parameter"),
         "vdf_s": ("number", "QVDF queue parameter"),
+        schema.LINK_QVDF_T0_COL: (
+            "number",
+            "optional observed QVDF episode start as decimal hour-of-day; "
+            "used with t2_hour and t3_hour to position the analytical duration",
+        ),
+        schema.LINK_QVDF_T2_COL: (
+            "number",
+            "observed QVDF trough time as decimal hour-of-day; link- and "
+            "period-specific; blank/absent uses the assignment-period midpoint",
+        ),
+        schema.LINK_QVDF_T3_COL: (
+            "number",
+            "optional observed QVDF episode end as decimal hour-of-day; "
+            "used with t0_hour and t2_hour to position the analytical duration",
+        ),
         "allowed_use": ("string", "mode access control (empty/all, 'closed', or ';'-list)"),
         "non_uturn_flag": ("int", "1 bans the immediate U-turn"),
     },

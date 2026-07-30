@@ -64,12 +64,58 @@ def qvdf_link(p, volume, H, t_start, t_end):
     qvdf_tt = length / max(0.1, avg_period_speed) * 60.0
 
     vt2 = cutoff / max(0.001, q_cp * P ** q_s + 1.0)
+    def optional_hour(name):
+        value = p.get(name)
+        if value is None or str(value).strip() == '':
+            return None
+        try:
+            hour = float(value)
+        except (TypeError, ValueError):
+            return None
+        return hour if math.isfinite(hour) and 0.0 <= hour <= 24.0 else None
+
+    midpoint = (t_start + t_end) / 2.0
+    observed_t2 = optional_hour('t2_hour')
+    if observed_t2 is None:
+        observed_t2 = optional_hour('t2')
+    within_period = (
+        observed_t2 is not None and t_start <= observed_t2 <= t_end
+        if t_end >= t_start
+        else observed_t2 is not None and (
+            observed_t2 >= t_start or observed_t2 <= t_end
+        )
+    )
+    t2 = observed_t2 if within_period else midpoint
+
+    observed_left_fraction = 0.5
+    observed_t0 = optional_hour('t0_hour')
+    observed_t3 = optional_hour('t3_hour')
+    if (
+        within_period
+        and observed_t0 is not None
+        and observed_t3 is not None
+        and observed_t0 < observed_t2 < observed_t3
+    ):
+        observed_duration = observed_t3 - observed_t0
+        if observed_duration > 1e-6:
+            observed_left_fraction = min(
+                0.95,
+                max(
+                    0.05,
+                    (observed_t2 - observed_t0)
+                    / max(1e-6, observed_duration),
+                ),
+            )
+
+    t0 = max(t_start, t2 - observed_left_fraction * P)
+    t3 = min(t_end, t2 + (1.0 - observed_left_fraction) * P)
     mu = min(lane_cap, incoming / max(0.01, P))
     RTT = length / max(0.01, cong_ref)
     wt2 = length / vt2 - RTT
     gamma = wt2 * 64 * mu / P ** 4 if P > 0 else 0.0
 
-    return dict(D=incoming, doc=doc, P=P, fftt=fftt, vt2=vt2, mu=mu, gamma=gamma,
+    return dict(D=incoming, doc=doc, P=P, t0=t0, t2=t2, t3=t3,
+                fftt=fftt, vt2=vt2, mu=mu, gamma=gamma,
                 cong_ref_speed=cong_ref, avg_queue_speed=avg_queue_speed,
                 qvdf_period_speed=avg_period_speed, qvdf_tt=qvdf_tt,
                 free_mph=free_mph, cutoff_mph=cutoff)

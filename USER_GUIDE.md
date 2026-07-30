@@ -72,6 +72,8 @@ validator enforces it.
 | `vdf_plf` | optional | peak load factor (default 1; see §5) |
 | `cutoff_speed` | optional | speed at capacity (mph); defaults to `0.75 × free_speed` |
 | `vdf_cp`,`vdf_cd`,`vdf_n`,`vdf_s` | QVDF | QVDF queue parameters (used when `vdf_type=2`) |
+| `t0_hour`,`t3_hour` | optional QVDF | observed episode start/end, as decimal hour-of-day. With a valid `t2_hour`, their before/after proportion positions analytical `P`; otherwise the historical symmetric split is used. |
+| `t2_hour` | optional QVDF | observed minimum-speed time for this link and assignment period, as decimal hour-of-day (`7.5` = 07:30). Blank/absent uses the period midpoint. |
 | `allowed_use` | optional | mode access control (section 6) |
 | `non_uturn_flag` | optional | `1` bans the immediate U-turn back along the reverse link |
 | `ref_volume`, `obs_volume`, `geometry` | optional | reference/observed volume, WKT geometry |
@@ -171,6 +173,24 @@ fast node-based path. See section 7.
   queue model calibrated by `cutoff_speed` and `vdf_cp/cd/n/s`. A transparent
   reference implementation and clean spreadsheet live in
   `test_networks/qvdf_reference/` (`qvdf_ref.py`, `QVDF_clean_reference.xlsx`).
+  Optional `t2_hour` positions the link's time-dependent profile at an observed
+  trough time. It must fall within the period configured in `settings.csv`.
+  Missing values preserve the historical midpoint assumption. Changing only
+  `t2_hour` shifts `t0`, `t2`, `t3`, and the five-minute profile; it does not
+  change DOC, `P`, period-average QVDF speed, or assignment travel time.
+  Optional `t0_hour` and `t3_hour` describe the observed episode around
+  `t2_hour`. A complete, finite, ordered trio determines what fraction of the
+  analytical `P` is projected before versus after `t2`; the fraction is kept
+  between `0.05` and `0.95`. Missing, partial, or unusable endpoints silently
+  retain the symmetric half-before/half-after split. These are input
+  observations, not additional calibrated QVDF parameters.
+  Cube-derived composite freeway types such as `101` and `201` are recognized
+  as facility type `1`. An explicit `t2_hour` also requests a positioned QVDF
+  reporting profile on other facility types without changing their assignment
+  VDF.
+  The projected bounds are clamped to the assignment-period band. If an edge
+  is clipped, `P` remains the analytical QVDF duration and can be larger than
+  the visible `t3-t0` span.
 - **`3` BPR2** (AequilibraE): BPR with the exponent doubled above capacity —
   `t0(1+α·x^β)` for x≤1, `t0(1+α·x^{2β})` for x>1 (steeper over-saturation).
 - **`4` INRETS** (AequilibraE): `t0(1.1−α·x)/(1.1−x)` for x≤1, `t0·((1.1−α)/0.1)·x²`
