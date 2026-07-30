@@ -63,6 +63,7 @@ wheelhouse/
 dist_release/
 
 # Local NVTA workflow packages, agency model data, and source archives
+nvta/
 nvta_dtalite_package/
 updated_nvta_dtalite_package/
 nvta_dtalite_package_*.zip

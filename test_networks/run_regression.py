@@ -233,7 +233,14 @@ def main():
     all_pass = True
     print(f"{'case':24} {'check':14} {'result':6} detail")
     print("-" * 90)
-    for case in CASES:
+    cases = CASES + [{
+        "name": "qvdf_observed_t2",
+        "dir": f"{HERE}/qvdf_observed_t2",
+        "checks": ["completes"] + (
+            ["external_ids"] if "external_ids" in CHECKS else []
+        ),
+    }]
+    for case in cases:
         if only and case["name"] not in only:
             continue
         if not os.path.isdir(case["dir"]):

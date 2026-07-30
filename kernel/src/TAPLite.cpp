@@ -35,6 +35,7 @@
 #include <vector>
 #include <cstring>
 #include <algorithm>
+#include <limits>
 #include <new>
 #ifdef _OPENMP
 #include <omp.h>
@@ -85,6 +86,9 @@ struct link_record {
 	double Conic_a;      // conic alpha (per functional type)
 	double Conic_b;      // conic beta  (= (2a-1)/(2a-2) per Spiess)
 	double Q_cd, Q_n, Q_cp, Q_s;
+	double QVDF_t0_observed; // observed episode start, decimal hour; NaN = unavailable
+	double QVDF_t2;     // observed queue-profile trough time, decimal hour; NaN = midpoint fallback
+	double QVDF_t3_observed; // observed episode end, decimal hour; NaN = unavailable
 
 	double length;
 	double Speed;
@@ -158,6 +162,9 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
+		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
+		QVDF_t3_observed = std::numeric_limits<double>::quiet_NaN();
 
 		Travel_time = 0;
 		BPR_TT = 0;
@@ -195,6 +202,9 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
+		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
+		QVDF_t3_observed = std::numeric_limits<double>::quiet_NaN();
 
 		Travel_time = 0;
 		BPR_TT = 0;
@@ -311,6 +321,22 @@ int number_of_internal_zones = 1;
 int TotalAssignIterations = 20;
 double demand_period_starting_hours = 7;
 double	demand_period_ending_hours = 8;
+
+static double DemandPeriodMidpointHours()
+{
+	return (demand_period_starting_hours + demand_period_ending_hours) / 2.0;
+}
+
+static bool IsHourWithinDemandPeriod(double hour)
+{
+	if (!std::isfinite(hour) || hour < 0.0 || hour > 24.0)
+		return false;
+	if (demand_period_ending_hours >= demand_period_starting_hours)
+		return hour >= demand_period_starting_hours && hour <= demand_period_ending_hours;
+	// Overnight periods wrap across midnight.
+	return hour >= demand_period_starting_hours || hour <= demand_period_ending_hours;
+}
+
 int first_through_node_id_input = -1; 
 int g_tap_log_file = 0;
 int g_base_demand_mode = 1;
@@ -5795,12 +5821,26 @@ int AssignmentAPI()
 		double avg_QVDF_period_speed = 0;
 		double IncomingDemand = 0;
 		double DOC = 0;
-		// Run the (expensive) QVDF queue model + speed profile only for freeway links
-		// (link_type==1) carrying volume >= qvdf_volume_threshold; other links get a
-		// free-flow speed profile and a cheap BPR-style DOC. (threshold 0 => all links)
-		bool do_qvdf = (Link[k].link_type == 1) && (MainVolume[k] >= g_qvdf_volume_threshold);
+		// Run the (expensive) QVDF queue model + speed profile for freeway links or
+		// any link with an explicit observed trough time. Cube-derived networks
+		// encode link_type as 100*area_type + facility_type, so codes such as 101
+		// and 201 are the same freeway facility type as canonical GMNS code 1.
+		// An observed t2 is an explicit request for a positioned QVDF profile even
+		// on a non-freeway facility. This affects reporting only; assignment travel
+		// time continues to use the link's configured VDF_type.
+		bool is_freeway_link_type =
+			(Link[k].link_type == 1) ||
+			(Link[k].link_type >= 100 && Link[k].link_type % 100 == 1);
+		bool has_observed_qvdf_t2 = std::isfinite(Link[k].QVDF_t2);
+		bool do_qvdf =
+			(is_freeway_link_type || has_observed_qvdf_t2) &&
+			(MainVolume[k] >= g_qvdf_volume_threshold);
 		if (do_qvdf)
+		{
+			t2 = std::isfinite(Link[k].QVDF_t2)
+				? Link[k].QVDF_t2 : DemandPeriodMidpointHours();
 			Link_QueueVDF(k, MainVolume[k], IncomingDemand, DOC, P, t0, t2, t3, vt2, mu, Q_gamma, congestion_ref_speed, avg_queue_speed, avg_QVDF_period_speed, Severe_Congestion_P, model_speed);
+		}
 		else
 		{
 			double Hh = fmax(demand_period_ending_hours - demand_period_starting_hours, 1e-6);
@@ -6212,6 +6252,65 @@ void ReadLinks()
 			parser_link.GetValueByFieldName("vdf_cd", Link[k].Q_cd);
 			parser_link.GetValueByFieldName("vdf_n", Link[k].Q_n);
 			parser_link.GetValueByFieldName("vdf_s", Link[k].Q_s);
+
+			// Optional observed episode endpoints. They may extend outside this
+			// assignment period because they are used only to recover the
+			// before/after-t2 episode proportion. Missing, partial, malformed, or
+			// unordered endpoint data silently retains the symmetric fallback.
+			auto read_optional_episode_hour =
+				[&parser_link](const char* column_name, double& target)
+				{
+					std::string text;
+					if (!parser_link.GetValueByFieldName(column_name, text, false))
+						return;
+					TrimString(text);
+					if (text.empty())
+						return;
+					char* endp = NULL;
+					double value = strtod(text.c_str(), &endp);
+					if (endp != text.c_str() && *endp == '\0' &&
+						std::isfinite(value) && value >= 0.0 && value <= 24.0)
+						target = value;
+				};
+			read_optional_episode_hour("t0_hour", Link[k].QVDF_t0_observed);
+			read_optional_episode_hour("t3_hour", Link[k].QVDF_t3_observed);
+
+			// Optional observed QVDF trough time. The CBI handoff uses t2_hour;
+			// accept t2 as a compatibility alias. Empty/missing cells retain the
+			// historical assignment-period midpoint. Invalid supplied values are
+			// rejected with a link-specific diagnostic rather than clamped.
+			std::string qvdf_t2_text;
+			const char* qvdf_t2_column = "t2_hour";
+			bool qvdf_t2_supplied =
+				parser_link.GetValueByFieldName(qvdf_t2_column, qvdf_t2_text, false);
+			if (!qvdf_t2_supplied)
+			{
+				qvdf_t2_column = "t2";
+				qvdf_t2_supplied =
+					parser_link.GetValueByFieldName(qvdf_t2_column, qvdf_t2_text, false);
+			}
+			if (qvdf_t2_supplied)
+			{
+				TrimString(qvdf_t2_text);
+				char* endp = NULL;
+				double observed_t2 = strtod(qvdf_t2_text.c_str(), &endp);
+				bool parsed = endp != qvdf_t2_text.c_str() && *endp == '\0';
+				if (parsed && IsHourWithinDemandPeriod(observed_t2))
+					Link[k].QVDF_t2 = observed_t2;
+				else
+				{
+					double fallback_t2 = DemandPeriodMidpointHours();
+					fprintf(stderr,
+						"WARNING: link_id=%d has invalid %s='%s'; expected a finite decimal hour within the configured demand period %.3f-%.3f. Using midpoint fallback %.3f.\n",
+						Link[k].external_link_id, qvdf_t2_column, qvdf_t2_text.c_str(),
+						demand_period_starting_hours, demand_period_ending_hours, fallback_t2);
+					if (summary_log_file != NULL)
+						fprintf(summary_log_file,
+							"WARNING: link_id=%d has invalid %s='%s'; expected a finite decimal hour within the configured demand period %.3f-%.3f. Using midpoint fallback %.3f.\n",
+							Link[k].external_link_id, qvdf_t2_column, qvdf_t2_text.c_str(),
+							demand_period_starting_hours, demand_period_ending_hours, fallback_t2);
+				}
+			}
 
 			Link[k].free_speed = free_speed;
 			// Default cutoff (speed at capacity) = 0.75 * free_speed when not given.
@@ -6940,9 +7039,37 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 	double base = Link[k].Q_cp * pow(P, Link[k].Q_s) + 1.0;
 	vt2 = Link[k].Cutoff_Speed / fmax(0.001, base);
 
-	t2 = (demand_period_starting_hours + demand_period_ending_hours) / 2.0;
-	t0 = t2 - 0.5 * P;
-	t3 = t2 + 0.5 * P;
+	// Observed t0/t3 determine only how the analytical duration P is divided
+	// around t2. No additional user-selectable QVDF parameter is introduced.
+	// Missing or unusable endpoint data retains the historical symmetric split.
+	double observed_left_fraction = 0.5;
+	if (std::isfinite(Link[k].QVDF_t0_observed) &&
+		std::isfinite(Link[k].QVDF_t2) &&
+		std::isfinite(Link[k].QVDF_t3_observed) &&
+		Link[k].QVDF_t0_observed < Link[k].QVDF_t2 &&
+		Link[k].QVDF_t2 < Link[k].QVDF_t3_observed)
+	{
+		double observed_duration =
+			Link[k].QVDF_t3_observed - Link[k].QVDF_t0_observed;
+		if (observed_duration > 1e-6)
+		{
+			observed_left_fraction =
+				(Link[k].QVDF_t2 - Link[k].QVDF_t0_observed) /
+				fmax(1e-6, observed_duration);
+			observed_left_fraction =
+				fmin(0.95, fmax(0.05, observed_left_fraction));
+		}
+	}
+
+	// Keep the reported/profiled congestion window inside the configured
+	// assignment-period band. P remains the analytical QVDF duration; after
+	// clamping, the visible t0--t3 span can be shorter than P.
+	t0 = fmax(
+		demand_period_starting_hours,
+		t2 - observed_left_fraction * P);
+	t3 = fmin(
+		demand_period_ending_hours,
+		t2 + (1.0 - observed_left_fraction) * P);
 
 	Q_mu = std::min(Link[k].Lane_Capacity, IncomingDemand / std::max(0.01, P));
 
@@ -6968,10 +7095,38 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 		double td_speed = 0;
 		model_speed[t_interval] = Link[k].free_speed;
 
-		if (t0 <= t && t <= t3)  // within congestion duration P
+		if (t0 <= t && t <= t3)  // within the band-limited congestion window
 		{
-			//1/4*gamma*(t-t0)^2(t-t3)^2
-			td_queue = 0.25 * Q_gamma * pow((t - t0), 2) * pow((t - t3), 2);
+			// Normalize an asymmetric beta-shaped queue curve so its maximum
+			// remains exactly at the observed t2 after either window edge is
+			// clamped. With no clamping, peak_fraction=0.5 and this reduces to
+			// the historical quartic 1/4*gamma*(t-t0)^2*(t-t3)^2.
+			double window_span = t3 - t0;
+			double queue_shape = 0.0;
+			if (window_span > 1e-9)
+			{
+				double x = fmin(1.0, fmax(0.0, (t - t0) / window_span));
+				double peak_fraction =
+					fmin(1.0, fmax(0.0, (t2 - t0) / window_span));
+				if (peak_fraction <= 1e-9)
+					queue_shape = pow(1.0 - x, 4.0);
+				else if (peak_fraction >= 1.0 - 1e-9)
+					queue_shape = pow(x, 4.0);
+				else
+				{
+					double left_exponent = 4.0 * peak_fraction;
+					double right_exponent = 4.0 * (1.0 - peak_fraction);
+					queue_shape =
+						pow(x / peak_fraction, left_exponent) *
+						pow((1.0 - x) / (1.0 - peak_fraction), right_exponent);
+				}
+			}
+			else if (fabs(t - t2) <= 1e-9)
+				queue_shape = 1.0;
+
+			queue_shape = fmin(1.0, fmax(0.0, queue_shape));
+			double peak_queue = wt2 * Q_mu;
+			td_queue = peak_queue * queue_shape;
 			td_w = td_queue / fmax(0.001, Q_mu);
 			//L/[(w(t)+RTT_in_hour]
 			td_speed = Link[k].length / (td_w + RTT);
