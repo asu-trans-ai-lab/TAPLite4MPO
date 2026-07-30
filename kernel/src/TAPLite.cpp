@@ -250,6 +250,17 @@ int g_metric_system_flag = 1;
 void StatusMessage(const char* group, const char* format, ...);
 
 struct link_record* Link;
+// Sparse agency link ids are translated once at the input boundary. All engine
+// arrays use dense 1..number_of_links indices; outputs use Link[k].external_link_id.
+static std::unordered_map<int, int> g_map_external_link_id_2_link_seq_no;
+
+static inline int LinkSeqFromExternal(int external_link_id)
+{
+	std::unordered_map<int, int>::const_iterator it =
+		g_map_external_link_id_2_link_seq_no.find(external_link_id);
+	return (it == g_map_external_link_id_2_link_seq_no.end()) ? 0 : it->second;
+}
+
 int* FirstLinkFrom;  // used in shortet path algorithm
 int* LastLinkFrom;
 
@@ -587,11 +598,21 @@ static inline bool g_sp_heap_gt(const std::pair<double, int>& a, const std::pair
 // Same FirstThruNode gating / mode_allowed_use / movement-restriction rules as the
 // deque Minpath (settings sp_algorithm=1). Each node settled once; correct for
 // non-negative link costs (BPR/conic/QVDF all >= 0).
+// External node id (agency data) -> dense node seq 1..N.
+// Returns 0 when the id is not present in node.csv.
+static inline int NodeSeqFromExternal(int external_node_id)
+{
+	std::unordered_map<int, int>::const_iterator it =
+		g_map_external_node_id_2_node_seq_no.find(external_node_id);
+	return (it == g_map_external_node_id_2_node_seq_no.end()) ? 0 : it->second;
+}
+
 // External zone id (agency data) -> dense zone seq 1..Z (internal renumbering).
 // Returns 0 when the id is not a zone in node.csv.
 static inline int ZoneSeqFromExternal(int external_zone_id)
 {
-	std::map<int, int>::iterator it = g_map_old_zone_id_2_zone_seq.find(external_zone_id);
+	std::unordered_map<int, int>::const_iterator it =
+		g_map_old_zone_id_2_zone_seq.find(external_zone_id);
 	return (it == g_map_old_zone_id_2_zone_seq.end()) ? 0 : it->second;
 }
 
@@ -1159,8 +1180,6 @@ void WriteOutputFiles(const char* filename, ODPathInfo** odPathInfoMatrix)
 			if (pathInfo.cost < 0.0)
 				continue;
 
-			int internal_o_node_id = g_map_internal_zone_no_2_node_seq_no[Orig];
-			int internal_d_node_id = g_map_internal_zone_no_2_node_seq_no[Dest];
 			float volume = 1;
 
 			grand_totalDistance += pathInfo.distance * volume;
@@ -1168,8 +1187,8 @@ void WriteOutputFiles(const char* filename, ODPathInfo** odPathInfoMatrix)
 			grand_totalTravelTime += pathInfo.congestionTime * volume;
 			grand_total_count += volume;
 
-			outputFile << g_node_vector[internal_o_node_id].node_id << ","
-				<< g_node_vector[internal_d_node_id].node_id << ","
+			outputFile << g_zone_seq_2_old_zone_id[Orig + 1] << ","
+				<< g_zone_seq_2_old_zone_id[Dest + 1] << ","
 				<< pathInfo.distance << "," << (pathInfo.distance * 1.609) << ","
 				<< pathInfo.freeFlowTime << "\n";
 		}
@@ -1257,8 +1276,7 @@ void WriteZoneAccessibilityCSV(const char* filename, ODPathInfo** odPathInfoMatr
 	// Write out the aggregated values for each zone.
 	for (int zoneIdx = 0; zoneIdx < number_of_internal_zones; ++zoneIdx) {
 		// Map the internal zone index to a node (zone) id.
-		int nodeIdx = g_map_internal_zone_no_2_node_seq_no[zoneIdx];
-		int zone_id = g_node_vector[nodeIdx].node_id;
+		int zone_id = g_zone_seq_2_old_zone_id[zoneIdx + 1];
 
 		// Origin measures.
 		int origCount = originAgg[zoneIdx].count;
@@ -1475,7 +1493,8 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 
 		// Process each origin zone in the current batch.
 		for (int localOrigin = 0; localOrigin < currentBatchSize; ++localOrigin) {
-			int Orig = batchStart + localOrigin;
+			int internal_o_zone_no = batchStart + localOrigin;
+			int Orig = internal_o_zone_no + 1; // dense zone seq == centroid node seq
 
 			// Process each transportation mode.
 			for (int m = 1; m <= number_of_modes; m++) {
@@ -1504,8 +1523,6 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 								currentNode = Link[linkId].internal_from_node_id;
 							}
 
-							int internal_node_id = Orig;   // dense zone seq == node seq
-							int internal_o_zone_no = g_node_vector[internal_node_id].internal_zone_no;
 							int internal_d_zone_no = g_node_vector[j].internal_zone_no;
 
 							// Update batchMatrix for this origin-destination pair.
@@ -1531,8 +1548,6 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 						}
 						else {
 							// Unreachable destination.
-							int internal_node_id = Orig;   // dense zone seq == node seq
-							int internal_o_zone_no = g_node_vector[internal_node_id].internal_zone_no;
 							int internal_d_zone_no = g_node_vector[j].internal_zone_no;
 							ODPathInfo& pathInfo = batchMatrix[localOrigin][internal_d_zone_no];
 							pathInfo.mode = m;
@@ -1549,12 +1564,10 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 			for (int Dest = 0; Dest < number_of_internal_zones; ++Dest) {
 				ODPathInfo& info = batchMatrix[localOrigin][Dest];
 				// Skip self-trips and unreachable pairs.
-				if (info.cost < 0 || Orig == Dest)
+				if (info.cost < 0 || internal_o_zone_no == Dest)
 					continue;
-				int internal_o_node_id = g_map_internal_zone_no_2_node_seq_no[Orig];
-				int internal_d_node_id = g_map_internal_zone_no_2_node_seq_no[Dest];
-				outputFile << g_node_vector[internal_o_node_id].node_id << ","
-					<< g_node_vector[internal_d_node_id].node_id << ","
+				outputFile << g_zone_seq_2_old_zone_id[internal_o_zone_no + 1] << ","
+					<< g_zone_seq_2_old_zone_id[Dest + 1] << ","
 					<< info.distance << "," << (info.distance * 1.609) << ","
 					<< info.freeFlowTime << "\n";
 			}
@@ -1582,8 +1595,7 @@ int ComputeAccessibilityAndODCosts_v2(const char* filename)
 		<< "destination_count,destination_avg_distance_mile,destination_avg_distance_km,destination_avg_free_flow,destination_avg_congestion\n";
 	zoneFile << std::fixed << std::setprecision(2);
 	for (int zoneIdx = 0; zoneIdx < number_of_internal_zones; zoneIdx++) {
-		int nodeIdx = g_map_internal_zone_no_2_node_seq_no[zoneIdx];
-		int zone_id = g_node_vector[nodeIdx].node_id;
+		int zone_id = g_zone_seq_2_old_zone_id[zoneIdx + 1];
 
 		int origCount = originAgg[zoneIdx].count;
 		double origAvgDistance = (origCount > 0) ? (originAgg[zoneIdx].totalDistance / origCount) : 0.0;
@@ -3446,15 +3458,15 @@ int get_number_of_nodes_from_node_file(int& number_of_zones, int& l_FirstThruNod
 	}
 	int number_of_nodes = (int)rows.size();
 
-	std::vector<const NodeRow*> ordered;
+	std::vector<size_t> ordered;
 	ordered.reserve(rows.size());
 	for (size_t i = 0; i < rows.size(); i++)
 		if (rows[i].zone_id >= 1)
-			ordered.push_back(&rows[i]);
+			ordered.push_back(i);
 	int Z = (int)ordered.size();
 	for (size_t i = 0; i < rows.size(); i++)
 		if (rows[i].zone_id < 1)
-			ordered.push_back(&rows[i]);
+			ordered.push_back(i);
 
 	if (Z > 0 && max_zone_id != Z)
 		printf("NOTE: sparse zone ids detected (%d zones, max zone id %d). "
@@ -3462,40 +3474,41 @@ int get_number_of_nodes_from_node_file(int& number_of_zones, int& l_FirstThruNod
 			Z, max_zone_id, Z);
 
 	g_map_external_node_id_2_node_seq_no.clear();
-	g_map_node_seq_no_2_external_node_id.clear();
-	g_map_internal_zone_no_2_node_seq_no.clear();
+	g_map_external_node_id_2_node_seq_no.reserve((size_t)number_of_nodes * 2 + 1);
+	g_map_node_seq_no_2_external_node_id.assign(number_of_nodes + 1, 0);
 	g_map_old_zone_id_2_zone_seq.clear();
+	g_map_old_zone_id_2_zone_seq.reserve((size_t)Z * 2 + 1);
 	g_node_vector.clear();
 	g_node_vector.resize(number_of_nodes + 1);
 	g_zone_seq_2_old_zone_id.assign(Z + 1, 0);
 
 	for (int seq = 1; seq <= number_of_nodes; seq++)
 	{
-		const NodeRow* r = ordered[seq - 1];
-		if (g_map_external_node_id_2_node_seq_no.find(r->node_id) !=
+		const NodeRow& r = rows[ordered[seq - 1]];
+		if (g_map_external_node_id_2_node_seq_no.find(r.node_id) !=
 			g_map_external_node_id_2_node_seq_no.end())
 			printf("WARNING: duplicate node_id %d in node.csv; keeping the first.\n",
-				r->node_id);
-		g_map_external_node_id_2_node_seq_no[r->node_id] = seq;
-		g_map_node_seq_no_2_external_node_id[seq] = r->node_id;
-		g_node_vector[seq].x = r->x;
-		g_node_vector[seq].y = r->y;
-		g_node_vector[seq].node_id = r->node_id;       // ORIGINAL id, for outputs
-		if (r->zone_id >= 1)                            // seq <= Z by construction
+				r.node_id);
+		else
+			g_map_external_node_id_2_node_seq_no[r.node_id] = seq;
+		g_map_node_seq_no_2_external_node_id[seq] = r.node_id;
+		g_node_vector[seq].x = r.x;
+		g_node_vector[seq].y = r.y;
+		g_node_vector[seq].node_id = r.node_id;        // ORIGINAL id, for outputs
+		if (r.zone_id >= 1)                            // seq <= Z by construction
 		{
 			g_node_vector[seq].zone_id = seq;           // dense internal zone id
 			g_node_vector[seq].internal_zone_no = seq - 1;
-			g_map_internal_zone_no_2_node_seq_no[seq - 1] = seq;
-			if (g_map_old_zone_id_2_zone_seq.find(r->zone_id) !=
+			if (g_map_old_zone_id_2_zone_seq.find(r.zone_id) !=
 				g_map_old_zone_id_2_zone_seq.end())
 				printf("WARNING: zone_id %d appears on more than one node; "
-					"demand maps to the first.\n", r->zone_id);
+					"demand maps to the first.\n", r.zone_id);
 			else
-				g_map_old_zone_id_2_zone_seq[r->zone_id] = seq;
-			g_zone_seq_2_old_zone_id[seq] = r->zone_id;
+				g_map_old_zone_id_2_zone_seq[r.zone_id] = seq;
+			g_zone_seq_2_old_zone_id[seq] = r.zone_id;
 		}
 		if (g_tap_log_file == 1)
-			fprintf(logfile, "node_id = %d, node_seq_no = %d\n", r->node_id, seq);
+			fprintf(logfile, "node_id = %d, node_seq_no = %d\n", r.node_id, seq);
 	}
 
 	number_of_zones = Z;
@@ -3512,25 +3525,17 @@ int get_number_of_nodes_from_node_file(int& number_of_zones, int& l_FirstThruNod
 
 int get_number_of_links_from_link_file()
 {
-	CDTACSVParser parser_link;
-
 	int number_of_links = 0;
-
-	if (parser_link.OpenCSVFile("link.csv", true))
+	std::ifstream link_file("link.csv");
+	std::string line;
+	if (link_file.is_open())
 	{
-		while (parser_link.ReadRecord())  // if this line contains [] mark, then we will also read
-			// field headers.
+		std::getline(link_file, line); // header
+		while (std::getline(link_file, line))
 		{
-			int link_id = 0;
-			int internal_from_node_id = 0;
-			// Read link_id
-			parser_link.GetValueByFieldName("link_id", link_id);
-			parser_link.GetValueByFieldName("from_node_id", internal_from_node_id);
-
-			number_of_links++;
+			if (line.find_first_not_of(" \t\r") != std::string::npos)
+				number_of_links++; // allocation upper bound; ReadLinks sets accepted count
 		}
-
-		parser_link.CloseCSVFile();
 	}
 
 	return number_of_links;
@@ -3920,10 +3925,6 @@ static void ApplyWarmStartTimes()
 	if (g_warm_start_times_file.empty())
 		return;
 
-	std::map<int, int> ext_link_id_2_k;
-	for (int k = 1; k <= number_of_links; k++)
-		ext_link_id_2_k[Link[k].external_link_id] = k;
-
 	int matched = 0, records = 0;
 
 	// binary DTLP? (header magic 0x504C5444, int32 version, int32 n_links;
@@ -3954,10 +3955,9 @@ static void ApplyWarmStartTimes()
 				if (fread(ids, sizeof(int), 3, f) != 3 || fread(vals, sizeof(float), 5, f) != 5)
 					break;
 				records++;
-				std::map<int, int>::iterator it = ext_link_id_2_k.find(ids[0]);
-				if (it != ext_link_id_2_k.end() && vals[2] > 0.0f)
+				int k = LinkSeqFromExternal(ids[0]);
+				if (k != 0 && vals[2] > 0.0f)
 				{
-					int k = it->second;
 					Link[k].Travel_time = vals[2];
 					Link[k].GenCost = Link[k].mode_AdditionalCost[1] + Link[k].Travel_time;
 					matched++;
@@ -3989,10 +3989,9 @@ static void ApplyWarmStartTimes()
 				!parser_warm.GetValueByFieldName("travel_time", tt, false))
 				continue;
 			records++;
-			std::map<int, int>::iterator it = ext_link_id_2_k.find(link_id);
-			if (it != ext_link_id_2_k.end() && tt > 0.0)
+			int k = LinkSeqFromExternal(link_id);
+			if (k != 0 && tt > 0.0)
 			{
-				int k = it->second;
 				Link[k].Travel_time = tt;
 				Link[k].GenCost = Link[k].mode_AdditionalCost[1] + Link[k].Travel_time;
 				matched++;
@@ -4158,10 +4157,6 @@ static bool ApplyWarmStartFlows(double* MainVolume)
 				n_modes_in, number_of_modes);
 	}
 
-	std::map<int, int> ext_link_id_2_k;
-	for (int k = 1; k <= number_of_links; k++)
-		ext_link_id_2_k[Link[k].external_link_id] = k;
-
 	// L1-demotion path accumulates snapshot volumes here (cold MainVolume kept).
 	std::vector<double> snap_vol;
 	if (!restore)
@@ -4186,14 +4181,13 @@ static bool ApplyWarmStartFlows(double* MainVolume)
 		if (!ok)
 			break;
 		records++;
-		std::map<int, int>::iterator it = ext_link_id_2_k.find(ext_id);
-		if (it == ext_link_id_2_k.end())
+		int k = LinkSeqFromExternal(ext_id);
+		if (k == 0)
 		{
 			if (vol > 0.0)
 				unmatched_file++;
 			continue;
 		}
-		int k = it->second;
 		matched++;
 		link_matched[k] = 1;
 		if (restore)
@@ -4755,11 +4749,6 @@ static bool ApplyWarmStartColumns(double* MainVolume, int*** MDMinPathPredLink)
 		printf("WARNING: warm_start_columns: stored n_zones %d != current %d; matching by zone id, out-of-range zones skipped.\n",
 			n_zones_in, no_zones);
 
-	std::unordered_map<int, int> ext_link_id_2_k;
-	ext_link_id_2_k.reserve((size_t)number_of_links * 2);
-	for (int k = 1; k <= number_of_links; k++)
-		ext_link_id_2_k[Link[k].external_link_id] = k;
-
 	if (!g_col_pool_active)
 		InitColumnPool();
 	ColPoolFlatten();
@@ -4835,9 +4824,8 @@ static bool ApplyWarmStartColumns(double* MainVolume, int*** MDMinPathPredLink)
 					int prev_k = INVALID, chain_node = internal_origin;
 					for (int i = loff_buf[j]; ok && i < loff_buf[j + 1]; i++)
 					{
-						std::unordered_map<int, int>::iterator it = ext_link_id_2_k.find(link_buf[i]);
-						if (it == ext_link_id_2_k.end()) { ok = false; break; }        // link no longer exists
-						int k = it->second;
+						int k = LinkSeqFromExternal(link_buf[i]);
+						if (k == 0) { ok = false; break; }                            // link no longer exists
 						if (Link[k].mode_allowed_use[m] == 0) { ok = false; break; }   // now banned for the mode
 						if (Link[k].internal_from_node_id != chain_node) { ok = false; break; }  // broken chain
 						if (g_has_movement_restrictions && prev_k != INVALID &&
@@ -5251,10 +5239,10 @@ int AssignmentAPI()
 
 	if (first_through_node_id_input >= 1)
 	{ 
-			if (g_map_external_node_id_2_node_seq_no.find(first_through_node_id_input) !=
-			g_map_external_node_id_2_node_seq_no.end())
+		int first_through_seq = NodeSeqFromExternal(first_through_node_id_input);
+		if (first_through_seq != 0)
 		{
-			FirstThruNode  = g_map_external_node_id_2_node_seq_no[first_through_node_id_input]; //equal to external input from seetings.csv
+			FirstThruNode = first_through_seq;
 		}
 		else
 		{
@@ -5266,11 +5254,14 @@ int AssignmentAPI()
 
 	number_of_links = get_number_of_links_from_link_file();
 
-	printf("# of nodes= %d, largest zone id (# of zones) = %d, First Through Node ID = %d, number of links = %d\n", no_nodes, no_zones,
-		g_node_vector[FirstThruNode].node_id, number_of_links);
+	int first_through_external_id =
+		(FirstThruNode >= 1 && FirstThruNode <= no_nodes)
+		? g_node_vector[FirstThruNode].node_id : first_through_node_id_input;
+	printf("# of nodes= %d, # of zones = %d, First Through Node ID = %d, number of links = %d\n",
+		no_nodes, no_zones, first_through_external_id, number_of_links);
 
 	fprintf(summary_log_file, "no_nodes= %d, no_zones = %d, FirstThruNode Node ID = %d, number_of_links = %d\n", no_nodes, no_zones,
-		g_node_vector[FirstThruNode].node_id, number_of_links);
+		first_through_external_id, number_of_links);
 
 	fopen_s(&link_performance_file, "link_performance.csv", "w");
 	if (link_performance_file == NULL)
@@ -5326,7 +5317,14 @@ int AssignmentAPI()
 			ComputeAccessibilityAndODCosts_v2("od_performance.csv");
 		}
 
-			return 0;
+		// The in-process Python/shared-library path returns to a caller that
+		// immediately reads the generated CSVs. Close the Windows file handles
+		// and release link storage just as the normal assignment path does.
+		CloseLinks();
+		fclose(link_performance_file);
+		fclose(logfile);
+		fclose(summary_log_file);
+		return 0;
 		}
 
 	BuildSPModeGroups();    // exact SP-equivalence mode grouping (allowed_use + AdditionalCost)
@@ -6023,11 +6021,10 @@ void ReadLinks()
 			Link[k].internal_from_node_id = Link[k].external_from_node_id;
 			Link[k].internal_to_node_id = Link[k].external_to_node_id;
 
-			if (g_map_external_node_id_2_node_seq_no.find(Link[k].external_from_node_id) !=
-				g_map_external_node_id_2_node_seq_no.end())
+			int internal_from_node_id = NodeSeqFromExternal(Link[k].external_from_node_id);
+			if (internal_from_node_id != 0)
 			{
-				Link[k].internal_from_node_id =
-				g_map_external_node_id_2_node_seq_no[Link[k].external_from_node_id];
+				Link[k].internal_from_node_id = internal_from_node_id;
 			}
 			else
 			{
@@ -6040,20 +6037,16 @@ void ReadLinks()
 			{
 				printf("Error in Link[k].internal_from_node_id\n"); 
 			}
-			if (g_map_external_node_id_2_node_seq_no.find(Link[k].external_to_node_id) !=
-				g_map_external_node_id_2_node_seq_no.end())
+			int internal_to_node_id = NodeSeqFromExternal(Link[k].external_to_node_id);
+			if (internal_to_node_id != 0)
 			{
-				Link[k].internal_to_node_id =
-				g_map_external_node_id_2_node_seq_no[Link[k].external_to_node_id];
+				Link[k].internal_to_node_id = internal_to_node_id;
 			}
 			else
 			{
 				printf("Error in to_node_id =%d for link_id = %d\n", Link[k].external_to_node_id, Link[k].link_id);
 				continue;
 			}
-
-			g_node_vector[Link[k].internal_to_node_id].m_incoming_link_seq_no_vector.push_back(k);
-			g_node_vector[Link[k].internal_from_node_id].m_outgoing_link_seq_no_vector.push_back(k);
 
 			parser_link.GetValueByFieldName("length", Link[k].length);  // meter
 			Link[k].length = Link[k].length / 1609.0;  // miles
@@ -6225,6 +6218,71 @@ void ReadLinks()
 			k++;
 		}
 
+		const int input_link_rows = number_of_links;
+		const int valid_links = k - 1;
+
+		// The zones-first node renumbering can change the ordering of from-node
+		// ids even when link.csv was sorted by the external ids. The shortest
+		// path engine uses contiguous outgoing-link ranges, so group links by
+		// dense from-node id with a stable counting sort. This is O(E + N), not
+		// O(E log E), and gives every accepted link a dense 1..E internal id.
+		std::vector<int> link_count_by_from(no_nodes + 1, 0);
+		for (int old_k = 1; old_k <= valid_links; old_k++)
+			link_count_by_from[Link[old_k].internal_from_node_id]++;
+
+		std::vector<int> next_link_position(no_nodes + 1, 0);
+		int next_position = 1;
+		for (int node_seq = 1; node_seq <= no_nodes; node_seq++)
+		{
+			next_link_position[node_seq] = next_position;
+			next_position += link_count_by_from[node_seq];
+		}
+
+		link_record* ordered_links = new link_record[valid_links + 1];
+		bool reordered = false;
+		for (int old_k = 1; old_k <= valid_links; old_k++)
+		{
+			int new_k = next_link_position[Link[old_k].internal_from_node_id]++;
+			reordered = reordered || (new_k != old_k);
+			ordered_links[new_k] = std::move(Link[old_k]);
+			ordered_links[new_k].link_id = new_k;
+		}
+		delete[] Link;
+		Link = ordered_links;
+		number_of_links = valid_links;
+
+		g_map_external_link_id_2_link_seq_no.clear();
+		g_map_external_link_id_2_link_seq_no.reserve((size_t)number_of_links * 2 + 1);
+		for (int node_seq = 1; node_seq <= no_nodes; node_seq++)
+		{
+			g_node_vector[node_seq].m_incoming_link_seq_no_vector.clear();
+			g_node_vector[node_seq].m_outgoing_link_seq_no_vector.clear();
+		}
+		for (int internal_link_id = 1; internal_link_id <= number_of_links; internal_link_id++)
+		{
+			int external_link_id = Link[internal_link_id].external_link_id;
+			if (g_map_external_link_id_2_link_seq_no.find(external_link_id) !=
+				g_map_external_link_id_2_link_seq_no.end())
+			{
+				printf("WARNING: duplicate link_id %d in link.csv; external-id lookups keep the first.\n",
+					external_link_id);
+			}
+			else
+			{
+				g_map_external_link_id_2_link_seq_no[external_link_id] = internal_link_id;
+			}
+			g_node_vector[Link[internal_link_id].internal_to_node_id].
+				m_incoming_link_seq_no_vector.push_back(internal_link_id);
+			g_node_vector[Link[internal_link_id].internal_from_node_id].
+				m_outgoing_link_seq_no_vector.push_back(internal_link_id);
+		}
+
+		if (input_link_rows != valid_links)
+			printf("WARNING: accepted %d of %d link.csv rows; engine arrays use the %d valid links only.\n",
+				valid_links, input_link_rows, valid_links);
+		if (reordered)
+			printf("NOTE: links grouped by dense internal from-node id in O(E+N); external link ids are preserved in outputs.\n");
+
 		printf("total_base_link_volume = %f\n", total_base_link_volume);
 
 		if (total_base_link_volume > 0)
@@ -6243,10 +6301,6 @@ void Load_Movement_Restrictions(const std::string& filename)
 	// The shortest path keys restrictions by INTERNAL link index, so translate
 	// external -> internal once here. (Previously the external ids were used as
 	// internal indices, which only worked when they happened to coincide.)
-	std::map<int, int> ext2int_link;
-	for (int k = 1; k <= number_of_links; k++)
-		ext2int_link[Link[k].external_link_id] = k;
-
 	int n_restrictions = 0;
 
 	CDTACSVParser parser_settings;
@@ -6267,11 +6321,10 @@ void Load_Movement_Restrictions(const std::string& filename)
 			// penalty >= 10 marks a forbidden (hard-banned) movement.
 			if (penalty >= 10)
 			{
-				auto itib = ext2int_link.find(ib_ext);
-				auto itob = ext2int_link.find(ob_ext);
-				if (itib != ext2int_link.end() && itob != ext2int_link.end())
+				int ib = LinkSeqFromExternal(ib_ext);
+				int ob = LinkSeqFromExternal(ob_ext);
+				if (ib != 0 && ob != 0)
 				{
-					int ib = itib->second, ob = itob->second;
 					InsertMovementRestriction(ib, ob, true);
 					Link[ib].b_withmovement_restrictions = true;
 					n_restrictions++;
@@ -6321,67 +6374,25 @@ void Load_Movement_Restrictions(const std::string& filename)
 }
 static void InitLinkPointers(char* LinksFileName)
 {
-	int k, Node, internal_from_node_id;
-	// Node is the internal node id
+	(void)LinksFileName;
 	FirstLinkFrom = (int*)Alloc_1D(no_nodes, sizeof(int));
 	LastLinkFrom = (int*)Alloc_1D(no_nodes, sizeof(int));
 
-	FirstLinkFrom[1] = 1;
-	Node = 1;
-
-	for (k = 1; k <= number_of_links; k++)
+	// ReadLinks has already grouped links by dense internal from-node id.
+	// Build the contiguous adjacency ranges in one linear scan and represent a
+	// node with no outgoing links as the empty range [0, -1].
+	int k = 1;
+	for (int Node = 1; Node <= no_nodes; Node++)
 	{
-		internal_from_node_id = Link[k].internal_from_node_id;
-		if (internal_from_node_id == Node)
-			continue;
-
-		else if (internal_from_node_id >= Node + 1)
+		int first = k;
+		while (k <= number_of_links && Link[k].internal_from_node_id == Node)
+			k++;
+		if (k > first)
 		{
+			FirstLinkFrom[Node] = first;
 			LastLinkFrom[Node] = k - 1;
-			Node = internal_from_node_id;
-			FirstLinkFrom[Node] = k;
 		}
-
-		else if (internal_from_node_id < Node)
-		{
-			// CRITICAL: links MUST be sorted ascending by internal_from_node_id, or
-			// the FirstLinkFrom/LastLinkFrom (CSR) adjacency below is built WRONG ->
-			// shortest-path expands the wrong links -> corrupted predecessor tree
-			// (cycles) -> skipped ODs / wrong volumes. Warn loudly instead of
-			// silently corrupting (the original fatal check was disabled).
-			static int s_unsorted_warned = 0;
-			if (s_unsorted_warned < 5)
-			{
-				printf("WARNING: link.csv is NOT sorted by from_node (link seq %d from node %d appears after node %d). "
-				       "CSR adjacency will be corrupted -> SORT links ascending by from_node_id!\n",
-				       k, internal_from_node_id, Node);
-				s_unsorted_warned++;
-			}
-		}
-		else if (internal_from_node_id > Node + 1)
-		{
-			// InputWarning("link file '%s' has no links out from "
-			//	"nodes %d through %d. \n", LinksFileName, Node + 1, internal_from_node_id - 1);
-			LastLinkFrom[Node] = k - 1;
-			for (Node++; Node < internal_from_node_id; Node++)
-			{
-				FirstLinkFrom[Node] = 0;
-				LastLinkFrom[Node] = -1;
-			}
-			FirstLinkFrom[Node] = k; /* Node equals internal_from_node_id now. */
-		}
-	}
-
-	if (Node == no_nodes)
-	{
-		LastLinkFrom[Node] = number_of_links; /* Now Node equals no_nodes in any case */
-	}
-	else
-	{
-		// InputWarning("link file '%s' has no links out from "
-		//	"nodes %d through %d. \n", LinksFileName, Node + 1, no_nodes);
-		LastLinkFrom[Node] = k - 1;
-		for (Node++; Node <= no_nodes; Node++)
+		else
 		{
 			FirstLinkFrom[Node] = 0;
 			LastLinkFrom[Node] = -1;
@@ -6390,13 +6401,11 @@ static void InitLinkPointers(char* LinksFileName)
 
 	if (g_tap_log_file == 1)
 	{
-		for (Node = 1; Node <= no_nodes; Node++)
-		{ 
-			fprintf(logfile, "node_id = %d, FirstLinkFrom = %d, LastLinkFrom = %d \n", g_map_node_seq_no_2_external_node_id[Node], FirstLinkFrom[Node], FirstLinkFrom[Node]);
-
-		}
+		for (int Node = 1; Node <= no_nodes; Node++)
+			fprintf(logfile, "node_id = %d, FirstLinkFrom = %d, LastLinkFrom = %d \n",
+				g_map_node_seq_no_2_external_node_id[Node],
+				FirstLinkFrom[Node], LastLinkFrom[Node]);
 	}
-
 }
 
 
@@ -7652,10 +7661,27 @@ int read_vehicle_file(vector<shared_ptr<CAgent_Simu>>& agents) {
 		agent->agent_uid = agent_id;
 		agent->departure_time_in_min = departure_time;
 	 
-		vector<int> path_sequence;  // store link sequence id k 
-		if (g_ParserIntSequence(link_ids, path_sequence) > 0) {
-			agent->path_link_sequence = path_sequence;
-			agent->initializeTimes(path_sequence.size());
+		vector<int> external_path_sequence;
+		if (g_ParserIntSequence(link_ids, external_path_sequence) > 0) {
+			vector<int> internal_path_sequence;
+			internal_path_sequence.reserve(external_path_sequence.size());
+			bool valid_path = true;
+			for (size_t i = 0; i < external_path_sequence.size(); i++)
+			{
+				int internal_link_id = LinkSeqFromExternal(external_path_sequence[i]);
+				if (internal_link_id == 0)
+				{
+					printf("WARNING: vehicle %d references unknown external link_id %d; skipped.\n",
+						agent_id, external_path_sequence[i]);
+					valid_path = false;
+					break;
+				}
+				internal_path_sequence.push_back(internal_link_id);
+			}
+			if (!valid_path)
+				continue;
+			agent->path_link_sequence = internal_path_sequence;
+			agent->initializeTimes(internal_path_sequence.size());
 			agent->agent_seq_no = agents.size();
 			parser_vehicle.GetValueByFieldName("o_zone_id", agent->o_zone_id);
 			parser_vehicle.GetValueByFieldName("d_zone_id", agent->d_zone_id);
@@ -7817,11 +7843,13 @@ private:
 		return string(buffer);
 	}
 
-	string vectorToString(const vector<int>& vec, const string& delimiter = ";") {
+	string linkPathToExternalString(const vector<int>& path, const string& delimiter = ";") {
 		stringstream ss;
-		for (size_t i = 0; i < vec.size(); ++i) {
+		for (size_t i = 0; i < path.size(); ++i) {
 			if (i > 0) ss << delimiter;
-			ss << vec[i];
+			int internal_link_id = path[i];
+			if (internal_link_id >= 1 && internal_link_id <= number_of_links)
+				ss << Link[internal_link_id].external_link_id;
 		}
 		return ss.str();
 	}
@@ -7891,7 +7919,7 @@ public:
 			<< agent->d_zone_id << ","
 			<< agent->distannce << ","
 			<< agent->current_link_seq_no << ","
-			<< vectorToString(agent->path_link_sequence) << ","
+			<< linkPathToExternalString(agent->path_link_sequence) << ","
 			<< formatTimesVector(agent->link_arrival_times, l_demand_period_starting_hours) << ","
 			<< formatTimesVector(agent->link_departure_times, l_demand_period_starting_hours) << ","
 			<< getTrajectoryGeometry(agent->path_link_sequence) << "\n";
@@ -8280,7 +8308,7 @@ int SimulationAPI()
 	no_nodes = get_number_of_nodes_from_node_file(no_zones, FirstThruNode);
 	number_of_links = get_number_of_links_from_link_file();
 
-	printf("# of nodes= %d, largest zone id = %d, First Through Node (Seq No) = %d, number of links = %d\n", no_nodes, no_zones,
+	printf("# of nodes= %d, # of zones = %d, First Through Node (Seq No) = %d, number of links = %d\n", no_nodes, no_zones,
 		FirstThruNode, number_of_links);
 
 	fprintf(summary_log_file, "no_nodes= %d, no_zones = %d, FirstThruNode (seq No) = %d, number_of_links = %d\n", no_nodes, no_zones,
@@ -8758,7 +8786,7 @@ int mapmatchingAPI() {
 	no_nodes = get_number_of_nodes_from_node_file(no_zones, FirstThruNode);
 	number_of_links = get_number_of_links_from_link_file();
 
-	printf("# of nodes= %d, largest zone id = %d, First Through Node (Seq No) = %d, number of links = %d\n", no_nodes, no_zones,
+	printf("# of nodes= %d, # of zones = %d, First Through Node (Seq No) = %d, number of links = %d\n", no_nodes, no_zones,
 		FirstThruNode, number_of_links);
 
 	fprintf(summary_log_file, "no_nodes= %d, no_zones = %d, FirstThruNode (seq No) = %d, number_of_links = %d\n", no_nodes, no_zones,
@@ -8824,7 +8852,7 @@ int mapmatchingAPI() {
 
 	std::map<int, GDPoint> zoneNodeCoords;
 
-	for (int i = 0; i < FirstThruNode; i++)  // TAZ centriod only 
+	for (int i = 1; i <= no_zones; i++)  // zones-first dense centroid nodes
 	{
 		GDPoint pt;
 		pt.x = g_node_vector[i].x;
@@ -8869,11 +8897,17 @@ int mapmatchingAPI() {
 			destinationNodeId);
 		gpsTraces_originNodeId[agentId] = originNodeId;
 		gpsTraces_destinationNodeId[agentId] = destinationNodeId;
-		gpsTraces_RouteId[agentId] = ODRouteIndices[originNodeId][destinationNodeId].size();
-		ODRouteIndices[originNodeId][destinationNodeId].push_back(1); 
+		int originZoneSeq = NodeSeqFromExternal(originNodeId);
+		int destinationZoneSeq = NodeSeqFromExternal(destinationNodeId);
+		if (originZoneSeq < 1 || originZoneSeq > no_zones ||
+			destinationZoneSeq < 1 || destinationZoneSeq > no_zones)
+			continue;
+		gpsTraces_RouteId[agentId] =
+			(int)ODRouteIndices[originZoneSeq][destinationZoneSeq].size();
+		ODRouteIndices[originZoneSeq][destinationZoneSeq].push_back(1);
 
-		if (ODRouteIndices[originNodeId][destinationNodeId].size() > max_route_size)
-			max_route_size = ODRouteIndices[originNodeId][destinationNodeId].size(); 
+		if (ODRouteIndices[originZoneSeq][destinationZoneSeq].size() > (size_t)max_route_size)
+			max_route_size = (int)ODRouteIndices[originZoneSeq][destinationZoneSeq].size();
 
 	}
 
@@ -8911,8 +8945,10 @@ int mapmatchingAPI() {
 		if (gpsTraces_originNodeId[agentId] >= 1 && gpsTraces_destinationNodeId[agentId] >= 1)
 		{
 			// external GPS node ids -> internal seq (renumbering boundary)
-			int Orig = g_map_external_node_id_2_node_seq_no[gpsTraces_originNodeId[agentId]];
-			int Dest = g_map_external_node_id_2_node_seq_no[gpsTraces_destinationNodeId[agentId]];
+			int Orig = NodeSeqFromExternal(gpsTraces_originNodeId[agentId]);
+			int Dest = NodeSeqFromExternal(gpsTraces_destinationNodeId[agentId]);
+			if (Orig < 1 || Orig > no_zones || Dest < 1 || Dest > no_zones)
+				continue;
 			std::vector<int> currentLinkSequence; // Temporary vector to store link indices
 
 
