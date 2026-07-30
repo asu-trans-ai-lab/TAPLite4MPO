@@ -15,7 +15,7 @@ try:  # single-source the version from installed metadata (pyproject)
     from importlib.metadata import version as _pkg_version
     __version__ = _pkg_version("taplite4mpo")
 except Exception:  # repo checkout without install
-    __version__ = "0.3.0"
+    __version__ = "0.4.0rc1"
 
 __all__ = ["TAPCI", "Network", "Demand", "Scenario", "AssignmentEngine", "Result",
            "__version__"]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taplite4mpo"
-version = "0.3.0"
+version = "0.4.0rc1"
 description = "Open C++ static traffic-assignment kernel (GMNS) for MPO/DOT models, with a Python QA/orchestration layer (dtalite_qa) and a kernel driver (pytaplite)."
 readme = "README.md"
 requires-python = ">=3.8"

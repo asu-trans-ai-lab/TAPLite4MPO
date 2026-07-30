@@ -1,0 +1,21 @@
+name: dtalite_pipeline
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - vc
+  - vc14_runtime
+  - vs2015_runtime
+  - pandas
+  - numpy
+  - geopandas
+  - shapely
+  - fiona
+  - pyproj
+  - psutil
+  - tqdm
+  - pip
+  - pip:
+      - openmatrix
+      # setup_environment.bat installs the bundled Python 3.11 Windows wheel
+      # from ../wheels/ after creating or updating this environment.

@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.test-artifacts/
+.integration-artifacts/
+.validation/
+.venv/
+venv/
+*.log
+setup/Miniconda3-latest-Windows-x86_64.exe

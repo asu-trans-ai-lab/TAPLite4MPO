@@ -62,13 +62,17 @@ build/
 wheelhouse/
 dist_release/
 
-# Local NVTA workflow packages, agency model data, and source archives
-nvta/
+# Generated NVTA client archives (the unpacked nvta/ package is tracked)
+nvta/*.zip
+nvta/*.zip.sha256
 nvta_dtalite_package/
 updated_nvta_dtalite_package/
 nvta_dtalite_package_*.zip
 DTALite_*.zip
 legacy-profiling-scripts/
+
+# Preserved metadata from the formerly embedded workflow repository
+.local-backups/
 
 # per-run folders created by examples/arc_atlanta/arc_pipeline.py
 examples/**/gmns_run/
