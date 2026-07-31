@@ -397,6 +397,9 @@ def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
               f"kernel rc={r.returncode} via {via}")
         if r.returncode != 0:
             return _finish(outdir, case, t0, as_json)
+        # Result.links is a full parsed copy of link_performance.csv. Release it
+        # before the independent output and report gates parse MPO-scale files.
+        del r
     except FileNotFoundError as exc:
         _gate("native assignment", False, str(exc).splitlines()[0])
         return _finish(outdir, case, t0, as_json)
@@ -415,6 +418,10 @@ def run_selfdemo(case="chicago_sketch", output=None, keep=False, quick=False,
     metrics, volumes, perf = _metrics(run_dir)
     if not _check_outputs(run_dir, structure, perf):
         return _finish(outdir, case, t0, as_json)
+    # MPO link outputs can be hundreds of MB when geometry is included. The
+    # report builder streams/reloads that file, so do not retain the first full
+    # parsed copy for the remainder of the demo.
+    del perf
 
     # 6) manifest + deep report (reuse the existing layers)
     try:
