@@ -120,7 +120,7 @@ class WheelDiscoveryTests(unittest.TestCase):
         self.assertEqual(len(wheels), 1)
         self.assertEqual(
             wheels[0].name,
-            "taplite4mpo-0.4.0rc1-cp311-cp311-win_amd64.whl",
+            "taplite4mpo-0.4.0rc2-cp311-cp311-win_amd64.whl",
         )
 
 

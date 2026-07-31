@@ -1,19 +1,19 @@
 # TAPLite engine wheel
 
-- Build date: 2026-07-29
+- Build date: 2026-07-31
 - Source branch: `taplite4nvta`
-- Source commit: `a2366c81f1404b91b2025be7cb1026ea9b3f386b`
+- Source commit: `c49b4efad56b4d06a161fcdcd1e32b1206d6a3ea`
 - Distribution: `taplite4mpo`
-- Prerelease version: `0.4.0rc1`
+- Prerelease version: `0.4.0rc2`
 - Python ABI: CPython 3.11
 - Platform: Windows x64
 - Native extension: `pytaplite/_native.cp311-win_amd64.pyd`
 - Compiler family: Microsoft Visual C++
 - OpenMP: required and enabled
-- Output: `wheels/taplite4mpo-0.4.0rc1-cp311-cp311-win_amd64.whl`
-- Size: 4,940,052 bytes
+- Output: `wheels/taplite4mpo-0.4.0rc2-cp311-cp311-win_amd64.whl`
+- Size: 4,940,139 bytes
 - SHA-256:
-  `C96114B60DCD9584CA1E2A6875AB1B3DD7139EB7379C622A96DE9F69873514A5`
+  `183A1520595485803D23F230FF21F49A3979C2B52854D25278323A3C7CDE1BFD`
 
 The wheel contains the `dtalite_qa`, `taplite4mpo`, and `pytaplite` Python
 namespaces plus the compiled assignment kernel. The NVTA workflow starts a
@@ -24,10 +24,19 @@ standalone DLL or executable.
 
 Validation:
 
-- wheel metadata reports `taplite4mpo 0.4.0rc1`
+- wheel metadata reports `taplite4mpo 0.4.0rc2`
 - all three Python namespaces are present
 - isolated CPython 3.11 import loaded the packaged `_native` extension
 - OpenMP two-worker probe returned two workers
-- NVTA workflow test suite: 32 passed
-- wheel-backed child-process assignment on the sparse external-ID fixture
-  returned `0` and produced four loaded-link results
+- observed-QVDF native regression suite: 8 passed
+- smoothstep profile-shoulder regression passed against the packaged kernel
+- NVTA workflow test suite: 35 passed
+- QVDF runtime source check: packaged `resources/link_qvdf.csv`
+- public golden-network regression: all 18 cases passed
+- release-smoke gates G1-G7 passed against the packaged native kernel
+- ARC quick smoke: assignment completed and validation parsed successfully
+
+This managed Windows machine blocked launching a newly compiled standalone
+executable. The standalone kernel still compiled successfully; regression and
+release-smoke kernel calls therefore used the wheel's `_native` engine in a
+fresh Python process for each run.

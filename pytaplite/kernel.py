@@ -18,7 +18,7 @@ try:  # single-source: the installed distribution version (pyproject.toml)
     from importlib.metadata import version as _pkg_version
     __version__ = _pkg_version("taplite4mpo")
 except Exception:  # repo checkout without install
-    __version__ = "0.4.0rc1"
+    __version__ = "0.4.0rc2"
 
 # --- in-process kernel via a C-ABI shared library (the Path4GMNS / DTALite pattern) ---------
 # The kernel is built as DTALite.dll / libDTALite.so / libDTALite.dylib exporting the C symbol

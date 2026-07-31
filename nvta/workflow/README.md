@@ -67,7 +67,7 @@ conda activate dtalite_pipeline
 The setup creates a Python 3.11 environment and installs the bundled engine:
 
 ```text
-../wheels/taplite4mpo-0.4.0rc1-cp311-cp311-win_amd64.whl
+../wheels/taplite4mpo-0.4.0rc2-cp311-cp311-win_amd64.whl
 ```
 
 The wheel contains `taplite4mpo`, `pytaplite`, `dtalite_qa`, and the compiled
@@ -280,6 +280,9 @@ python run_postprocessing.py "C:\path\to\scenario_or_catalog" `
 | `--time-periods` | `am md pm nt` | One or more of `am`, `md`, `pm`, `nt` | Period names, in the same order as `--period-times`. |
 | `--period-times` | See below | `HHMM_HHMM` values | One range for every selected time period. |
 | `--dry-run` | Off | Flag present or absent | Perform preparation and preflight but skip kernel execution. |
+
+When `--vdf-type qvdf` is selected, calibration parameters are read directly
+from `src/dtalite4cube/resources/link_qvdf.csv`.
 
 ### Boolean values
 

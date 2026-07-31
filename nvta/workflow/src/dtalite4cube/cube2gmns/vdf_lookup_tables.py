@@ -1,7 +1,14 @@
 ﻿from __future__ import annotations
 
-# Generated from root link_bpr.csv and link_qvdf.csv.
-# VDF code keys are normalized to strings to avoid int/string lookup mismatches.
+import csv
+from pathlib import Path
+
+
+# BPR values remain embedded for compatibility. Runtime QVDF values are loaded
+# from resources/link_qvdf.csv so that the client package has one authoritative
+# calibration source.
+
+QVDF_CSV_PATH = Path(__file__).resolve().parents[1] / "resources" / "link_qvdf.csv"
 
 BPR_VDF_DICT = {
     '0': {
@@ -2210,6 +2217,57 @@ QVDF_VDF_DICT = {
 }
 
 
+def _load_qvdf_csv(csv_path: Path = QVDF_CSV_PATH) -> dict:
+    """Load QVDF parameters keyed by vdf_code from the packaged CSV."""
+    with csv_path.open(newline="", encoding="utf-8-sig") as stream:
+        reader = csv.DictReader(stream)
+        fieldnames = list(reader.fieldnames or [])
+        if "vdf_code" not in fieldnames:
+            raise ValueError(f"QVDF CSV is missing the vdf_code column: {csv_path}")
+
+        parameter_fields = [
+            field_name
+            for field_name in fieldnames
+            if field_name.startswith("QVDF_")
+        ]
+        if not parameter_fields:
+            raise ValueError(f"QVDF CSV has no QVDF parameter columns: {csv_path}")
+
+        qvdf_by_code = {}
+        for row_number, row in enumerate(reader, start=2):
+            data_type = (row.get("data_type") or "").strip().lower()
+            if data_type and data_type != "vdf_code":
+                continue
+
+            vdf_code = (row.get("vdf_code") or "").strip()
+            if not vdf_code:
+                raise ValueError(
+                    f"QVDF CSV row {row_number} has no vdf_code: {csv_path}"
+                )
+            if vdf_code in qvdf_by_code:
+                raise ValueError(
+                    f"QVDF CSV contains duplicate vdf_code {vdf_code}: {csv_path}"
+                )
+
+            parameters = {}
+            for field_name in parameter_fields:
+                raw_value = (row.get(field_name) or "").strip()
+                if not raw_value:
+                    continue
+                try:
+                    parameters[field_name] = float(raw_value)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"QVDF CSV row {row_number} has a nonnumeric "
+                        f"{field_name} value: {raw_value!r}"
+                    ) from exc
+            qvdf_by_code[vdf_code] = parameters
+
+    if not qvdf_by_code:
+        raise ValueError(f"QVDF CSV contains no vdf_code rows: {csv_path}")
+    return qvdf_by_code
+
+
 def _normalize_vdf_dict(vdf_dict: dict) -> dict:
     return {str(key): value for key, value in vdf_dict.items()}
 
@@ -2219,10 +2277,10 @@ QVDF_VDF_DICT = _normalize_vdf_dict(QVDF_VDF_DICT)
 
 
 def get_vdf_dict(vdf_type: str = "bpr") -> dict:
-    """Return the selected VDF parameter dictionary."""
+    """Return BPR defaults or QVDF parameters from the packaged CSV."""
     normalized = vdf_type.lower()
     if normalized == "bpr":
         return BPR_VDF_DICT
     if normalized == "qvdf":
-        return QVDF_VDF_DICT
+        return _load_qvdf_csv()
     raise ValueError("vdf_type must be either 'bpr' or 'qvdf'")

@@ -16,6 +16,8 @@ file is a sorted NumPy structured array keyed by `(from_node_id, to_node_id)`.
 - `from_node_id`, `to_node_id`: original pair, stored as unsigned 32-bit integers
 - `t0_hour`, `t2_hour`, `t3_hour`: completed boundaries stored as float32 hours
 
+No class estimate, source label, uncertainty field, or other reference column is included.
+
 The float32 export changes the source values by far less than one second; the exact maximum
 round-trip difference is recorded in `metadata.json`.
 
@@ -37,8 +39,3 @@ network[["t0_hour", "t2_hour", "t3_hour"]] = values
 
 `found` identifies network pairs that exist in the lookup. The files are sorted and contain
 one unique row per directed node pair.
-
-The packaged workflow applies this lookup automatically during network conversion. AM, MD,
-and PM `link.csv` files contain `t0_hour`, `t2_hour`, and `t3_hour` for matched pairs.
-Unmatched pairs and periods without a lookup table, including NT, keep those columns blank
-so the native kernel uses its analytical fallback.

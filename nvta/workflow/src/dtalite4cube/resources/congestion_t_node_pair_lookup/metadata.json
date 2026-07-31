@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-07-29T20:29:43.609320-07:00",
+  "created_at": "2026-07-29T21:35:06.729056-07:00",
   "format": "NumPy .npy structured array, sorted by packed_key",
   "key_definition": "(uint64(from_node_id) << 32) | uint64(to_node_id)",
   "record_dtype": [
@@ -31,52 +31,52 @@
   "load_pattern": "numpy.load(path, mmap_mode='r', allow_pickle=False)",
   "periods": {
     "AM": {
-      "source_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-network-fill\\period_link_files\\am\\link.csv",
-      "lookup_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-network-fill\\node_pair_lookup\\am_node_pair_boundaries.npy",
+      "source_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-direct-spatial-ml\\period_link_files\\am\\link.csv",
+      "lookup_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-direct-spatial-ml\\node_pair_lookup\\am_node_pair_boundaries.npy",
       "rows": 49329,
       "dtype": "[('packed_key', '<u8'), ('from_node_id', '<u4'), ('to_node_id', '<u4'), ('t0_hour', '<f4'), ('t2_hour', '<f4'), ('t3_hour', '<f4')]",
-      "source_size_bytes": 60676032,
+      "source_size_bytes": 64706556,
       "lookup_size_bytes": 1381468,
-      "compression_ratio_vs_source": 0.02276793578063905,
+      "compression_ratio_vs_source": 0.02134973772982138,
       "minimum_from_node_id": 1,
       "maximum_from_node_id": 54554,
       "minimum_to_node_id": 1,
       "maximum_to_node_id": 54554,
       "max_float32_round_trip_error_minutes": 4.904696488949867e-05,
-      "source_sha256": "547347965404e154ab9b048b88095124a54e87555fb3ea3860e775657b4759c7",
-      "lookup_sha256": "ffc3f1ec8b4f8c29501bf1ec39f8bef179f96f58db4ef1e3baf4be7c8bc1c4ca"
+      "source_sha256": "ff2d566e082d06f1a38253eaa241b9e49bdb760657d1cdc7f7d6b6d7bbb80c67",
+      "lookup_sha256": "277da61448ba0c44ecf8931d2770198a4293cd43a795d1eccff918836de6905c"
     },
     "MD": {
-      "source_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-network-fill\\period_link_files\\md\\link.csv",
-      "lookup_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-network-fill\\node_pair_lookup\\md_node_pair_boundaries.npy",
+      "source_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-direct-spatial-ml\\period_link_files\\md\\link.csv",
+      "lookup_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-direct-spatial-ml\\node_pair_lookup\\md_node_pair_boundaries.npy",
       "rows": 49336,
       "dtype": "[('packed_key', '<u8'), ('from_node_id', '<u4'), ('to_node_id', '<u4'), ('t0_hour', '<f4'), ('t2_hour', '<f4'), ('t3_hour', '<f4')]",
-      "source_size_bytes": 61010878,
+      "source_size_bytes": 65059838,
       "lookup_size_bytes": 1381664,
-      "compression_ratio_vs_source": 0.02264619106120715,
+      "compression_ratio_vs_source": 0.021236818941971543,
       "minimum_from_node_id": 1,
       "maximum_from_node_id": 54554,
       "minimum_to_node_id": 1,
       "maximum_to_node_id": 54554,
       "max_float32_round_trip_error_minutes": 5.630782325738437e-05,
-      "source_sha256": "fe157df0e6b1a2898a133f89d82996f0871928925f2c5d974ed44494121341f6",
-      "lookup_sha256": "dfc1241f5ca7b445a0ce0c3c004522e2b0e5d10f94b7d1e51ab6f6269262c4bb"
+      "source_sha256": "8960c4ddeb6a364ec5a8e0dea7a7b02b23801aa340d499beb2783b65caada9a9",
+      "lookup_sha256": "0b19d2b3cc4b65a7213c3b7e644de5778212a4ce2c50cada7bacefd6df6d2578"
     },
     "PM": {
-      "source_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-network-fill\\period_link_files\\pm\\link.csv",
-      "lookup_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-network-fill\\node_pair_lookup\\pm_node_pair_boundaries.npy",
+      "source_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-direct-spatial-ml\\period_link_files\\pm\\link.csv",
+      "lookup_path": "C:\\Users\\mabbas10\\Projects\\CBI-NVTA\\NVTA_internal\\nvta-cbi-package\\outputs\\t2-ml-application\\t2-ml-application-2026-07-29-direct-spatial-ml\\node_pair_lookup\\pm_node_pair_boundaries.npy",
       "rows": 49329,
       "dtype": "[('packed_key', '<u8'), ('from_node_id', '<u4'), ('to_node_id', '<u4'), ('t0_hour', '<f4'), ('t2_hour', '<f4'), ('t3_hour', '<f4')]",
-      "source_size_bytes": 60917892,
+      "source_size_bytes": 64909919,
       "lookup_size_bytes": 1381468,
-      "compression_ratio_vs_source": 0.022677541107298985,
+      "compression_ratio_vs_source": 0.021282848927911928,
       "minimum_from_node_id": 1,
       "maximum_from_node_id": 54554,
       "minimum_to_node_id": 1,
       "maximum_to_node_id": 54554,
       "max_float32_round_trip_error_minutes": 5.722040675948392e-05,
-      "source_sha256": "32cf67d375f8f16dd5c325e98f09d5bdbfb55ba516135fa86ba43848ec6b3153",
-      "lookup_sha256": "27aed9cfbdd99b58c27d434b98c76a8681404149641029587013e4345d936bde"
+      "source_sha256": "7ba611e93704be5e14fd0719dcba006d40e03547ae2ffbaf235c3d0d5ae55956",
+      "lookup_sha256": "6760cf9e679bfaa0896331f650c53f82769d097be92912e4ed833c23e34759d1"
     }
   }
 }

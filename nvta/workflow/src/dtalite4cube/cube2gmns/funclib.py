@@ -58,7 +58,6 @@ from .fieldnameconfig import (
 from .fieldnameconfig import cube_node_mapping, cube_base_link_mapping, cube_link_dependent_mapping
 from .fieldnameconfig import dtalite_node_mapping, dtalite_base_link_mapping, dtalite_additional_link_mapping
 from .netconfig import alpha_dict, beta_dict, allowed_uses_dict, speed_class_dict, capacity_class_dict
-from .NVTA_qvdf_calibration_results_dict import NVTA_qvdf_dict
 from .vdf_lookup_tables import get_vdf_dict
 from datetime import datetime, timedelta
 

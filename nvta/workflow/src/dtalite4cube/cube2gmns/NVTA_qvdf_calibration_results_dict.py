@@ -1,3 +1,9 @@
+"""Legacy QVDF calibration snapshot retained for reference only.
+
+The workflow runtime reads ``resources/link_qvdf.csv`` instead of importing
+this dictionary.
+"""
+
 NVTA_qvdf_dict = {'101': {'data_type': 'vdf_code',
                           'link_id': '',
                           'tmc_corridor_name': '',
