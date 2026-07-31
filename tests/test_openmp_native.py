@@ -263,7 +263,12 @@ class SharedLibraryExportTests(unittest.TestCase):
             library_name = "libDTALite.dylib"
         else:
             library_name = "libDTALite.so"
-        library_path = REPO / "pytaplite" / library_name
+        configured = os.environ.get("DTALITE_DLL")
+        library_path = (
+            Path(configured)
+            if configured
+            else REPO / "pytaplite" / library_name
+        )
         if not library_path.is_file():
             self.skipTest("the optional C-ABI shared library is not built")
 

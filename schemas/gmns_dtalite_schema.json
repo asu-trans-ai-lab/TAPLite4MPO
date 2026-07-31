@@ -5,7 +5,8 @@
     "speed": "mph (vdf_free_speed_mph, cutoff_speed); 'free_speed' is km/h unless overridden",
     "capacity": "veh/hour/lane",
     "travel_time_output": "minutes",
-    "volume": "vehicles over the analysis period"
+    "volume": "vehicles over the analysis period",
+    "time_of_day": "decimal hour (link.csv 't0_hour', 't2_hour', 't3_hour')"
   },
   "files": {
     "link.csv": {
@@ -135,6 +136,27 @@
           "required": false,
           "default": 4,
           "description": "QVDF queue parameter"
+        },
+        {
+          "name": "t0_hour",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "optional observed QVDF episode start as decimal hour-of-day; with valid t2_hour and t3_hour, determines the fraction of analytical P projected before t2"
+        },
+        {
+          "name": "t2_hour",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "observed QVDF trough time as decimal hour-of-day; link- and period-specific; blank/absent uses the assignment-period midpoint; derived t0/t3 are clamped to the assignment-period bounds"
+        },
+        {
+          "name": "t3_hour",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "optional observed QVDF episode end as decimal hour-of-day; with valid t0_hour and t2_hour, determines the fraction of analytical P projected after t2"
         },
         {
           "name": "allowed_use",

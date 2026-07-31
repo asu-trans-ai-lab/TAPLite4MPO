@@ -31,6 +31,11 @@ LINK_DEFAULTS = {
 }
 # QVDF parameters required to be meaningful when vdf_type == 2.
 LINK_QVDF_COLS = ["vdf_cp", "vdf_cd", "vdf_n", "vdf_s"]
+# Optional observed trough time used to position the QVDF speed profile. Blank
+# or absent values use the configured assignment-period midpoint.
+LINK_QVDF_T0_COL = "t0_hour"
+LINK_QVDF_T2_COL = "t2_hour"
+LINK_QVDF_T3_COL = "t3_hour"
 
 # node.csv -------------------------------------------------------------------
 NODE_REQUIRED = ["node_id", "zone_id", "x_coord", "y_coord"]
