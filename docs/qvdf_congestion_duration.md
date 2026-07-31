@@ -65,6 +65,16 @@ as before. The reported `t0` and `t3` and the five-minute profile are clipped
 to the configured assignment-period band. When clipping occurs, `P` remains
 the analytical QVDF duration and can therefore exceed `t3-t0`; the in-band
 profile becomes asymmetric but retains its minimum speed exactly at `t2`.
+
+Within the assignment period but outside the queue window, the five-minute
+profile connects free-flow speed `vf` to
+`vb = max(congestion_ref_speed, avg_queue_speed)` with the parameter-free cubic
+smoothstep `psi(r) = r^2(3-2r)`. Before `t0`,
+`r = clip((t-period_start)/max(0.001,t0-period_start),0,1)` and
+`v(t) = vf + (vb-vf)*psi(r)`. After `t3`,
+`r = clip((t-t3)/max(0.001,period_end-t3),0,1)` and
+`v(t) = vb + (vf-vb)*psi(r)`. This replaces the former linear connectors
+without changing the queue shape inside `[t0,t3]` or adding a calibrated input.
 A transparent reference implementation + spreadsheet are in
 [`../test_networks/qvdf_reference/`](../test_networks/qvdf_reference/)
 (`qvdf_ref.py`, `QVDF_clean_reference.xlsx`) — use it to check the kernel's `P`, speeds,

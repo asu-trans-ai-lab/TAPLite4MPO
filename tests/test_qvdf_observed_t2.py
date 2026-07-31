@@ -175,6 +175,100 @@ def _run_variant(
     "no DTALite kernel found (set DTALITE_DLL or DTALITE_EXE)",
 )
 class ObservedQvdfT2Tests(unittest.TestCase):
+    def test_outside_queue_window_uses_cubic_smoothstep(self):
+        temporary, result, rows = _run_variant()
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        period_start = 6.0
+        period_end = 9.0
+
+        def decimal_hour(column):
+            clock = column.removeprefix("spd_mph_")
+            hour, minute = map(int, clock.split(":"))
+            return hour + minute / 60.0
+
+        for link_id, row in rows.items():
+            free_speed = float(row["free_speed_mph"])
+            boundary_speed = max(
+                float(row["congestion_ref_speed_mph"]),
+                float(row["avg_queue_speed_mph"]),
+            )
+            t0 = float(row["t0"])
+            t3 = float(row["t3"])
+            speed_columns = [
+                column for column in row if column.startswith("spd_mph_")
+            ]
+
+            transitions = (
+                (
+                    "before",
+                    [
+                        column
+                        for column in speed_columns
+                        if period_start < decimal_hour(column) < t0
+                    ],
+                    (period_start + t0) / 2.0,
+                ),
+                (
+                    "after",
+                    [
+                        column
+                        for column in speed_columns
+                        if t3 < decimal_hour(column) < period_end
+                    ],
+                    (t3 + period_end) / 2.0,
+                ),
+            )
+            for label, candidates, midpoint in transitions:
+                with self.subTest(link_id=link_id, transition=label):
+                    self.assertTrue(candidates)
+                    column = min(
+                        candidates,
+                        key=lambda name: abs(decimal_hour(name) - midpoint),
+                    )
+                    t = decimal_hour(column)
+                    if label == "before":
+                        factor = (t - period_start) / max(
+                            0.001, t0 - period_start
+                        )
+                        linear_speed = (
+                            (1.0 - factor) * free_speed
+                            + factor * boundary_speed
+                        )
+                        start_speed, end_speed = free_speed, boundary_speed
+                    else:
+                        factor = (t - t3) / max(0.001, period_end - t3)
+                        linear_speed = (
+                            (1.0 - factor) * boundary_speed
+                            + factor * free_speed
+                        )
+                        start_speed, end_speed = boundary_speed, free_speed
+
+                    factor = min(1.0, max(0.0, factor))
+                    smooth_factor = factor * factor * (3.0 - 2.0 * factor)
+                    expected_speed = (
+                        (1.0 - smooth_factor) * start_speed
+                        + smooth_factor * end_speed
+                    )
+                    actual_speed = float(row[column])
+
+                    self.assertAlmostEqual(
+                        actual_speed, expected_speed, delta=0.0011
+                    )
+                    self.assertGreater(
+                        abs(actual_speed - linear_speed),
+                        0.05,
+                    )
+                    self.assertGreaterEqual(
+                        actual_speed,
+                        min(free_speed, boundary_speed) - 0.0011,
+                    )
+                    self.assertLessEqual(
+                        actual_speed,
+                        max(free_speed, boundary_speed) + 0.0011,
+                    )
+
     def test_observed_t2_shifts_only_the_time_profile(self):
         temporary, result, rows = _run_variant()
         self.addCleanup(temporary.cleanup)

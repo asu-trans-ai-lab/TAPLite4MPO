@@ -7085,6 +7085,12 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 	double td_w = 0;
 	//step scan the entire analysis period
 	Severe_Congestion_P = 0;
+	double boundary_speed = fmax(congestion_ref_speed, avg_queue_speed);
+	auto smoothstep01 = [](double value)
+		{
+			double position = fmin(1.0, fmax(0.0, value));
+			return position * position * (3.0 - 2.0 * position);
+		};
 
 
 	for (int t_in_min = demand_period_starting_hours * 60; t_in_min <= demand_period_ending_hours * 60; t_in_min += 5)  // 5 min interval
@@ -7135,13 +7141,17 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 		{
 			td_queue = 0;
 			double factor = (t - demand_period_starting_hours) / fmax(0.001, t0 - demand_period_starting_hours);
-			td_speed = (1 - factor) * Link[k].free_speed + factor * fmax(congestion_ref_speed, avg_queue_speed);
+			double smooth_factor = smoothstep01(factor);
+			td_speed = (1.0 - smooth_factor) * Link[k].free_speed
+				+ smooth_factor * boundary_speed;
 		}
 		else  // t> t3
 		{
 			td_queue = 0;
 			double factor = (t - t3) / fmax(0.001, demand_period_ending_hours - t3);
-			td_speed = (1 - factor) * fmax(congestion_ref_speed, avg_queue_speed) + (factor)*Link[k].free_speed;
+			double smooth_factor = smoothstep01(factor);
+			td_speed = (1.0 - smooth_factor) * boundary_speed
+				+ smooth_factor * Link[k].free_speed;
 		}
 
 		// dtalog.output() << "td_queue t" << t << " =  " << td_queue << ", speed =" << td_speed << '\n';
