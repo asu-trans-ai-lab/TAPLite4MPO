@@ -205,6 +205,16 @@ def _vdf_source_field(vdf_type, vdf_param, period_sequence):
     return _qvdf_source_field(vdf_param, period_sequence)
 
 
+def _resolve_vdf_code(vdf_dict, link_type):
+    """Use an exact link-type row, or the CSV's all-network fallback row."""
+    link_type_vdf_key = str(link_type)
+    if link_type_vdf_key in vdf_dict:
+        return link_type_vdf_key
+    if "all" in vdf_dict:
+        return "all"
+    return link_type_vdf_key
+
+
 def _node_value(node, semantic_key):
     if hasattr(node, semantic_key):
         return getattr(node, semantic_key)
@@ -589,12 +599,9 @@ def _loadLinks(
             sys.exit(f'ERROR: Invalid speed unit ({speed_unit}). It must be either "mph" or "kph".')
 
         vdf_fields = bpr_vdf_params if vdf_type == 'bpr' else qvdf_params
-        link_type_vdf_key = str(link_type)
+        link_type_vdf_key = _resolve_vdf_code(vdf_dict, link_type)
         if link_type_vdf_key not in vdf_dict:
-            if "all" in vdf_dict:
-                link_type_vdf_key = "all"
-            else:
-                print(f"WARNING: vdf_code/link_type {link_type_vdf_key} not found in VDF dictionary.")
+            print(f"WARNING: vdf_code/link_type {link_type_vdf_key} not found in VDF dictionary.")
 
         vdf_plf = 1
         for vdf_field in vdf_fields:

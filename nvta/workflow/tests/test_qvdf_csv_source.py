@@ -22,6 +22,8 @@ class QvdfCsvSourceTests(unittest.TestCase):
         loaded = get_vdf_dict("qvdf")
 
         self.assertEqual(set(loaded), expected_codes)
+        self.assertEqual(rows[-1]["vdf_code"], "all")
+        self.assertEqual(list(loaded)[-1], "all")
         source_101 = next(row for row in rows if row["vdf_code"] == "101")
         self.assertEqual(
             loaded["101"]["QVDF_alpha1"],
@@ -47,6 +49,22 @@ class QvdfCsvSourceTests(unittest.TestCase):
             loaded,
             {"custom": {"QVDF_alpha1": 0.321, "QVDF_beta1": 4.567}},
         )
+
+    def test_known_link_type_uses_its_own_csv_row(self):
+        loaded = get_vdf_dict("qvdf")
+
+        selected_code = funclib._resolve_vdf_code(loaded, 101)
+
+        self.assertEqual(selected_code, "101")
+        self.assertIs(loaded[selected_code], loaded["101"])
+
+    def test_unknown_link_type_uses_all_network_csv_row(self):
+        loaded = get_vdf_dict("qvdf")
+
+        selected_code = funclib._resolve_vdf_code(loaded, 999)
+
+        self.assertEqual(selected_code, "all")
+        self.assertIs(loaded[selected_code], loaded["all"])
 
     def test_legacy_nvta_dictionary_is_not_wired_into_funclib(self):
         self.assertFalse(hasattr(funclib, "NVTA_qvdf_dict"))

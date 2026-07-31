@@ -282,7 +282,8 @@ python run_postprocessing.py "C:\path\to\scenario_or_catalog" `
 | `--dry-run` | Off | Flag present or absent | Perform preparation and preflight but skip kernel execution. |
 
 When `--vdf-type qvdf` is selected, calibration parameters are read directly
-from `src/dtalite4cube/resources/link_qvdf.csv`.
+from `src/dtalite4cube/resources/link_qvdf.csv`. If a network link type is not
+listed, the workflow uses the final `vdf_code=all` row as the all-network fallback.
 
 ### Boolean values
 

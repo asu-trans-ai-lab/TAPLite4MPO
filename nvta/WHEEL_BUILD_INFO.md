@@ -30,8 +30,9 @@ Validation:
 - OpenMP two-worker probe returned two workers
 - observed-QVDF native regression suite: 8 passed
 - smoothstep profile-shoulder regression passed against the packaged kernel
-- NVTA workflow test suite: 35 passed
-- QVDF runtime source check: packaged `resources/link_qvdf.csv`
+- NVTA workflow test suite: 37 passed
+- QVDF runtime source check: packaged `resources/link_qvdf.csv`, including the
+  final `vdf_code=all` fallback for unlisted link types
 - public golden-network regression: all 18 cases passed
 - release-smoke gates G1-G7 passed against the packaged native kernel
 - ARC quick smoke: assignment completed and validation parsed successfully
