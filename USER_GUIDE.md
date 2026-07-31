@@ -190,7 +190,9 @@ fast node-based path. See section 7.
   VDF.
   The projected bounds are clamped to the assignment-period band. If an edge
   is clipped, `P` remains the analytical QVDF duration and can be larger than
-  the visible `t3-t0` span.
+  the visible `t3-t0` span. Outside `[t0,t3]`, the reported five-minute profile
+  uses a parameter-free cubic smoothstep to connect free-flow speed to the
+  queue-boundary speed, avoiding the corners produced by linear interpolation.
 - **`3` BPR2** (AequilibraE): BPR with the exponent doubled above capacity —
   `t0(1+α·x^β)` for x≤1, `t0(1+α·x^{2β})` for x>1 (steeper over-saturation).
 - **`4` INRETS** (AequilibraE): `t0(1.1−α·x)/(1.1−x)` for x≤1, `t0·((1.1−α)/0.1)·x²`
