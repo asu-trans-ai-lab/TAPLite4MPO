@@ -115,6 +115,20 @@ def mode_tokens(case_dir):
     return [r["mode_type"].strip() for r in csv.DictReader(open(mt)) if r.get("mode_type")]
 
 
+def link_length_miles(row):
+    """Match the kernel's length precedence: vdf_length_mi, else metres/1609."""
+    vdf_length = fnum(row.get("vdf_length_mi"), -1.0)
+    if vdf_length >= 0:
+        return vdf_length
+    return fnum(row.get("length")) / 1609.0
+
+
+def close_enough(actual, expected, rel=2e-4, absolute=5e-3):
+    return abs(actual - expected) <= max(
+        absolute, rel * max(abs(actual), abs(expected), 1.0)
+    )
+
+
 # ---- checks: each returns (passed: bool, detail: str) ----
 
 def chk_completes(ctx):
@@ -392,6 +406,153 @@ def chk_modes_sane(ctx):
     return True, note
 
 
+def chk_vmt_vht_reporting(ctx):
+    """Issue #13: total PCE measures are per-link, not per-mode totals."""
+    mode_rows = list(csv.DictReader(open(os.path.join(ctx["case_dir"], "mode_type.csv"))))
+    if len(mode_rows) < 2:
+        return False, "regression requires a multimode full-output case"
+    links = {
+        row["link_id"]: row
+        for row in csv.DictReader(open(os.path.join(ctx["case_dir"], "link.csv")))
+    }
+    required = ("VMT", "VHT", "PMT", "PHT", "VHT_QVDF", "PHT_QVDF",
+                "avg_QVDF_period_travel_time")
+    failures = []
+    checked = 0
+    for row in ctx["lp"] or []:
+        missing = [name for name in required if name not in row]
+        if missing:
+            return False, "full output missing " + ",".join(missing)
+        link = links.get(row["link_id"])
+        if link is None:
+            failures.append(f"link {row['link_id']}: missing input link")
+            continue
+        length = link_length_miles(link)
+        volume = fnum(row.get("volume"))
+        travel_time = fnum(row.get("travel_time"))
+        qvdf_time = fnum(row.get("avg_QVDF_period_travel_time"))
+        person_volume = sum(
+            fnum(row.get(f"mod_vol_{mode['mode_type'].strip()}"))
+            * fnum(mode.get("occ"), 1.0)
+            for mode in mode_rows
+        )
+        expected = {
+            "VMT": volume * length,
+            "VHT": volume * travel_time / 60.0,
+            "VHT_QVDF": volume * qvdf_time / 60.0,
+            "PMT": person_volume * length,
+            "PHT": person_volume * travel_time / 60.0,
+            "PHT_QVDF": person_volume * qvdf_time / 60.0,
+        }
+        for name, wanted in expected.items():
+            actual = fnum(row.get(name))
+            if not close_enough(actual, wanted):
+                failures.append(
+                    f"link {row['link_id']} {name}={actual:.6g}, expected {wanted:.6g}"
+                )
+                if len(failures) >= 4:
+                    return False, "; ".join(failures)
+        checked += 1
+    if failures:
+        return False, "; ".join(failures)
+
+    def write_rows(path, fields, rows):
+        with open(path, "w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def run_variant(two_modes, link_output):
+        temporary = tempfile.TemporaryDirectory(prefix="vmt_vht_")
+        dst = temporary.name
+        base = os.path.join(HERE, "4_node_network")
+        stage(base, dst)
+
+        settings_path = os.path.join(dst, "settings.csv")
+        with open(settings_path, newline="", encoding="utf-8-sig") as stream:
+            settings_reader = csv.DictReader(stream)
+            settings_fields = list(settings_reader.fieldnames or [])
+            settings_rows = list(settings_reader)
+        for field in ("link_output", "accessibility_output"):
+            if field not in settings_fields:
+                settings_fields.append(field)
+        settings_rows[0]["number_of_processors"] = "1"
+        settings_rows[0]["route_output"] = "0"
+        settings_rows[0]["link_output"] = str(link_output)
+        settings_rows[0]["accessibility_output"] = "0"
+        write_rows(settings_path, settings_fields, settings_rows)
+
+        if two_modes:
+            demand_path = os.path.join(dst, "demand.csv")
+            with open(demand_path, newline="", encoding="utf-8-sig") as stream:
+                demand_reader = csv.DictReader(stream)
+                demand_fields = list(demand_reader.fieldnames or [])
+                demand_rows = list(demand_reader)
+            first_demand, second_demand = [], []
+            for demand in demand_rows:
+                total = fnum(demand.get("volume"))
+                first = dict(demand)
+                second = dict(demand)
+                first["volume"] = f"{total / 2.0:.10g}"
+                second["volume"] = f"{total - total / 2.0:.10g}"
+                first_demand.append(first)
+                second_demand.append(second)
+            write_rows(os.path.join(dst, "demand_sov.csv"), demand_fields, first_demand)
+            write_rows(os.path.join(dst, "demand_hov.csv"), demand_fields, second_demand)
+
+            mode_path = os.path.join(dst, "mode_type.csv")
+            with open(mode_path, newline="", encoding="utf-8-sig") as stream:
+                mode_reader = csv.DictReader(stream)
+                mode_fields = list(mode_reader.fieldnames or [])
+                base_mode = list(mode_reader)[0]
+            first_mode = dict(base_mode)
+            first_mode["demand_file"] = "demand_sov.csv"
+            second_mode = dict(base_mode)
+            second_mode.update({
+                "mode_type_id": "2", "mode_type": "hov", "name": "HOV",
+                "pce": "1", "occ": "2", "demand_file": "demand_hov.csv",
+            })
+            write_rows(mode_path, mode_fields, [first_mode, second_mode])
+
+        process = run_native(ctx["exe"], ctx["library"], dst, 120)
+        rows = parse_lp(dst)
+        result = (process.returncode, process.stdout + process.stderr, rows)
+        temporary.cleanup()
+        return result
+
+    one_rc, one_log, one_mode = run_variant(False, 2)
+    two_rc, two_log, two_modes = run_variant(True, 2)
+    compact_rc, compact_log, compact = run_variant(True, 1)
+    for label, rc, log, rows in (
+        ("one-mode full", one_rc, one_log, one_mode),
+        ("two-mode full", two_rc, two_log, two_modes),
+        ("two-mode compact", compact_rc, compact_log, compact),
+    ):
+        if rc != 0 or not rows:
+            return False, f"{label} run failed (exit={rc}): {log[-300:]}"
+
+    one_by_id = {row["link_id"]: row for row in one_mode}
+    two_by_id = {row["link_id"]: row for row in two_modes}
+    compact_by_id = {row["link_id"]: row for row in compact}
+    if set(one_by_id) != set(two_by_id) or set(two_by_id) != set(compact_by_id):
+        return False, "mode-count/full-compact runs produced different link sets"
+    for link_id in sorted(one_by_id):
+        one = one_by_id[link_id]
+        two = two_by_id[link_id]
+        small = compact_by_id[link_id]
+        for name in ("volume", "travel_time", "VMT", "VHT", "VHT_QVDF"):
+            if not close_enough(fnum(one.get(name)), fnum(two.get(name))):
+                return False, f"link {link_id} {name} changed with mode count"
+        for name in ("volume", "travel_time", "VMT"):
+            if not close_enough(fnum(two.get(name)), fnum(small.get(name))):
+                return False, f"link {link_id} {name} differs in full/compact output"
+
+    return True, (
+        f"{checked} six-mode links satisfy PCE/person identities; "
+        "1-vs-2 mode invariant; full/compact VMT parity"
+    )
+
+
 def chk_lane_dc(ctx):
     link = {r["link_id"]: r for r in csv.DictReader(open(os.path.join(ctx["case_dir"], "link.csv")))}
     s = list(csv.DictReader(open(os.path.join(ctx["case_dir"], "settings.csv"))))[0]
@@ -444,7 +605,7 @@ CASES = [
     {"name": "I10_QVDF_multilane",    "dir": f"{HERE}/I10_corridor_QVDF_multilane", "checks": ["completes", "external_ids", "lane_dc"]},
     {"name": "multilane_bpr",         "dir": f"{HERE}/multilane_bpr",         "checks": ["completes", "external_ids", "lane_dc"]},
     {"name": "turn_restriction",      "dir": f"{HERE}/turn_restriction",      "checks": ["completes", "external_ids", "turn_reroute"]},
-    {"name": "sf_multimodal",         "dir": f"{HERE}/sf_multimodal",         "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "modes_sane"]},
+    {"name": "sf_multimodal",         "dir": f"{HERE}/sf_multimodal",         "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "modes_sane", "vmt_vht_reporting"]},
     {"name": "cs_multimodal",         "dir": f"{HERE}/cs_multimodal",         "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "modes_sane"]},
     {"name": "sf_conic",              "dir": f"{HERE}/sf_conic",              "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "modes_sane"]},
     {"name": "subarea/FFX134_BD",     "dir": f"{SUBAREA}/FFX134_BD",          "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "ffx_sparse"]},
@@ -459,7 +620,8 @@ CHECKS = {
     "completes": chk_completes, "external_ids": chk_external_ids,
     "sparse_ids": chk_sparse_ids, "ffx_sparse": chk_ffx_sparse,
     "gap_ok": chk_gap_ok, "allowed_use": chk_allowed_use,
-    "modes_sane": chk_modes_sane, "lane_dc": chk_lane_dc, "turn_reroute": chk_turn_reroute,
+    "modes_sane": chk_modes_sane, "vmt_vht_reporting": chk_vmt_vht_reporting,
+    "lane_dc": chk_lane_dc, "turn_reroute": chk_turn_reroute,
 }
 
 
