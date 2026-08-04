@@ -5852,17 +5852,20 @@ int AssignmentAPI()
 		}
 
 
-		double VMT, VHT, PMT, PHT, VHT_QVDF, PHT_QVDF;
-		VMT = 0; VHT = 0;  PMT = 0; PHT = 0; VHT_QVDF = 0; PHT_QVDF = 0;
+		// MainVolume is the total PCE-weighted link volume, so vehicle-equivalent
+		// measures are link totals and must be calculated exactly once. Only the
+		// occupancy-weighted person measures belong inside the mode loop.
+		double VMT = MainVolume[k] * Link[k].length;
+		double VHT = MainVolume[k] * Link[k].Travel_time / 60.0;
+		double VHT_QVDF = MainVolume[k] * Link[k].QVDF_TT / 60.0;
+		double PMT = 0;
+		double PHT = 0;
+		double PHT_QVDF = 0;
 		for (int m = 1; m <= number_of_modes; m++)
 		{
-			VMT += MainVolume[k] * Link[k].length;
-			VHT += MainVolume[k] * Link[k].Travel_time / 60.0;
-
 			PMT += Link[k].mode_MainVolume[m] * g_mode_type_vector[m].occ * Link[k].length;
 			PHT += Link[k].mode_MainVolume[m] * g_mode_type_vector[m].occ * Link[k].Travel_time / 60.0;
 
-			VHT_QVDF += MainVolume[k] * Link[k].QVDF_TT / 60.0;
 			PHT_QVDF += Link[k].mode_MainVolume[m] * g_mode_type_vector[m].occ * Link[k].QVDF_TT / 60.0;
 
 
