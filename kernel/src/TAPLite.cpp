@@ -86,6 +86,9 @@ struct link_record {
 	double Conic_a;      // conic alpha (per functional type)
 	double Conic_b;      // conic beta  (= (2a-1)/(2a-2) per Spiess)
 	double Q_cd, Q_n, Q_cp, Q_s;
+	// Optional reporting-profile selector from link.csv. -1 preserves the
+	// historical link_type/observed-t2 activation rule.
+	int QVDF_profile_mode;
 	double QVDF_t0_observed; // observed episode start, decimal hour; NaN = unavailable
 	double QVDF_t2;     // observed queue-profile trough time, decimal hour; NaN = midpoint fallback
 	double QVDF_t3_observed; // observed episode end, decimal hour; NaN = unavailable
@@ -162,6 +165,7 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		QVDF_profile_mode = -1;
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t3_observed = std::numeric_limits<double>::quiet_NaN();
@@ -202,6 +206,7 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		QVDF_profile_mode = -1;
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t3_observed = std::numeric_limits<double>::quiet_NaN();
@@ -5451,7 +5456,7 @@ int AssignmentAPI()
 	for (int m = 1; m <= number_of_modes; m++)
 		fprintf(link_performance_file, "obs_vol_%s,", g_mode_type_vector[m].mode_type.c_str());
 
-	fprintf(link_performance_file, "P,t0,t2,t3,vt2_mph,vt2_kmph,mu,Q_gamma,free_speed_mph,cutoff_speed_mph,free_speed_kmph,cutoff_speed_kmph,congestion_ref_speed_mph,avg_queue_speed_mph,avg_QVDF_period_speed_mph,congestion_ref_speed_kmph,avg_queue_speed_kmph,avg_QVDF_period_speed_kmph,avg_QVDF_period_travel_time,Severe_Congestion_P,");
+	fprintf(link_performance_file, "qvdf_profile_status,P,t0,t2,t3,vt2_mph,vt2_kmph,mu,Q_gamma,free_speed_mph,cutoff_speed_mph,free_speed_kmph,cutoff_speed_kmph,congestion_ref_speed_mph,avg_queue_speed_mph,avg_QVDF_period_speed_mph,congestion_ref_speed_kmph,avg_queue_speed_kmph,avg_QVDF_period_speed_kmph,avg_QVDF_period_travel_time,Severe_Congestion_P,");
 
 	for (int t = demand_period_starting_hours * 60; t < demand_period_ending_hours * 60; t += 5)
 	{
@@ -5819,20 +5824,44 @@ int AssignmentAPI()
 		double avg_QVDF_period_speed = 0;
 		double IncomingDemand = 0;
 		double DOC = 0;
-		// Run the (expensive) QVDF queue model + speed profile for freeway links or
-		// any link with an explicit observed trough time. Cube-derived networks
-		// encode link_type as 100*area_type + facility_type, so codes such as 101
-		// and 201 are the same freeway facility type as canonical GMNS code 1.
-		// An observed t2 is an explicit request for a positioned QVDF profile even
-		// on a non-freeway facility. This affects reporting only; assignment travel
-		// time continues to use the link's configured VDF_type.
+		// Select the reporting profile independently from the assignment VDF. A
+		// missing qvdf_profile_mode (-1) preserves the historical behavior exactly:
+		// freeway link_type encodings or an observed t2 request a QVDF profile.
+		// Explicit mode 0 disables it, mode 1 selects it independent of link_type,
+		// and mode 2 gates it on an observed t2. The volume threshold remains a
+		// hard computational guard for every mode that is otherwise eligible.
 		bool is_freeway_link_type =
 			(Link[k].link_type == 1) ||
 			(Link[k].link_type >= 100 && Link[k].link_type % 100 == 1);
 		bool has_observed_qvdf_t2 = std::isfinite(Link[k].QVDF_t2);
-		bool do_qvdf =
-			(is_freeway_link_type || has_observed_qvdf_t2) &&
+		bool qvdf_eligible = false;
+		const char* qvdf_profile_status = "flat_legacy_not_selected";
+		switch (Link[k].QVDF_profile_mode)
+		{
+		case 0:
+			qvdf_profile_status = "flat_disabled";
+			break;
+		case 1:
+			qvdf_eligible = true;
+			qvdf_profile_status = "generated_model";
+			break;
+		case 2:
+			qvdf_eligible = has_observed_qvdf_t2;
+			qvdf_profile_status = qvdf_eligible
+				? "generated_observed" : "flat_missing_observation";
+			break;
+		default:
+			qvdf_eligible = is_freeway_link_type || has_observed_qvdf_t2;
+			if (qvdf_eligible)
+				qvdf_profile_status = is_freeway_link_type
+					? "generated_legacy_link_type"
+					: "generated_legacy_observed_t2";
+			break;
+		}
+		bool do_qvdf = qvdf_eligible &&
 			(MainVolume[k] >= g_qvdf_volume_threshold);
+		if (qvdf_eligible && !do_qvdf)
+			qvdf_profile_status = "flat_below_volume_threshold";
 		if (do_qvdf)
 		{
 			t2 = std::isfinite(Link[k].QVDF_t2)
@@ -5847,7 +5876,20 @@ int AssignmentAPI()
 			IncomingDemand = MainVolume[k] / fmax(lanes_eff, 1.0) / Hh / plf_e;
 			DOC = Link[k].Lane_Capacity > 0 ? IncomingDemand / Link[k].Lane_Capacity : 0.0;
 			Severe_Congestion_P = 0.0;
-			double spd_e = Link[k].length / fmax(Link[k].Travel_time / 60.0, 0.001);
+			// Report a usable, floor-free period-average fallback instead of an
+			// apparently failed QVDF calculation. Only invalid/zero travel times use
+			// the link free speed as a defensive fallback.
+			double travel_time_hours = Link[k].Travel_time / 60.0;
+			double spd_e =
+				std::isfinite(Link[k].length) && Link[k].length >= 0.0 &&
+				std::isfinite(travel_time_hours) && travel_time_hours > 0.0
+				? Link[k].length / travel_time_hours
+				: Link[k].free_speed;
+			vt2 = spd_e;
+			congestion_ref_speed = spd_e;
+			avg_queue_speed = spd_e;
+			avg_QVDF_period_speed = spd_e;
+			Link[k].QVDF_TT = Link[k].Travel_time;
 			for (int i = 0; i < 300; i++) model_speed[i] = spd_e;
 		}
 
@@ -5887,6 +5929,7 @@ int AssignmentAPI()
 		for (int m = 1; m <= number_of_modes; m++)
 			fprintf(link_performance_file, "%2lf,", Link[k].Obs_volume[m]);
 
+		fprintf(link_performance_file, "%s,", qvdf_profile_status);
 		fprintf(link_performance_file, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,", P, t0, t2, t3, vt2, vt2 * 1.609, mu, Q_gamma,
 			Link[k].free_speed, Link[k].Cutoff_Speed, Link[k].free_speed * 1.609, Link[k].Cutoff_Speed * 1.609,
 			congestion_ref_speed, avg_queue_speed, avg_QVDF_period_speed,
@@ -6248,6 +6291,35 @@ void ReadLinks()
 			parser_link.GetValueByFieldName("vdf_cd", Link[k].Q_cd);
 			parser_link.GetValueByFieldName("vdf_n", Link[k].Q_n);
 			parser_link.GetValueByFieldName("vdf_s", Link[k].Q_s);
+
+			// Optional QVDF reporting-profile mode: blank/missing = legacy auto,
+			// 0 = disabled, 1 = model-generated, 2 = observed-t2 gated. Parse as
+			// text so blank cells remain distinguishable from an explicit zero.
+			std::string qvdf_profile_mode_text;
+			if (parser_link.GetValueByFieldName(
+				"qvdf_profile_mode", qvdf_profile_mode_text, false))
+			{
+				TrimString(qvdf_profile_mode_text);
+				if (!qvdf_profile_mode_text.empty())
+				{
+					char* endp = NULL;
+					long parsed_mode = strtol(
+						qvdf_profile_mode_text.c_str(), &endp, 10);
+					if (endp != qvdf_profile_mode_text.c_str() &&
+						*endp == '\0' && parsed_mode >= 0 && parsed_mode <= 2)
+						Link[k].QVDF_profile_mode = static_cast<int>(parsed_mode);
+					else
+					{
+						fprintf(stderr,
+							"WARNING: link_id=%d has invalid qvdf_profile_mode='%s'; expected blank, 0, 1, or 2. Using legacy auto.\n",
+							Link[k].external_link_id, qvdf_profile_mode_text.c_str());
+						if (summary_log_file != NULL)
+							fprintf(summary_log_file,
+								"WARNING: link_id=%d has invalid qvdf_profile_mode='%s'; expected blank, 0, 1, or 2. Using legacy auto.\n",
+								Link[k].external_link_id, qvdf_profile_mode_text.c_str());
+					}
+				}
+			}
 
 			// Optional observed episode endpoints. They may extend outside this
 			// assignment period because they are used only to recover the

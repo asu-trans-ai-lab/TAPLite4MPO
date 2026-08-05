@@ -108,6 +108,36 @@ def _rewrite_link_types(path, values):
         writer.writerows(rows)
 
 
+def _rewrite_optional_link_column(path, column, values):
+    with path.open(newline="", encoding="utf-8-sig") as stream:
+        reader = csv.DictReader(stream)
+        fields = list(reader.fieldnames or [])
+        rows = list(reader)
+    if column not in fields:
+        fields.append(column)
+    for row, value in zip(rows, values):
+        row[column] = value
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _set_setting(path, column, value):
+    with path.open(newline="", encoding="utf-8-sig") as stream:
+        reader = csv.DictReader(stream)
+        fields = list(reader.fieldnames or [])
+        rows = list(reader)
+    if column not in fields:
+        fields.append(column)
+    for row in rows:
+        row[column] = value
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _run_variant(
     values=None,
     remove_column=False,
@@ -115,6 +145,8 @@ def _run_variant(
     t0_values=None,
     t3_values=None,
     remove_endpoint_columns=False,
+    profile_modes=None,
+    qvdf_volume_threshold=None,
 ):
     temporary = tempfile.TemporaryDirectory(prefix="qvdf_t2_")
     scenario = Path(temporary.name) / "scenario"
@@ -134,6 +166,16 @@ def _run_variant(
         )
     if link_types is not None:
         _rewrite_link_types(scenario / "link.csv", link_types)
+    if profile_modes is not None:
+        _rewrite_optional_link_column(
+            scenario / "link.csv", "qvdf_profile_mode", profile_modes
+        )
+    if qvdf_volume_threshold is not None:
+        _set_setting(
+            scenario / "settings.csv",
+            "qvdf_volume_threshold",
+            qvdf_volume_threshold,
+        )
     if DLL is not None:
         environment = os.environ.copy()
         environment["DTALITE_DLL"] = str(DLL)
@@ -175,6 +217,134 @@ def _run_variant(
     "no DTALite kernel found (set DTALITE_DLL or DTALITE_EXE)",
 )
 class ObservedQvdfT2Tests(unittest.TestCase):
+    def test_missing_profile_mode_preserves_legacy_activation(self):
+        for label, profile_modes in (("missing", None), ("blank", ["", ""])):
+            with self.subTest(label):
+                temporary, result, rows = _run_variant(
+                    profile_modes=profile_modes
+                )
+                self.addCleanup(temporary.cleanup)
+                self.assertEqual(
+                    result.returncode, 0, result.stdout + result.stderr
+                )
+                for row in rows.values():
+                    self.assertEqual(
+                        row["qvdf_profile_status"],
+                        "generated_legacy_link_type",
+                    )
+
+    def test_disabled_mode_writes_unambiguous_flat_fallback(self):
+        temporary, result, rows = _run_variant(profile_modes=["0", "0"])
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        for row in rows.values():
+            period_speed = float(row["speed_mph"])
+            self.assertEqual(row["qvdf_profile_status"], "flat_disabled")
+            self.assertEqual(float(row["P"]), 0.0)
+            self.assertAlmostEqual(
+                float(row["vt2_mph"]), period_speed, delta=0.0001
+            )
+            self.assertAlmostEqual(
+                float(row["congestion_ref_speed_mph"]),
+                period_speed,
+                delta=0.0001,
+            )
+            self.assertAlmostEqual(
+                float(row["avg_queue_speed_mph"]),
+                period_speed,
+                delta=0.0001,
+            )
+            self.assertAlmostEqual(
+                float(row["avg_QVDF_period_speed_mph"]),
+                period_speed,
+                delta=0.0001,
+            )
+            self.assertAlmostEqual(
+                float(row["avg_QVDF_period_travel_time"]),
+                float(row["travel_time"]),
+                delta=0.0001,
+            )
+            self.assertAlmostEqual(
+                float(row["VHT_QVDF"]),
+                float(row["VHT"]),
+                delta=0.000001,
+            )
+            for column, value in row.items():
+                if column.startswith("spd_mph_"):
+                    self.assertAlmostEqual(
+                        float(value), period_speed, delta=0.0011
+                    )
+
+    def test_model_mode_selects_alternative_link_types_and_midpoint(self):
+        temporary, result, rows = _run_variant(
+            values=["", ""],
+            link_types=["403", "405"],
+            profile_modes=["1", "1"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for row in rows.values():
+            self.assertEqual(row["qvdf_profile_status"], "generated_model")
+            self.assertAlmostEqual(float(row["t2"]), 7.5, places=6)
+            self.assertGreater(float(row["P"]), 0.0)
+
+    def test_observed_mode_is_gated_by_valid_t2(self):
+        temporary, result, rows = _run_variant(
+            values=["7.0", ""],
+            link_types=["403", "405"],
+            profile_modes=["2", "2"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        generated, flat = rows["101"], rows["102"]
+        self.assertEqual(generated["qvdf_profile_status"], "generated_observed")
+        self.assertAlmostEqual(float(generated["t2"]), 7.0, places=6)
+        self.assertEqual(flat["qvdf_profile_status"], "flat_missing_observation")
+        self.assertEqual(float(flat["P"]), 0.0)
+        self.assertGreater(float(flat["avg_QVDF_period_speed_mph"]), 0.0)
+
+    def test_legacy_nonselected_and_volume_threshold_reasons(self):
+        temporary, result, rows = _run_variant(
+            values=["", ""],
+            link_types=["403", "405"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for row in rows.values():
+            self.assertEqual(
+                row["qvdf_profile_status"], "flat_legacy_not_selected"
+            )
+
+        temporary, result, rows = _run_variant(
+            profile_modes=["1", "1"],
+            qvdf_volume_threshold="1000000000",
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for row in rows.values():
+            self.assertEqual(
+                row["qvdf_profile_status"], "flat_below_volume_threshold"
+            )
+            self.assertGreater(float(row["avg_QVDF_period_speed_mph"]), 0.0)
+
+    def test_invalid_profile_modes_warn_and_use_legacy_auto(self):
+        temporary, result, rows = _run_variant(
+            profile_modes=["invalid", "3"]
+        )
+        self.addCleanup(temporary.cleanup)
+        log = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, log)
+        self.assertIn(
+            "link_id=101 has invalid qvdf_profile_mode='invalid'", log
+        )
+        self.assertIn("link_id=102 has invalid qvdf_profile_mode='3'", log)
+        for row in rows.values():
+            self.assertEqual(
+                row["qvdf_profile_status"], "generated_legacy_link_type"
+            )
+
     def test_outside_queue_window_uses_cubic_smoothstep(self):
         temporary, result, rows = _run_variant()
         self.addCleanup(temporary.cleanup)
