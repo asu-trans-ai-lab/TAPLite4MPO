@@ -22,11 +22,13 @@ For every link, QVDF writes (in addition to volume / `doc` / speed / VMT / VHT):
 | `congestion_ref_speed_mph`, `avg_queue_speed_mph` | the queue speed model |
 | `avg_QVDF_period_speed_mph`, `avg_QVDF_period_travel_time` | period-average speed/time the assignment uses as the link cost |
 | `VHT_QVDF`, `PHT_QVDF` | queue-consistent vehicle/person hours |
+| `qvdf_profile_status` | whether a profile was generated, or the reason a flat fallback was used |
 
-`P` (and `Severe_Congestion_P`) are **monotone in D/C**, so duration is *consistent with*
-the assigned volume/capacity — the same D/C that drives route choice drives the reported
-duration. The period-average QVDF speed is also a valid (monotone) link cost, so QVDF
-runs as the assignment VDF, not just a post-processor.
+`P` is **monotone in D/C**, so duration is *consistent with* the assigned
+volume/capacity — the same D/C that drives route choice drives the reported duration.
+`Severe_Congestion_P` is derived from the emitted speed profile and therefore also
+reflects any observed boundary-speed anchors. The period-average QVDF speed is a valid
+(monotone) link cost, so QVDF runs as the assignment VDF, not just a post-processor.
 
 ## 2. Inputs (per link)
 
@@ -35,9 +37,41 @@ vdf_type = 2
 cutoff_speed                 # speed at capacity (v_congestion_cutoff)
 vdf_cp, vdf_cd, vdf_n, vdf_s # queue VDF parameters (cp, cd, n, s)
 vdf_alpha, vdf_beta          # speed-flow shape
+qvdf_profile_mode            # optional: blank legacy auto; 0 disabled; 1 model; 2 observed-gated
 t0_hour, t3_hour             # optional observed episode start/end
 t2_hour                      # optional observed trough time, decimal hour-of-day
+qvdf_start_speed_mph         # optional observed first profile-sample speed
+qvdf_end_speed_mph           # optional observed last profile-sample speed
 ```
+
+### Profile activation
+
+`qvdf_profile_mode` controls the full-output reporting profile independently
+from `vdf_type`, which continues to select the assignment travel-time function:
+
+| value | profile behavior |
+|---|---|
+| missing or blank | legacy auto: generate for `link_type=1`, a Cube-style code ending in `01`, or a link with valid observed `t2_hour` |
+| `0` | disabled: write a flat period-average profile |
+| `1` | model-generated on any link; use valid observed `t2_hour`, otherwise the assignment-period midpoint |
+| `2` | observed-gated: require valid observed `t2_hour`, otherwise write a flat profile |
+
+`qvdf_volume_threshold` remains a hard computational guard after profile
+eligibility is determined. Therefore mode `1` overrides link-type selection but
+does not bypass the threshold. Missing or blank mode cells preserve the legacy
+selector; invalid values warn and also use legacy auto.
+
+Every full-output row includes `qvdf_profile_status`. Generated values are
+`generated_legacy_link_type`, `generated_legacy_observed_t2`,
+`generated_model`, and `generated_observed`. Flat reasons are `flat_disabled`,
+`flat_missing_observation`, `flat_below_volume_threshold`, and
+`flat_legacy_not_selected`.
+
+For a flat fallback, the kernel uses the exact assigned period-average speed
+`length / (travel_time / 60)`, fills every five-minute sample with that speed,
+sets the QVDF average-speed fields to the same value, and sets
+`avg_QVDF_period_travel_time` to the assigned travel time. Thus `VHT_QVDF` and
+`PHT_QVDF` remain meaningful instead of appearing as failed zero calculations.
 
 `t2_hour` is link- and assignment-period-specific. For example, `7.5` means
 07:30. Put the appropriate period-specific values in that period's `link.csv`;
@@ -79,6 +113,28 @@ A transparent reference implementation + spreadsheet are in
 [`../test_networks/qvdf_reference/`](../test_networks/qvdf_reference/)
 (`qvdf_ref.py`, `QVDF_clean_reference.xlsx`) — use it to check the kernel's `P`, speeds,
 and period-average time against the closed-form model.
+
+### Observed speeds at profile boundaries
+
+Valid positive `qvdf_start_speed_mph` and `qvdf_end_speed_mph` observations
+anchor the first and last emitted five-minute profile samples. The profile is
+half-open (`period_start <= t < period_end`), so the final emitted sample is
+five minutes before `period_end`. Each side falls back independently to the
+existing modeled/free-flow profile when its column is missing, blank, invalid,
+or non-positive; invalid nonblank values produce a link-specific warning.
+
+Boundary anchoring is applied only to generated QVDF profiles. Disabled,
+observed-gated-without-observation, below-threshold, and legacy-unselected rows
+remain flat even when boundary-speed columns are supplied.
+
+Let `v_raw(t)` be the modeled QVDF profile and `psi(r)=r^2(3-2r)`. From the
+first sample to `t2`, the starting observation is blended with weight
+`1-psi(r)`; from `t2` to the last sample, the ending observation is blended
+with weight `psi(r)`. The observation influence is therefore exact at its
+boundary and zero at `t2`. This preserves `P`, `t0/t2/t3`, `vt2`, and the
+analytical period-average QVDF speed/travel time while providing continuous
+observed boundary transitions. `Severe_Congestion_P` is recomputed from the
+final anchored samples because it is profile-derived.
 
 ---
 

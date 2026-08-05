@@ -36,6 +36,9 @@ LINK_QVDF_COLS = ["vdf_cp", "vdf_cd", "vdf_n", "vdf_s"]
 LINK_QVDF_T0_COL = "t0_hour"
 LINK_QVDF_T2_COL = "t2_hour"
 LINK_QVDF_T3_COL = "t3_hour"
+LINK_QVDF_PROFILE_MODE_COL = "qvdf_profile_mode"
+LINK_QVDF_START_SPEED_COL = "qvdf_start_speed_mph"
+LINK_QVDF_END_SPEED_COL = "qvdf_end_speed_mph"
 
 # node.csv -------------------------------------------------------------------
 NODE_REQUIRED = ["node_id", "zone_id", "x_coord", "y_coord"]

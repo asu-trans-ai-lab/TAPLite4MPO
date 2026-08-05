@@ -2,7 +2,7 @@
   "schema_version": "gmns-dtalite-1.0",
   "units": {
     "length_input": "meters (link.csv 'length'); or miles via 'vdf_length_mi'",
-    "speed": "mph (vdf_free_speed_mph, cutoff_speed); 'free_speed' is km/h unless overridden",
+    "speed": "mph (vdf_free_speed_mph, cutoff_speed, qvdf_start_speed_mph, qvdf_end_speed_mph); 'free_speed' is km/h unless overridden",
     "capacity": "veh/hour/lane",
     "travel_time_output": "minutes",
     "volume": "vehicles over the analysis period",
@@ -138,6 +138,13 @@
           "description": "QVDF queue parameter"
         },
         {
+          "name": "qvdf_profile_mode",
+          "type": "int",
+          "required": false,
+          "default": null,
+          "description": "QVDF reporting profile mode: blank/absent legacy auto, 0 disabled, 1 model-generated, 2 observed-t2 gated"
+        },
+        {
           "name": "t0_hour",
           "type": "number",
           "required": false,
@@ -157,6 +164,20 @@
           "required": false,
           "default": null,
           "description": "optional observed QVDF episode end as decimal hour-of-day; with valid t0_hour and t2_hour, determines the fraction of analytical P projected after t2"
+        },
+        {
+          "name": "qvdf_start_speed_mph",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "optional observed speed in mph anchoring the first emitted QVDF profile sample"
+        },
+        {
+          "name": "qvdf_end_speed_mph",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "description": "optional observed speed in mph anchoring the last emitted QVDF profile sample"
         },
         {
           "name": "allowed_use",

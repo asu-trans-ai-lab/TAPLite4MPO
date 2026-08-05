@@ -15,3 +15,9 @@ contract (`t0 <= t2 <= t3`, `vt2 <= cutoff`, and every five-minute speed within
 `[vt2, free_speed]`). Boundary variants place `t2_hour` at 06:15 and 08:45 to
 verify that `t0` and `t3` clamp to the assignment-period band while the speed
 trough remains centered at the supplied `t2_hour`.
+
+The same test module covers GitHub issue #16 profile activation modes, status
+reasons, flat-profile reporting, alternative facility codes, volume-threshold
+precedence, and optional `qvdf_start_speed_mph` / `qvdf_end_speed_mph` anchors.
+Boundary observations are blended continuously toward the modeled trough and
+fall back independently when either value is missing or invalid.
