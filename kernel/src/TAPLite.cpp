@@ -92,6 +92,8 @@ struct link_record {
 	double QVDF_t0_observed; // observed episode start, decimal hour; NaN = unavailable
 	double QVDF_t2;     // observed queue-profile trough time, decimal hour; NaN = midpoint fallback
 	double QVDF_t3_observed; // observed episode end, decimal hour; NaN = unavailable
+	double QVDF_start_speed_observed; // observed first profile sample, mph; NaN = modeled fallback
+	double QVDF_end_speed_observed; // observed last profile sample, mph; NaN = modeled fallback
 
 	double length;
 	double Speed;
@@ -169,6 +171,8 @@ struct link_record {
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t3_observed = std::numeric_limits<double>::quiet_NaN();
+		QVDF_start_speed_observed = std::numeric_limits<double>::quiet_NaN();
+		QVDF_end_speed_observed = std::numeric_limits<double>::quiet_NaN();
 
 		Travel_time = 0;
 		BPR_TT = 0;
@@ -210,6 +214,8 @@ struct link_record {
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t3_observed = std::numeric_limits<double>::quiet_NaN();
+		QVDF_start_speed_observed = std::numeric_limits<double>::quiet_NaN();
+		QVDF_end_speed_observed = std::numeric_limits<double>::quiet_NaN();
 
 		Travel_time = 0;
 		BPR_TT = 0;
@@ -6343,6 +6349,40 @@ void ReadLinks()
 			read_optional_episode_hour("t0_hour", Link[k].QVDF_t0_observed);
 			read_optional_episode_hour("t3_hour", Link[k].QVDF_t3_observed);
 
+			// Optional observed speeds for the first and last emitted five-minute
+			// profile samples. Each endpoint falls back independently to the modeled
+			// profile when its column is missing, blank, malformed, or non-positive.
+			auto read_optional_boundary_speed =
+				[&](const char* column_name, double& target)
+				{
+					std::string text;
+					if (!parser_link.GetValueByFieldName(column_name, text, false))
+						return;
+					TrimString(text);
+					if (text.empty())
+						return;
+					char* endp = NULL;
+					double value = strtod(text.c_str(), &endp);
+					if (endp != text.c_str() && *endp == '\0' &&
+						std::isfinite(value) && value > 0.0)
+					{
+						target = value;
+						return;
+					}
+
+					fprintf(stderr,
+						"WARNING: link_id=%d has invalid %s='%s'; expected a finite positive speed in mph. Using modeled boundary fallback.\n",
+						Link[k].external_link_id, column_name, text.c_str());
+					if (summary_log_file != NULL)
+						fprintf(summary_log_file,
+							"WARNING: link_id=%d has invalid %s='%s'; expected a finite positive speed in mph. Using modeled boundary fallback.\n",
+							Link[k].external_link_id, column_name, text.c_str());
+				};
+			read_optional_boundary_speed(
+				"qvdf_start_speed_mph", Link[k].QVDF_start_speed_observed);
+			read_optional_boundary_speed(
+				"qvdf_end_speed_mph", Link[k].QVDF_end_speed_observed);
+
 			// Optional observed QVDF trough time. The CBI handoff uses t2_hour;
 			// accept t2 as a compatibility alias. Empty/missing cells retain the
 			// historical assignment-period midpoint. Invalid supplied values are
@@ -7252,6 +7292,75 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 
 		if (td_speed < Link[k].free_speed * 0.5)
 			Severe_Congestion_P += 5.0 / 60;  // 5 min interval
+	}
+
+	// Anchor optional observed speeds to the first and last emitted samples.
+	// The CSV profile is half-open [period_start, period_end), so its last sample
+	// is period_end - 5 minutes. On each side, a cubic smoothstep blend tapers
+	// the observation's influence to zero at t2. This preserves the analytical
+	// QVDF trough and scalar period-average values while remaining continuous.
+	bool has_start_speed = std::isfinite(Link[k].QVDF_start_speed_observed);
+	bool has_end_speed = std::isfinite(Link[k].QVDF_end_speed_observed);
+	if (has_start_speed || has_end_speed)
+	{
+		int profile_start_min = static_cast<int>(demand_period_starting_hours * 60);
+		int period_end_min = static_cast<int>(demand_period_ending_hours * 60);
+		int profile_last_min = std::max(profile_start_min, period_end_min - 5);
+		double profile_start_hour = profile_start_min / 60.0;
+		double profile_last_hour = profile_last_min / 60.0;
+		double anchor_pivot = fmin(
+			profile_last_hour, fmax(profile_start_hour, t2));
+
+		if (has_start_speed)
+		{
+			double left_span = anchor_pivot - profile_start_hour;
+			for (int t_in_min = profile_start_min;
+				t_in_min <= profile_last_min && t_in_min / 60.0 <= anchor_pivot;
+				t_in_min += 5)
+			{
+				int t_interval = t_in_min / 5;
+				double t = t_in_min / 60.0;
+				double observed_weight = left_span > 1e-9
+					? 1.0 - smoothstep01((t - profile_start_hour) / left_span)
+					: (t_in_min == profile_start_min ? 1.0 : 0.0);
+				model_speed[t_interval] =
+					observed_weight * Link[k].QVDF_start_speed_observed +
+					(1.0 - observed_weight) * model_speed[t_interval];
+			}
+			model_speed[profile_start_min / 5] =
+				Link[k].QVDF_start_speed_observed;
+		}
+
+		if (has_end_speed)
+		{
+			double right_span = profile_last_hour - anchor_pivot;
+			for (int t_in_min = profile_start_min;
+				t_in_min <= profile_last_min; t_in_min += 5)
+			{
+				double t = t_in_min / 60.0;
+				if (t < anchor_pivot)
+					continue;
+				int t_interval = t_in_min / 5;
+				double observed_weight = right_span > 1e-9
+					? smoothstep01((t - anchor_pivot) / right_span)
+					: (t_in_min == profile_last_min ? 1.0 : 0.0);
+				model_speed[t_interval] =
+					(1.0 - observed_weight) * model_speed[t_interval] +
+					observed_weight * Link[k].QVDF_end_speed_observed;
+			}
+			model_speed[profile_last_min / 5] =
+				Link[k].QVDF_end_speed_observed;
+		}
+
+		// Severe congestion is profile-derived, so recompute it from the anchored,
+		// emitted samples whenever either boundary observation changes the profile.
+		Severe_Congestion_P = 0.0;
+		for (int t_in_min = profile_start_min;
+			t_in_min <= profile_last_min; t_in_min += 5)
+		{
+			if (model_speed[t_in_min / 5] < Link[k].free_speed * 0.5)
+				Severe_Congestion_P += 5.0 / 60;
+		}
 	}
 
 	return P;

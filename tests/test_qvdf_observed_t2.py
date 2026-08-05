@@ -147,6 +147,8 @@ def _run_variant(
     remove_endpoint_columns=False,
     profile_modes=None,
     qvdf_volume_threshold=None,
+    start_speeds=None,
+    end_speeds=None,
 ):
     temporary = tempfile.TemporaryDirectory(prefix="qvdf_t2_")
     scenario = Path(temporary.name) / "scenario"
@@ -169,6 +171,14 @@ def _run_variant(
     if profile_modes is not None:
         _rewrite_optional_link_column(
             scenario / "link.csv", "qvdf_profile_mode", profile_modes
+        )
+    if start_speeds is not None:
+        _rewrite_optional_link_column(
+            scenario / "link.csv", "qvdf_start_speed_mph", start_speeds
+        )
+    if end_speeds is not None:
+        _rewrite_optional_link_column(
+            scenario / "link.csv", "qvdf_end_speed_mph", end_speeds
         )
     if qvdf_volume_threshold is not None:
         _set_setting(
@@ -217,6 +227,16 @@ def _run_variant(
     "no DTALite kernel found (set DTALITE_DLL or DTALITE_EXE)",
 )
 class ObservedQvdfT2Tests(unittest.TestCase):
+    @staticmethod
+    def _speed_columns(row):
+        return [name for name in row if name.startswith("spd_mph_")]
+
+    @staticmethod
+    def _decimal_hour(column):
+        clock = column.removeprefix("spd_mph_")
+        hour, minute = map(int, clock.split(":"))
+        return hour + minute / 60.0
+
     def test_missing_profile_mode_preserves_legacy_activation(self):
         for label, profile_modes in (("missing", None), ("blank", ["", ""])):
             with self.subTest(label):
@@ -344,6 +364,128 @@ class ObservedQvdfT2Tests(unittest.TestCase):
             self.assertEqual(
                 row["qvdf_profile_status"], "generated_legacy_link_type"
             )
+
+    def test_observed_boundary_speeds_anchor_first_and_last_samples(self):
+        temporary, result, rows = _run_variant(
+            start_speeds=["42", ""],
+            end_speeds=["50", "35"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        first_columns = self._speed_columns(rows["101"])
+        second_columns = self._speed_columns(rows["102"])
+        self.assertAlmostEqual(float(rows["101"][first_columns[0]]), 42.0)
+        self.assertAlmostEqual(float(rows["101"][first_columns[-1]]), 50.0)
+        self.assertAlmostEqual(float(rows["102"][second_columns[-1]]), 35.0)
+
+        temporary, result, baseline = _run_variant()
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            rows["102"][second_columns[0]], baseline["102"][second_columns[0]]
+        )
+
+    def test_boundary_blend_is_smooth_and_preserves_trough_and_scalars(self):
+        temporary, result, baseline = _run_variant()
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        temporary, result, anchored = _run_variant(
+            start_speeds=["55", "55"],
+            end_speeds=["52", "52"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        unchanged = (
+            "P",
+            "t0",
+            "t2",
+            "t3",
+            "vt2_mph",
+            "avg_queue_speed_mph",
+            "avg_QVDF_period_speed_mph",
+            "avg_QVDF_period_travel_time",
+        )
+        for link_id, row in anchored.items():
+            raw = baseline[link_id]
+            for column in unchanged:
+                self.assertEqual(row[column], raw[column], column)
+
+            speed_columns = self._speed_columns(row)
+            profile_start = self._decimal_hour(speed_columns[0])
+            profile_last = self._decimal_hour(speed_columns[-1])
+            pivot = float(row["t2"])
+            for column in speed_columns:
+                t = self._decimal_hour(column)
+                raw_speed = float(raw[column])
+                if t <= pivot:
+                    factor = (t - profile_start) / (pivot - profile_start)
+                    smooth = factor * factor * (3.0 - 2.0 * factor)
+                    expected = (1.0 - smooth) * 55.0 + smooth * raw_speed
+                else:
+                    factor = (t - pivot) / (profile_last - pivot)
+                    smooth = factor * factor * (3.0 - 2.0 * factor)
+                    expected = (1.0 - smooth) * raw_speed + smooth * 52.0
+                self.assertAlmostEqual(
+                    float(row[column]), expected, delta=0.0011, msg=column
+                )
+
+            trough_column = min(
+                speed_columns,
+                key=lambda name: abs(self._decimal_hour(name) - pivot),
+            )
+            self.assertEqual(row[trough_column], raw[trough_column])
+
+    def test_boundary_anchors_work_when_queue_window_touches_period_edges(self):
+        temporary, result, rows = _run_variant(
+            values=["6.25", "8.75"],
+            start_speeds=["38", ""],
+            end_speeds=["", "41"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        first_columns = self._speed_columns(rows["101"])
+        second_columns = self._speed_columns(rows["102"])
+        self.assertEqual(float(rows["101"]["t0"]), 6.0)
+        self.assertEqual(float(rows["102"]["t3"]), 9.0)
+        self.assertAlmostEqual(float(rows["101"][first_columns[0]]), 38.0)
+        self.assertAlmostEqual(float(rows["102"][second_columns[-1]]), 41.0)
+
+    def test_invalid_boundary_speeds_warn_and_fall_back_independently(self):
+        temporary, result, baseline = _run_variant()
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        temporary, result, rows = _run_variant(
+            start_speeds=["not-a-speed", "-1"],
+            end_speeds=["", "nan"],
+        )
+        self.addCleanup(temporary.cleanup)
+        log = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, log)
+        self.assertIn(
+            "link_id=101 has invalid qvdf_start_speed_mph='not-a-speed'", log
+        )
+        self.assertIn(
+            "link_id=102 has invalid qvdf_start_speed_mph='-1'", log
+        )
+        self.assertIn("link_id=102 has invalid qvdf_end_speed_mph='nan'", log)
+        for link_id, row in rows.items():
+            for column in self._speed_columns(row):
+                self.assertEqual(row[column], baseline[link_id][column])
+
+    def test_disabled_mode_remains_flat_when_boundary_speeds_are_present(self):
+        temporary, result, rows = _run_variant(
+            profile_modes=["0", "0"],
+            start_speeds=["20", "25"],
+            end_speeds=["30", "35"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for row in rows.values():
+            profile = [float(row[name]) for name in self._speed_columns(row)]
+            self.assertEqual(row["qvdf_profile_status"], "flat_disabled")
+            self.assertLess(max(profile) - min(profile), 0.0011)
 
     def test_outside_queue_window_uses_cubic_smoothstep(self):
         temporary, result, rows = _run_variant()

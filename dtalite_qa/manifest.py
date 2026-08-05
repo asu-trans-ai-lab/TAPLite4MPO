@@ -20,7 +20,7 @@ SCHEMA_VERSION = "gmns-dtalite-1.0"
 
 UNITS = {
     "length_input": "meters (link.csv 'length'); or miles via 'vdf_length_mi'",
-    "speed": "mph (vdf_free_speed_mph, cutoff_speed); 'free_speed' is km/h unless overridden",
+    "speed": "mph (vdf_free_speed_mph, cutoff_speed, qvdf_start_speed_mph, qvdf_end_speed_mph); 'free_speed' is km/h unless overridden",
     "capacity": "veh/hour/lane",
     "travel_time_output": "minutes",
     "volume": "vehicles over the analysis period",
@@ -48,6 +48,11 @@ _FIELD_DOC = {
         "vdf_cd": ("number", "QVDF queue parameter"),
         "vdf_n": ("number", "QVDF queue parameter"),
         "vdf_s": ("number", "QVDF queue parameter"),
+        schema.LINK_QVDF_PROFILE_MODE_COL: (
+            "int",
+            "QVDF reporting profile mode: blank/absent legacy auto, 0 disabled, "
+            "1 model-generated, 2 observed-t2 gated",
+        ),
         schema.LINK_QVDF_T0_COL: (
             "number",
             "optional observed QVDF episode start as decimal hour-of-day; "
@@ -62,6 +67,16 @@ _FIELD_DOC = {
             "number",
             "optional observed QVDF episode end as decimal hour-of-day; "
             "used with t0_hour and t2_hour to position the analytical duration",
+        ),
+        schema.LINK_QVDF_START_SPEED_COL: (
+            "number",
+            "optional observed speed in mph anchoring the first emitted QVDF "
+            "profile sample",
+        ),
+        schema.LINK_QVDF_END_SPEED_COL: (
+            "number",
+            "optional observed speed in mph anchoring the last emitted QVDF "
+            "profile sample",
         ),
         "allowed_use": ("string", "mode access control (empty/all, 'closed', or ';'-list)"),
         "non_uturn_flag": ("int", "1 bans the immediate U-turn"),

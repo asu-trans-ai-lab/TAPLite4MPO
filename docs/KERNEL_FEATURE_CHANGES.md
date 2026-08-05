@@ -41,7 +41,7 @@ ARC Atlanta calibrated reproduction (region %RMSE 22, assigned/ref 1.00).
 
 | Feature | Key | Default | Status | Purpose |
 |---|---|---|---|---|
-| **QVDF profile volume threshold** | `qvdf_volume_threshold` | 0 (all freeway links) | default-on | In FULL output mode, run the expensive per-link Link_QueueVDF speed profile only for link_type==1 links carrying volume >= threshold; other links get zeroed QVDF columns and a cheap DOC. |
+| **QVDF profile activation and volume threshold** | `link.csv qvdf_profile_mode`; `settings.csv qvdf_volume_threshold` | mode blank/absent = legacy auto; threshold 0 | default-on | FULL output profile selection is explicit and independent of assignment `vdf_type`: legacy auto preserves link type `1`, Cube-style `*01`, or observed `t2`; `0` disables; `1` model-generates on any link; `2` requires observed `t2`. The threshold remains a hard guard. Skipped links emit a flat period-average profile, populated QVDF speed/time fields, and `qvdf_profile_status` instead of ambiguous zeros. |
 | **Queue-based vehicle simulation API** | `(separate SimulationAPI entry; reads vehicle.csv agents)` | not run by AssignmentAPI/main | opt-in | SimulationAPI loads agents (agent_id, departure_time, link_ids, o/d zone) from vehicle.csv, runs a queue-based link simulation with optional signal timing arcs, and writes trajectory.csv plus sim debug logs. Exported as DTA_SimulationAPI. |
 | **VDF type 0: BPR (+ ARC modified-BPR linear term vdf_A)** | `link.csv vdf_type=0 (default), vdf_alpha, vdf_beta, vdf_A` | vdf_type=0, alpha=0.15, beta=4, A=0 | default-on | t = fftt*(1 + A*x + alpha*x^beta) with x = per-lane V/C (per-lane fix: divides by Lane_Capacity, not lanes*capacity). vdf_A=0 recovers standard BPR exactly; ARC uses the linear term. |
 | **VDF type 1: Spiess conical** | `link.csv vdf_type=1, conic_a, conic_b` | conic_a/b=0 -> fall back to vdf_alpha/vdf_beta; b derived as (2a-1)/(2a-2) if absent | opt-in | t = t0*(2 + sqrt(a^2(1-x)^2 + b^2) - a(1-x) - b), asymptotically linear (MWCOG/VDOT style). Prefers explicit conic_a/conic_b columns; staged convention stores a/b in vdf_alpha/vdf_beta. |
@@ -95,6 +95,7 @@ ARC Atlanta calibrated reproduction (region %RMSE 22, assigned/ref 1.00).
 | Feature | Key | Default | Status | Purpose |
 |---|---|---|---|---|
 | **Explicit calibrated cutoff speed** | `link.csv cutoff_speed` | 0.75 * free_speed when column absent | default-on | Speed at capacity for the QVDF queue model; an explicit calibrated column (e.g. 49 mph on I-10) overrides the 0.75*free_speed derivation and is never silently overridden. |
+| **Observed QVDF boundary-speed anchors** | `link.csv qvdf_start_speed_mph, qvdf_end_speed_mph` | modeled/free-flow boundary independently on each side | opt-in | Valid positive mph observations anchor the first and last emitted five-minute samples. A cubic smoothstep blend tapers each observation to zero influence at `t2`, preserving the analytical trough and scalar QVDF period averages. Invalid supplied values warn and use the modeled fallback for that side only. |
 
 ## Other
 
