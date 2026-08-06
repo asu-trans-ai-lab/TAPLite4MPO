@@ -237,6 +237,21 @@ class ObservedQvdfT2Tests(unittest.TestCase):
         hour, minute = map(int, clock.split(":"))
         return hour + minute / 60.0
 
+    def _assert_smoothed_boundary_fallback(
+        self, row, start_speed, end_speed
+    ):
+        speed_columns = self._speed_columns(row)
+        last_index = len(speed_columns) - 1
+        for index, column in enumerate(speed_columns):
+            factor = index / last_index if last_index else 0.0
+            smooth = factor * factor * (3.0 - 2.0 * factor)
+            expected = (
+                (1.0 - smooth) * start_speed + smooth * end_speed
+            )
+            self.assertAlmostEqual(
+                float(row[column]), expected, delta=0.0011, msg=column
+            )
+
     def test_missing_profile_mode_preserves_legacy_activation(self):
         for label, profile_modes in (("missing", None), ("blank", ["", ""])):
             with self.subTest(label):
@@ -324,6 +339,75 @@ class ObservedQvdfT2Tests(unittest.TestCase):
         self.assertEqual(flat["qvdf_profile_status"], "flat_missing_observation")
         self.assertEqual(float(flat["P"]), 0.0)
         self.assertGreater(float(flat["avg_QVDF_period_speed_mph"]), 0.0)
+
+    def test_ineligible_observed_mode_smooths_either_boundary_anchor(self):
+        temporary, result, rows = _run_variant(
+            values=["", ""],
+            link_types=["403", "405"],
+            profile_modes=["2", "2"],
+            start_speeds=["42", ""],
+            end_speeds=["", "35"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        start_only, end_only = rows["101"], rows["102"]
+        for row in (start_only, end_only):
+            self.assertEqual(
+                row["qvdf_profile_status"],
+                "smoothed_boundary_missing_observation",
+            )
+            self.assertEqual(float(row["P"]), 0.0)
+            period_speed = float(row["speed_mph"])
+            self.assertAlmostEqual(
+                float(row["vt2_mph"]), period_speed, delta=0.0001
+            )
+            self.assertAlmostEqual(
+                float(row["avg_QVDF_period_speed_mph"]),
+                period_speed,
+                delta=0.0001,
+            )
+            self.assertAlmostEqual(
+                float(row["avg_QVDF_period_travel_time"]),
+                float(row["travel_time"]),
+                delta=0.0001,
+            )
+
+        self._assert_smoothed_boundary_fallback(
+            start_only, 42.0, float(start_only["speed_mph"])
+        )
+        self._assert_smoothed_boundary_fallback(
+            end_only, float(end_only["speed_mph"]), 35.0
+        )
+
+    def test_other_ineligible_reasons_use_boundary_smoothing(self):
+        temporary, result, rows = _run_variant(
+            values=["", ""],
+            link_types=["403", "405"],
+            start_speeds=["44", ""],
+            end_speeds=["", "36"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for row in rows.values():
+            self.assertEqual(
+                row["qvdf_profile_status"],
+                "smoothed_boundary_legacy_not_selected",
+            )
+
+        temporary, result, rows = _run_variant(
+            profile_modes=["1", "1"],
+            qvdf_volume_threshold="1000000000",
+            start_speeds=["44", ""],
+            end_speeds=["", "36"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for row in rows.values():
+            self.assertEqual(
+                row["qvdf_profile_status"],
+                "smoothed_boundary_below_volume_threshold",
+            )
 
     def test_legacy_nonselected_and_volume_threshold_reasons(self):
         temporary, result, rows = _run_variant(

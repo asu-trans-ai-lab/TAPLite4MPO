@@ -5840,6 +5840,10 @@ int AssignmentAPI()
 			(Link[k].link_type == 1) ||
 			(Link[k].link_type >= 100 && Link[k].link_type % 100 == 1);
 		bool has_observed_qvdf_t2 = std::isfinite(Link[k].QVDF_t2);
+		bool has_observed_start_speed =
+			std::isfinite(Link[k].QVDF_start_speed_observed);
+		bool has_observed_end_speed =
+			std::isfinite(Link[k].QVDF_end_speed_observed);
 		bool qvdf_eligible = false;
 		const char* qvdf_profile_status = "flat_legacy_not_selected";
 		switch (Link[k].QVDF_profile_mode)
@@ -5868,6 +5872,23 @@ int AssignmentAPI()
 			(MainVolume[k] >= g_qvdf_volume_threshold);
 		if (qvdf_eligible && !do_qvdf)
 			qvdf_profile_status = "flat_below_volume_threshold";
+		// Boundary observations are also useful when QVDF generation is skipped.
+		// Except for explicit mode 0, use any valid side as an observed-only
+		// fallback and retain the assigned period-average speed on a missing side.
+		// Preserve the skip reason in the status so the connector is not mistaken
+		// for an analytically generated QVDF profile.
+		bool use_smoothed_boundary_fallback =
+			!do_qvdf && Link[k].QVDF_profile_mode != 0 &&
+			(has_observed_start_speed || has_observed_end_speed);
+		if (use_smoothed_boundary_fallback)
+		{
+			if (qvdf_eligible)
+				qvdf_profile_status = "smoothed_boundary_below_volume_threshold";
+			else if (Link[k].QVDF_profile_mode == 2)
+				qvdf_profile_status = "smoothed_boundary_missing_observation";
+			else
+				qvdf_profile_status = "smoothed_boundary_legacy_not_selected";
+		}
 		if (do_qvdf)
 		{
 			t2 = std::isfinite(Link[k].QVDF_t2)
@@ -5884,7 +5905,9 @@ int AssignmentAPI()
 			Severe_Congestion_P = 0.0;
 			// Report a usable, floor-free period-average fallback instead of an
 			// apparently failed QVDF calculation. Only invalid/zero travel times use
-			// the link free speed as a defensive fallback.
+			// the link free speed as a defensive fallback. These scalar fields remain
+			// assignment-consistent even when boundary observations shape the emitted
+			// reporting samples below.
 			double travel_time_hours = Link[k].Travel_time / 60.0;
 			double spd_e =
 				std::isfinite(Link[k].length) && Link[k].length >= 0.0 &&
@@ -5897,6 +5920,53 @@ int AssignmentAPI()
 			avg_QVDF_period_speed = spd_e;
 			Link[k].QVDF_TT = Link[k].Travel_time;
 			for (int i = 0; i < 300; i++) model_speed[i] = spd_e;
+
+			if (use_smoothed_boundary_fallback)
+			{
+				int profile_start_min =
+					static_cast<int>(demand_period_starting_hours * 60);
+				int period_end_min =
+					static_cast<int>(demand_period_ending_hours * 60);
+				int profile_last_min =
+					std::max(profile_start_min, period_end_min - 5);
+				double start_speed = has_observed_start_speed
+					? Link[k].QVDF_start_speed_observed : spd_e;
+				double end_speed = has_observed_end_speed
+					? Link[k].QVDF_end_speed_observed : spd_e;
+				double profile_span_min =
+					static_cast<double>(profile_last_min - profile_start_min);
+				auto smoothstep01 = [](double value)
+					{
+						double position = fmin(1.0, fmax(0.0, value));
+						return position * position * (3.0 - 2.0 * position);
+					};
+
+				for (int t_in_min = profile_start_min;
+					t_in_min <= profile_last_min; t_in_min += 5)
+				{
+					double factor = profile_span_min > 1e-9
+						? (t_in_min - profile_start_min) / profile_span_min
+						: 0.0;
+					double smooth_factor = smoothstep01(factor);
+					model_speed[t_in_min / 5] =
+						(1.0 - smooth_factor) * start_speed
+						+ smooth_factor * end_speed;
+				}
+
+				// The end observation wins when an unusually short period emits only
+				// one sample, matching the generated-profile anchor precedence.
+				model_speed[profile_start_min / 5] = start_speed;
+				if (profile_last_min > profile_start_min || has_observed_end_speed)
+					model_speed[profile_last_min / 5] = end_speed;
+
+				Severe_Congestion_P = 0.0;
+				for (int t_in_min = profile_start_min;
+					t_in_min <= profile_last_min; t_in_min += 5)
+				{
+					if (model_speed[t_in_min / 5] < Link[k].free_speed * 0.5)
+						Severe_Congestion_P += 5.0 / 60;
+				}
+			}
 		}
 
 

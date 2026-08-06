@@ -20,4 +20,7 @@ The same test module covers GitHub issue #16 profile activation modes, status
 reasons, flat-profile reporting, alternative facility codes, volume-threshold
 precedence, and optional `qvdf_start_speed_mph` / `qvdf_end_speed_mph` anchors.
 Boundary observations are blended continuously toward the modeled trough and
-fall back independently when either value is missing or invalid.
+fall back independently when either value is missing or invalid. When QVDF
+generation is ineligible, the tests also verify that either valid anchor creates
+an observed-only smooth connector to the assigned flat speed on a missing side,
+while explicit disabled mode remains flat.
