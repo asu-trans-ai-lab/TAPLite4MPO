@@ -54,7 +54,7 @@ from `vdf_type`, which continues to select the assignment travel-time function:
 | missing or blank | legacy auto: generate for `link_type=1`, a Cube-style code ending in `01`, or a link with valid observed `t2_hour` |
 | `0` | disabled: write a flat period-average profile |
 | `1` | model-generated on any link; use valid observed `t2_hour`, otherwise the assignment-period midpoint |
-| `2` | observed-gated: require valid observed `t2_hour`, otherwise write a flat profile |
+| `2` | observed-gated: require valid observed `t2_hour`; otherwise use the boundary/flat fallback policy below |
 
 `qvdf_volume_threshold` remains a hard computational guard after profile
 eligibility is determined. Therefore mode `1` overrides link-type selection but
@@ -63,15 +63,21 @@ selector; invalid values warn and also use legacy auto.
 
 Every full-output row includes `qvdf_profile_status`. Generated values are
 `generated_legacy_link_type`, `generated_legacy_observed_t2`,
-`generated_model`, and `generated_observed`. Flat reasons are `flat_disabled`,
+`generated_model`, and `generated_observed`. Observed-only fallback values are
+`smoothed_boundary_missing_observation`,
+`smoothed_boundary_below_volume_threshold`, and
+`smoothed_boundary_legacy_not_selected`. Flat reasons are `flat_disabled`,
 `flat_missing_observation`, `flat_below_volume_threshold`, and
 `flat_legacy_not_selected`.
 
-For a flat fallback, the kernel uses the exact assigned period-average speed
-`length / (travel_time / 60)`, fills every five-minute sample with that speed,
-sets the QVDF average-speed fields to the same value, and sets
-`avg_QVDF_period_travel_time` to the assigned travel time. Thus `VHT_QVDF` and
-`PHT_QVDF` remain meaningful instead of appearing as failed zero calculations.
+When QVDF generation is skipped, mode `0` always remains flat. For every other
+mode, either valid boundary-speed observation produces an observed-only cubic
+smoothstep connector across the emitted period; the assigned period-average
+speed `length / (travel_time / 60)` supplies any missing endpoint. With no
+valid boundary observation, every sample remains at that assigned speed. In
+both cases the scalar QVDF fallback fields retain the assigned period-average
+speed and travel time, so `VHT_QVDF` and `PHT_QVDF` remain meaningful and the
+connector cannot be mistaken for an analytically generated QVDF calculation.
 
 `t2_hour` is link- and assignment-period-specific. For example, `7.5` means
 07:30. Put the appropriate period-specific values in that period's `link.csv`;
@@ -123,9 +129,12 @@ five minutes before `period_end`. Each side falls back independently to the
 existing modeled/free-flow profile when its column is missing, blank, invalid,
 or non-positive; invalid nonblank values produce a link-specific warning.
 
-Boundary anchoring is applied only to generated QVDF profiles. Disabled,
-observed-gated-without-observation, below-threshold, and legacy-unselected rows
-remain flat even when boundary-speed columns are supplied.
+For a generated QVDF profile, each missing boundary observation independently
+uses the existing modeled profile on that side. When QVDF generation is
+skipped for a missing observed `t2`, the volume threshold, or legacy selection,
+any valid start or end observation instead activates an observed-only fallback.
+The missing side uses the assigned period-average speed. Explicit mode `0`
+remains flat even when boundary-speed columns are supplied.
 
 Let `v_raw(t)` be the modeled QVDF profile and `psi(r)=r^2(3-2r)`. From the
 first sample to `t2`, the starting observation is blended with weight
@@ -135,6 +144,13 @@ boundary and zero at `t2`. This preserves `P`, `t0/t2/t3`, `vt2`, and the
 analytical period-average QVDF speed/travel time while providing continuous
 observed boundary transitions. `Severe_Congestion_P` is recomputed from the
 final anchored samples because it is profile-derived.
+
+For an observed-only fallback, let `v_start` and `v_end` be the valid observed
+speeds or the assigned period-average speed on a missing side. Across the first
+through last emitted samples,
+`r=(t-period_start)/(profile_last-period_start)` and
+`v(t)=(1-psi(r))*v_start+psi(r)*v_end`. This connector does not invent
+`P`, `t0`, `t2`, `t3`, or a QVDF trough; those remain fallback values.
 
 ---
 
