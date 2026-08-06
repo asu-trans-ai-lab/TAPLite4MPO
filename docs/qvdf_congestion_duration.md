@@ -136,14 +136,27 @@ any valid start or end observation instead activates an observed-only fallback.
 The missing side uses the assigned period-average speed. Explicit mode `0`
 remains flat even when boundary-speed columns are supplied.
 
-Let `v_raw(t)` be the modeled QVDF profile and `psi(r)=r^2(3-2r)`. From the
-first sample to `t2`, the starting observation is blended with weight
-`1-psi(r)`; from `t2` to the last sample, the ending observation is blended
-with weight `psi(r)`. The observation influence is therefore exact at its
-boundary and zero at `t2`. This preserves `P`, `t0/t2/t3`, `vt2`, and the
-analytical period-average QVDF speed/travel time while providing continuous
-observed boundary transitions. `Severe_Congestion_P` is recomputed from the
-final anchored samples because it is profile-derived.
+Let `v_raw(t)` be the modeled QVDF profile, `v_b=max(congestion_ref_speed,
+avg_queue_speed)`, and `psi(r)=r^2(3-2r)`. The default generated-profile rule
+blends the starting observation from the first sample to `t2` with weight
+`1-psi(r)` and the ending observation from `t2` to the last sample with weight
+`psi(r)`. The observation is therefore exact at its boundary and has zero
+influence at `t2`.
+
+Each side independently switches to a monotone cubic Hermite splice only when
+an observed `t2` exists and its anchor satisfies
+`vt2 + margin < v_anchor < v_b`, where
+`margin=max(2 mph, 0.10*(v_b-vt2))`. The splice searches inward for a raw point
+below the anchor whose raw slope satisfies the monotone Hermite bound. It uses
+zero slope at the observed boundary and matches the raw QVDF slope at the join;
+the raw profile is unchanged inward of that join. If no suitable join exists,
+or the anchor is outside the eligible range, the default smoothstep blend is
+used unchanged. Missing anchors, modeled-midpoint `t2` profiles, and skipped
+QVDF profiles also retain their existing behavior.
+
+Both generated-profile paths preserve `P`, `t0/t2/t3`, `vt2`, and the
+analytical period-average QVDF speed/travel time. `Severe_Congestion_P` is
+recomputed from the final anchored samples because it is profile-derived.
 
 For an observed-only fallback, let `v_start` and `v_end` be the valid observed
 speeds or the assigned period-average speed on a missing side. Across the first

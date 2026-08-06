@@ -521,6 +521,157 @@ class ObservedQvdfT2Tests(unittest.TestCase):
             )
             self.assertEqual(row[trough_column], raw[trough_column])
 
+    def test_margin_eligible_anchors_use_monotone_hermite(self):
+        temporary, result, baseline = _run_variant()
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        temporary, result, anchored = _run_variant(
+            start_speeds=["40", "40"],
+            end_speeds=["38", "38"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        unchanged = (
+            "P",
+            "t0",
+            "t2",
+            "t3",
+            "vt2_mph",
+            "avg_queue_speed_mph",
+            "avg_QVDF_period_speed_mph",
+            "avg_QVDF_period_travel_time",
+        )
+        for link_id, row in anchored.items():
+            raw = baseline[link_id]
+            vt2 = float(row["vt2_mph"])
+            boundary_speed = max(
+                float(row["congestion_ref_speed_mph"]),
+                float(row["avg_queue_speed_mph"]),
+            )
+            margin = max(2.0, 0.10 * (boundary_speed - vt2))
+            self.assertGreater(40.0, vt2 + margin)
+            self.assertLess(40.0, boundary_speed)
+            self.assertGreater(38.0, vt2 + margin)
+            self.assertLess(38.0, boundary_speed)
+            for column in unchanged:
+                self.assertEqual(row[column], raw[column], column)
+
+            speed_columns = self._speed_columns(row)
+            pivot = float(row["t2"])
+            pivot_index = min(
+                range(len(speed_columns)),
+                key=lambda index: abs(
+                    self._decimal_hour(speed_columns[index]) - pivot
+                ),
+            )
+            profile = [float(row[column]) for column in speed_columns]
+            raw_profile = [float(raw[column]) for column in speed_columns]
+
+            self.assertAlmostEqual(profile[0], 40.0, delta=0.0011)
+            self.assertAlmostEqual(profile[-1], 38.0, delta=0.0011)
+            self.assertEqual(profile[pivot_index], raw_profile[pivot_index])
+            self.assertTrue(
+                all(
+                    profile[index + 1] <= profile[index] + 0.0011
+                    for index in range(pivot_index)
+                )
+            )
+            self.assertTrue(
+                all(
+                    profile[index + 1] >= profile[index] - 0.0011
+                    for index in range(pivot_index, len(profile) - 1)
+                )
+            )
+            self.assertLessEqual(
+                max(profile[: pivot_index + 1]), 40.0 + 0.0011
+            )
+            self.assertLessEqual(max(profile[pivot_index:]), 38.0 + 0.0011)
+
+            # Zero boundary slopes make the first/last Hermite increments
+            # smaller than their adjacent increments. At least one interior
+            # raw sample remains unchanged on each side of the trough.
+            self.assertLess(
+                abs(profile[1] - profile[0]),
+                abs(profile[2] - profile[1]),
+            )
+            self.assertLess(
+                abs(profile[-1] - profile[-2]),
+                abs(profile[-2] - profile[-3]),
+            )
+            self.assertTrue(
+                any(
+                    abs(profile[index] - raw_profile[index]) <= 0.0011
+                    for index in range(1, pivot_index)
+                )
+            )
+            self.assertTrue(
+                any(
+                    abs(profile[index] - raw_profile[index]) <= 0.0011
+                    for index in range(pivot_index + 1, len(profile) - 1)
+                )
+            )
+
+    def test_ineligible_anchor_ranges_keep_current_blend(self):
+        def assert_current_blend(row, raw, start_speed, end_speed):
+            speed_columns = self._speed_columns(row)
+            profile_start = self._decimal_hour(speed_columns[0])
+            profile_last = self._decimal_hour(speed_columns[-1])
+            pivot = float(row["t2"])
+            for column in speed_columns:
+                t = self._decimal_hour(column)
+                raw_speed = float(raw[column])
+                if t <= pivot:
+                    factor = (t - profile_start) / (pivot - profile_start)
+                    smooth = factor * factor * (3.0 - 2.0 * factor)
+                    expected = (
+                        (1.0 - smooth) * start_speed + smooth * raw_speed
+                    )
+                else:
+                    factor = (t - pivot) / (profile_last - pivot)
+                    smooth = factor * factor * (3.0 - 2.0 * factor)
+                    expected = (
+                        (1.0 - smooth) * raw_speed + smooth * end_speed
+                    )
+                self.assertAlmostEqual(
+                    float(row[column]), expected, delta=0.0011, msg=column
+                )
+
+        temporary, result, baseline = _run_variant()
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        temporary, result, near_trough = _run_variant(
+            start_speeds=["32", "32"],
+            end_speeds=["31", "31"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for link_id, row in near_trough.items():
+            # vt2=30 and the configured margin is 2 mph, so the strict lower
+            # eligibility bound excludes a 32 mph anchor.
+            assert_current_blend(row, baseline[link_id], 32.0, 31.0)
+
+        temporary, result, midpoint_baseline = _run_variant(
+            values=["", ""],
+            profile_modes=["1", "1"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        temporary, result, midpoint_anchored = _run_variant(
+            values=["", ""],
+            profile_modes=["1", "1"],
+            start_speeds=["40", "40"],
+            end_speeds=["38", "38"],
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for link_id, row in midpoint_anchored.items():
+            # Mode 1 can generate around a modeled midpoint, but without an
+            # observed t2 it must retain the historical anchor blend.
+            assert_current_blend(
+                row, midpoint_baseline[link_id], 40.0, 38.0
+            )
+
     def test_boundary_anchors_work_when_queue_window_touches_period_edges(self):
         temporary, result, rows = _run_variant(
             values=["6.25", "8.75"],

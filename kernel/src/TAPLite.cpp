@@ -7366,9 +7366,11 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 
 	// Anchor optional observed speeds to the first and last emitted samples.
 	// The CSV profile is half-open [period_start, period_end), so its last sample
-	// is period_end - 5 minutes. On each side, a cubic smoothstep blend tapers
-	// the observation's influence to zero at t2. This preserves the analytical
-	// QVDF trough and scalar period-average values while remaining continuous.
+	// is period_end - 5 minutes. The historical cubic smoothstep blend remains
+	// the default on each side. With an observed t2, an anchor clearly between
+	// vt2 and the modeled boundary instead uses a monotone cubic Hermite splice:
+	// zero slope at the observation and the raw QVDF slope at the inward join.
+	// Both paths preserve the analytical trough and scalar period-average values.
 	bool has_start_speed = std::isfinite(Link[k].QVDF_start_speed_observed);
 	bool has_end_speed = std::isfinite(Link[k].QVDF_end_speed_observed);
 	if (has_start_speed || has_end_speed)
@@ -7380,46 +7382,168 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 		double profile_last_hour = profile_last_min / 60.0;
 		double anchor_pivot = fmin(
 			profile_last_hour, fmax(profile_start_hour, t2));
+		bool has_observed_t2 = std::isfinite(Link[k].QVDF_t2);
+		double anchor_margin = fmax(
+			2.0, 0.10 * fmax(0.0, boundary_speed - vt2));
+		auto use_monotone_hermite = [&](double anchor_speed)
+			{
+				return has_observed_t2 &&
+					anchor_speed > vt2 + anchor_margin &&
+					anchor_speed < boundary_speed;
+			};
+		auto monotone_hermite_value = [](
+			double start_speed, double end_speed,
+			double start_slope, double end_slope,
+			double span_hours, double factor)
+			{
+				double position = fmin(1.0, fmax(0.0, factor));
+				double position2 = position * position;
+				double position3 = position2 * position;
+				double h00 = 2.0 * position3 - 3.0 * position2 + 1.0;
+				double h10 = position3 - 2.0 * position2 + position;
+				double h01 = -2.0 * position3 + 3.0 * position2;
+				double h11 = position3 - position2;
+				double value =
+					h00 * start_speed + h10 * span_hours * start_slope +
+					h01 * end_speed + h11 * span_hours * end_slope;
+				return fmin(fmax(start_speed, end_speed),
+					fmax(fmin(start_speed, end_speed), value));
+			};
 
 		if (has_start_speed)
 		{
-			double left_span = anchor_pivot - profile_start_hour;
-			for (int t_in_min = profile_start_min;
-				t_in_min <= profile_last_min && t_in_min / 60.0 <= anchor_pivot;
-				t_in_min += 5)
+			double start_speed = Link[k].QVDF_start_speed_observed;
+			bool used_monotone_hermite = false;
+			if (use_monotone_hermite(start_speed))
 			{
-				int t_interval = t_in_min / 5;
-				double t = t_in_min / 60.0;
-				double observed_weight = left_span > 1e-9
-					? 1.0 - smoothstep01((t - profile_start_hour) / left_span)
-					: (t_in_min == profile_start_min ? 1.0 : 0.0);
-				model_speed[t_interval] =
-					observed_weight * Link[k].QVDF_start_speed_observed +
-					(1.0 - observed_weight) * model_speed[t_interval];
+				for (int join_min = profile_start_min + 5;
+					join_min <= profile_last_min &&
+					join_min / 60.0 <= anchor_pivot;
+					join_min += 5)
+				{
+					double join_speed = model_speed[join_min / 5];
+					if (join_speed >= start_speed)
+						continue;
+					double span_hours = (join_min - profile_start_min) / 60.0;
+					double secant_slope =
+						(join_speed - start_speed) / span_hours;
+					int next_min = std::min(profile_last_min, join_min + 5);
+					double slope_span_hours = (next_min - join_min) / 60.0;
+					double join_slope = slope_span_hours > 1e-9
+						? (model_speed[next_min / 5] - join_speed) /
+							slope_span_hours
+						: 0.0;
+					if (join_slope > 0.0 ||
+						join_slope / secant_slope > 3.0)
+						continue;
+
+					for (int t_in_min = profile_start_min;
+						t_in_min <= join_min; t_in_min += 5)
+					{
+						double factor = static_cast<double>(
+							t_in_min - profile_start_min) /
+							(join_min - profile_start_min);
+						model_speed[t_in_min / 5] = monotone_hermite_value(
+							start_speed, join_speed, 0.0, join_slope,
+							span_hours, factor);
+					}
+					used_monotone_hermite = true;
+					break;
+				}
+			}
+
+			if (!used_monotone_hermite)
+			{
+				double left_span = anchor_pivot - profile_start_hour;
+				for (int t_in_min = profile_start_min;
+					t_in_min <= profile_last_min &&
+					t_in_min / 60.0 <= anchor_pivot;
+					t_in_min += 5)
+				{
+					int t_interval = t_in_min / 5;
+					double t = t_in_min / 60.0;
+					double observed_weight = left_span > 1e-9
+						? 1.0 - smoothstep01(
+							(t - profile_start_hour) / left_span)
+						: (t_in_min == profile_start_min ? 1.0 : 0.0);
+					model_speed[t_interval] =
+						observed_weight * start_speed +
+						(1.0 - observed_weight) * model_speed[t_interval];
+				}
 			}
 			model_speed[profile_start_min / 5] =
-				Link[k].QVDF_start_speed_observed;
+				start_speed;
 		}
 
 		if (has_end_speed)
 		{
-			double right_span = profile_last_hour - anchor_pivot;
-			for (int t_in_min = profile_start_min;
-				t_in_min <= profile_last_min; t_in_min += 5)
+			double end_speed = Link[k].QVDF_end_speed_observed;
+			bool used_monotone_hermite = false;
+			if (use_monotone_hermite(end_speed))
 			{
-				double t = t_in_min / 60.0;
-				if (t < anchor_pivot)
-					continue;
-				int t_interval = t_in_min / 5;
-				double observed_weight = right_span > 1e-9
-					? smoothstep01((t - anchor_pivot) / right_span)
-					: (t_in_min == profile_last_min ? 1.0 : 0.0);
-				model_speed[t_interval] =
-					(1.0 - observed_weight) * model_speed[t_interval] +
-					observed_weight * Link[k].QVDF_end_speed_observed;
+				for (int join_min = profile_last_min - 5;
+					join_min >= profile_start_min &&
+					join_min / 60.0 >= anchor_pivot;
+					join_min -= 5)
+				{
+					double join_speed = model_speed[join_min / 5];
+					if (join_speed >= end_speed)
+						continue;
+					double span_hours = (profile_last_min - join_min) / 60.0;
+					double secant_slope =
+						(end_speed - join_speed) / span_hours;
+					int adjacent_min = join_min > anchor_pivot * 60.0 + 1e-9
+						? std::max(profile_start_min, join_min - 5)
+						: std::min(profile_last_min, join_min + 5);
+					double slope_span_hours = fabs(adjacent_min - join_min) / 60.0;
+					double join_slope = 0.0;
+					if (slope_span_hours > 1e-9)
+					{
+						join_slope = adjacent_min < join_min
+							? (join_speed - model_speed[adjacent_min / 5]) /
+								slope_span_hours
+							: (model_speed[adjacent_min / 5] - join_speed) /
+								slope_span_hours;
+					}
+					if (join_slope < 0.0 ||
+						join_slope / secant_slope > 3.0)
+						continue;
+
+					for (int t_in_min = join_min;
+						t_in_min <= profile_last_min; t_in_min += 5)
+					{
+						double factor = static_cast<double>(
+							t_in_min - join_min) /
+							(profile_last_min - join_min);
+						model_speed[t_in_min / 5] = monotone_hermite_value(
+							join_speed, end_speed, join_slope, 0.0,
+							span_hours, factor);
+					}
+					used_monotone_hermite = true;
+					break;
+				}
+			}
+
+			if (!used_monotone_hermite)
+			{
+				double right_span = profile_last_hour - anchor_pivot;
+				for (int t_in_min = profile_start_min;
+					t_in_min <= profile_last_min; t_in_min += 5)
+				{
+					double t = t_in_min / 60.0;
+					if (t < anchor_pivot)
+						continue;
+					int t_interval = t_in_min / 5;
+					double observed_weight = right_span > 1e-9
+						? smoothstep01((t - anchor_pivot) / right_span)
+						: (t_in_min == profile_last_min ? 1.0 : 0.0);
+					model_speed[t_interval] =
+						(1.0 - observed_weight) * model_speed[t_interval] +
+						observed_weight * end_speed;
+				}
 			}
 			model_speed[profile_last_min / 5] =
-				Link[k].QVDF_end_speed_observed;
+				end_speed;
 		}
 
 		// Severe congestion is profile-derived, so recompute it from the anchored,

@@ -193,6 +193,12 @@ fast node-based path. See section 7.
   the visible `t3-t0` span. Outside `[t0,t3]`, the reported five-minute profile
   uses a parameter-free cubic smoothstep to connect free-flow speed to the
   queue-boundary speed, avoiding the corners produced by linear interpolation.
+  Valid boundary-speed anchors normally retain the historical smoothstep blend
+  toward `t2`. With an observed `t2`, an anchor more than
+  `max(2 mph, 10% of the boundary-to-trough speed range)` above `vt2` but below
+  the modeled queue-boundary speed instead uses a monotone cubic Hermite splice
+  into the raw QVDF profile. This selection is independent on the start and end
+  sides and does not change analytical QVDF scalars or assignment travel time.
 - **`3` BPR2** (AequilibraE): BPR with the exponent doubled above capacity —
   `t0(1+α·x^β)` for x≤1, `t0(1+α·x^{2β})` for x>1 (steeper over-saturation).
 - **`4` INRETS** (AequilibraE): `t0(1.1−α·x)/(1.1−x)` for x≤1, `t0·((1.1−α)/0.1)·x²`
