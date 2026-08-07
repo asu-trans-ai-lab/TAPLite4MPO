@@ -385,8 +385,9 @@ int g_link_performance_output = 2;
 // networks. settings 'accessibility_output' (default 1 = on; 0 = fast verify runs).
 int g_accessibility_output = 1;
 // In FULL output mode, run the expensive per-link Link_QueueVDF speed profile ONLY
-// for freeway links (link_type==1) carrying volume >= this threshold; other links
-// get zeroed QVDF columns. settings 'qvdf_volume_threshold' (default 0 = all links).
+// for otherwise-eligible links carrying positive volume at or above this threshold.
+// Skipped links retain a flat numeric compatibility profile. settings
+// 'qvdf_volume_threshold' (default 0 = all positive-volume eligible links).
 double g_qvdf_volume_threshold = 0.0;
 // Shortest-path algorithm (settings 'sp_algorithm'): 1 = binary-heap Dijkstra
 // label-setting (DEFAULT -- equal-or-faster everywhere, ~20-50x faster on large
@@ -5834,8 +5835,9 @@ int AssignmentAPI()
 		// missing qvdf_profile_mode (-1) preserves the historical behavior exactly:
 		// freeway link_type encodings or an observed t2 request a QVDF profile.
 		// Explicit mode 0 disables it, mode 1 selects it independent of link_type,
-		// and mode 2 gates it on an observed t2. The volume threshold remains a
-		// hard computational guard for every mode that is otherwise eligible.
+		// and mode 2 gates it on an observed t2. Positive assigned volume and the
+		// volume threshold remain hard computational guards for every mode that is
+		// otherwise eligible.
 		bool is_freeway_link_type =
 			(Link[k].link_type == 1) ||
 			(Link[k].link_type >= 100 && Link[k].link_type % 100 == 1);
@@ -5868,9 +5870,13 @@ int AssignmentAPI()
 					: "generated_legacy_observed_t2";
 			break;
 		}
-		bool do_qvdf = qvdf_eligible &&
+		bool has_positive_qvdf_volume =
+			std::isfinite(MainVolume[k]) && MainVolume[k] > 0.0;
+		bool do_qvdf = qvdf_eligible && has_positive_qvdf_volume &&
 			(MainVolume[k] >= g_qvdf_volume_threshold);
-		if (qvdf_eligible && !do_qvdf)
+		if (!has_positive_qvdf_volume)
+			qvdf_profile_status = "flat_zero_volume";
+		else if (qvdf_eligible && !do_qvdf)
 			qvdf_profile_status = "flat_below_volume_threshold";
 		// Boundary observations are also useful when QVDF generation is skipped.
 		// Except for explicit mode 0, use any valid side as an observed-only
@@ -5878,7 +5884,8 @@ int AssignmentAPI()
 		// Preserve the skip reason in the status so the connector is not mistaken
 		// for an analytically generated QVDF profile.
 		bool use_smoothed_boundary_fallback =
-			!do_qvdf && Link[k].QVDF_profile_mode != 0 &&
+			has_positive_qvdf_volume && !do_qvdf &&
+			Link[k].QVDF_profile_mode != 0 &&
 			(has_observed_start_speed || has_observed_end_speed);
 		if (use_smoothed_boundary_fallback)
 		{
@@ -5894,6 +5901,26 @@ int AssignmentAPI()
 			t2 = std::isfinite(Link[k].QVDF_t2)
 				? Link[k].QVDF_t2 : DemandPeriodMidpointHours();
 			Link_QueueVDF(k, MainVolume[k], IncomingDemand, DOC, P, t0, t2, t3, vt2, mu, Q_gamma, congestion_ref_speed, avg_queue_speed, avg_QVDF_period_speed, Severe_Congestion_P, model_speed);
+
+			// A valid observed anchor at or below the Hermite margin uses the
+			// direct anchor-to-vt2 connector in Link_QueueVDF. Report that
+			// observation/model conflict explicitly instead of presenting it as
+			// an ordinary generated profile.
+			double generated_boundary_speed =
+				fmax(congestion_ref_speed, avg_queue_speed);
+			double generated_anchor_margin = fmax(
+				2.0, 0.10 * fmax(0.0, generated_boundary_speed - vt2));
+			bool used_low_anchor_connector = has_observed_qvdf_t2 &&
+				((has_observed_start_speed &&
+					Link[k].QVDF_start_speed_observed < generated_boundary_speed &&
+					Link[k].QVDF_start_speed_observed <=
+						vt2 + generated_anchor_margin) ||
+				 (has_observed_end_speed &&
+					Link[k].QVDF_end_speed_observed < generated_boundary_speed &&
+					Link[k].QVDF_end_speed_observed <=
+						vt2 + generated_anchor_margin));
+			if (used_low_anchor_connector)
+				qvdf_profile_status = "generated_low_anchor_connector";
 		}
 		else
 		{
@@ -7366,11 +7393,12 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 
 	// Anchor optional observed speeds to the first and last emitted samples.
 	// The CSV profile is half-open [period_start, period_end), so its last sample
-	// is period_end - 5 minutes. The historical cubic smoothstep blend remains
-	// the default on each side. With an observed t2, an anchor clearly between
-	// vt2 and the modeled boundary instead uses a monotone cubic Hermite splice:
-	// zero slope at the observation and the raw QVDF slope at the inward join.
-	// Both paths preserve the analytical trough and scalar period-average values.
+	// is period_end - 5 minutes. With an observed t2, a low anchor connects
+	// directly to vt2 with cubic smoothstep so the raw shoulder cannot create an
+	// artificial reversal. An anchor clearly between vt2 and the modeled boundary
+	// instead uses a monotone cubic Hermite splice: zero slope at the observation
+	// and the raw QVDF slope at the inward join. The historical blend remains the
+	// fallback, and every path preserves the analytical scalar values.
 	bool has_start_speed = std::isfinite(Link[k].QVDF_start_speed_observed);
 	bool has_end_speed = std::isfinite(Link[k].QVDF_end_speed_observed);
 	if (has_start_speed || has_end_speed)
@@ -7390,6 +7418,12 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 				return has_observed_t2 &&
 					anchor_speed > vt2 + anchor_margin &&
 					anchor_speed < boundary_speed;
+			};
+		auto use_low_anchor_connector = [&](double anchor_speed)
+			{
+				return has_observed_t2 &&
+					anchor_speed < boundary_speed &&
+					anchor_speed <= vt2 + anchor_margin;
 			};
 		auto monotone_hermite_value = [](
 			double start_speed, double end_speed,
@@ -7413,8 +7447,30 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 		if (has_start_speed)
 		{
 			double start_speed = Link[k].QVDF_start_speed_observed;
+			bool used_low_anchor_connector = false;
+			if (use_low_anchor_connector(start_speed))
+			{
+				double left_span = anchor_pivot - profile_start_hour;
+				if (left_span > 1e-9)
+				{
+					for (int t_in_min = profile_start_min;
+						t_in_min <= profile_last_min &&
+						t_in_min / 60.0 <= anchor_pivot;
+						t_in_min += 5)
+					{
+						double t = t_in_min / 60.0;
+						double smooth_factor = smoothstep01(
+							(t - profile_start_hour) / left_span);
+						model_speed[t_in_min / 5] =
+							(1.0 - smooth_factor) * start_speed +
+							smooth_factor * vt2;
+					}
+				}
+				used_low_anchor_connector = true;
+			}
 			bool used_monotone_hermite = false;
-			if (use_monotone_hermite(start_speed))
+			if (!used_low_anchor_connector &&
+				use_monotone_hermite(start_speed))
 			{
 				for (int join_min = profile_start_min + 5;
 					join_min <= profile_last_min &&
@@ -7452,7 +7508,7 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 				}
 			}
 
-			if (!used_monotone_hermite)
+			if (!used_low_anchor_connector && !used_monotone_hermite)
 			{
 				double left_span = anchor_pivot - profile_start_hour;
 				for (int t_in_min = profile_start_min;
@@ -7478,8 +7534,30 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 		if (has_end_speed)
 		{
 			double end_speed = Link[k].QVDF_end_speed_observed;
+			bool used_low_anchor_connector = false;
+			if (use_low_anchor_connector(end_speed))
+			{
+				double right_span = profile_last_hour - anchor_pivot;
+				if (right_span > 1e-9)
+				{
+					for (int t_in_min = profile_start_min;
+						t_in_min <= profile_last_min; t_in_min += 5)
+					{
+						double t = t_in_min / 60.0;
+						if (t < anchor_pivot)
+							continue;
+						double smooth_factor = smoothstep01(
+							(t - anchor_pivot) / right_span);
+						model_speed[t_in_min / 5] =
+							(1.0 - smooth_factor) * vt2 +
+							smooth_factor * end_speed;
+					}
+				}
+				used_low_anchor_connector = true;
+			}
 			bool used_monotone_hermite = false;
-			if (use_monotone_hermite(end_speed))
+			if (!used_low_anchor_connector &&
+				use_monotone_hermite(end_speed))
 			{
 				for (int join_min = profile_last_min - 5;
 					join_min >= profile_start_min &&
@@ -7524,7 +7602,7 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 				}
 			}
 
-			if (!used_monotone_hermite)
+			if (!used_low_anchor_connector && !used_monotone_hermite)
 			{
 				double right_span = profile_last_hour - anchor_pivot;
 				for (int t_in_min = profile_start_min;
