@@ -56,26 +56,32 @@ from `vdf_type`, which continues to select the assignment travel-time function:
 | `1` | model-generated on any link; use valid observed `t2_hour`, otherwise the assignment-period midpoint |
 | `2` | observed-gated: require valid observed `t2_hour`; otherwise use the boundary/flat fallback policy below |
 
+Positive assigned volume is required before QVDF generation, and
 `qvdf_volume_threshold` remains a hard computational guard after profile
 eligibility is determined. Therefore mode `1` overrides link-type selection but
-does not bypass the threshold. Missing or blank mode cells preserve the legacy
-selector; invalid values warn and also use legacy auto.
+does not bypass either volume guard. Missing or blank mode cells preserve the
+legacy selector; invalid values warn and also use legacy auto.
 
 Every full-output row includes `qvdf_profile_status`. Generated values are
 `generated_legacy_link_type`, `generated_legacy_observed_t2`,
-`generated_model`, and `generated_observed`. Observed-only fallback values are
+`generated_model`, `generated_observed`, and
+`generated_low_anchor_connector`. Observed-only fallback values are
 `smoothed_boundary_missing_observation`,
 `smoothed_boundary_below_volume_threshold`, and
 `smoothed_boundary_legacy_not_selected`. Flat reasons are `flat_disabled`,
-`flat_missing_observation`, `flat_below_volume_threshold`, and
+`flat_zero_volume`, `flat_missing_observation`, `flat_below_volume_threshold`, and
 `flat_legacy_not_selected`.
 
-When QVDF generation is skipped, mode `0` always remains flat. For every other
-mode, either valid boundary-speed observation produces an observed-only cubic
-smoothstep connector across the emitted period; the assigned period-average
-speed `length / (travel_time / 60)` supplies any missing endpoint. With no
-valid boundary observation, every sample remains at that assigned speed. In
-both cases the scalar QVDF fallback fields retain the assigned period-average
+When assigned volume is zero, the kernel skips QVDF generation and boundary
+smoothing for every activation mode. It emits `flat_zero_volume`, keeps the
+link row and numeric schema intact, and fills every sample with the assigned
+period-average speed `length / (travel_time / 60)` (or free speed when travel
+time is unusable). For positive-volume links where QVDF generation is skipped,
+mode `0` always remains flat. In every other mode, either valid boundary-speed
+observation produces an observed-only cubic smoothstep connector across the
+emitted period; the assigned period-average speed supplies any missing endpoint.
+With no valid boundary observation, every sample remains at that assigned speed.
+In all fallback cases the scalar QVDF fields retain the assigned period-average
 speed and travel time, so `VHT_QVDF` and `PHT_QVDF` remain meaningful and the
 connector cannot be mistaken for an analytically generated QVDF calculation.
 
@@ -137,26 +143,31 @@ The missing side uses the assigned period-average speed. Explicit mode `0`
 remains flat even when boundary-speed columns are supplied.
 
 Let `v_raw(t)` be the modeled QVDF profile, `v_b=max(congestion_ref_speed,
-avg_queue_speed)`, and `psi(r)=r^2(3-2r)`. The default generated-profile rule
-blends the starting observation from the first sample to `t2` with weight
-`1-psi(r)` and the ending observation from `t2` to the last sample with weight
-`psi(r)`. The observation is therefore exact at its boundary and has zero
-influence at `t2`.
+avg_queue_speed)`, `margin=max(2 mph, 0.10*(v_b-vt2))`, and
+`psi(r)=r^2(3-2r)`. With an observed `t2`, each side selects its connector
+independently:
 
-Each side independently switches to a monotone cubic Hermite splice only when
-an observed `t2` exists and its anchor satisfies
-`vt2 + margin < v_anchor < v_b`, where
-`margin=max(2 mph, 0.10*(v_b-vt2))`. The splice searches inward for a raw point
-below the anchor whose raw slope satisfies the monotone Hermite bound. It uses
-zero slope at the observed boundary and matches the raw QVDF slope at the join;
-the raw profile is unchanged inward of that join. If no suitable join exists,
-or the anchor is outside the eligible range, the default smoothstep blend is
-used unchanged. Missing anchors, modeled-midpoint `t2` profiles, and skipped
-QVDF profiles also retain their existing behavior.
+- If `v_anchor < v_b` and `v_anchor <= vt2 + margin`, a direct cubic
+  smoothstep connects the boundary anchor to `vt2`. This suppresses a raw QVDF
+  shoulder that would otherwise make a low anchor rise toward `v_b`, reverse at
+  `t2`, and rise again. When `v_anchor < vt2`, the boundary observation becomes
+  the side's minimum and `vt2` is a pivot rather than the global profile trough;
+  this exposes the observation/model conflict without an artificial overshoot.
+- If `vt2 + margin < v_anchor < v_b`, a monotone cubic Hermite splice searches
+  inward for a raw point below the anchor whose raw slope satisfies the monotone
+  bound. It uses zero slope at the observed boundary and matches the raw QVDF
+  slope at the join; the raw profile is unchanged inward of that join.
+- Otherwise, or when no suitable Hermite join exists, the historical rule
+  blends the starting observation from the first sample to `t2` with weight
+  `1-psi(r)` and the ending observation from `t2` to the last sample with weight
+  `psi(r)`. The observation is exact at its boundary and has zero influence at
+  `t2`.
 
-Both generated-profile paths preserve `P`, `t0/t2/t3`, `vt2`, and the
-analytical period-average QVDF speed/travel time. `Severe_Congestion_P` is
-recomputed from the final anchored samples because it is profile-derived.
+Missing anchors, modeled-midpoint `t2` profiles, and skipped QVDF profiles
+retain their existing behavior. All generated-profile paths preserve `P`,
+`t0/t2/t3`, `vt2`, and the analytical period-average QVDF speed/travel time.
+`Severe_Congestion_P` is recomputed from the final anchored samples because it
+is profile-derived.
 
 For an observed-only fallback, let `v_start` and `v_end` be the valid observed
 speeds or the assigned period-average speed on a missing side. Across the first

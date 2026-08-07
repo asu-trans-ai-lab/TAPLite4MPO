@@ -123,6 +123,19 @@ def _rewrite_optional_link_column(path, column, values):
         writer.writerows(rows)
 
 
+def _rewrite_demand_volumes(path, values):
+    with path.open(newline="", encoding="utf-8-sig") as stream:
+        reader = csv.DictReader(stream)
+        fields = list(reader.fieldnames or [])
+        rows = list(reader)
+    for row, value in zip(rows, values):
+        row["volume"] = value
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _set_setting(path, column, value):
     with path.open(newline="", encoding="utf-8-sig") as stream:
         reader = csv.DictReader(stream)
@@ -149,6 +162,7 @@ def _run_variant(
     qvdf_volume_threshold=None,
     start_speeds=None,
     end_speeds=None,
+    demand_volumes=None,
 ):
     temporary = tempfile.TemporaryDirectory(prefix="qvdf_t2_")
     scenario = Path(temporary.name) / "scenario"
@@ -180,6 +194,8 @@ def _run_variant(
         _rewrite_optional_link_column(
             scenario / "link.csv", "qvdf_end_speed_mph", end_speeds
         )
+    if demand_volumes is not None:
+        _rewrite_demand_volumes(scenario / "demand.csv", demand_volumes)
     if qvdf_volume_threshold is not None:
         _set_setting(
             scenario / "settings.csv",
@@ -310,6 +326,64 @@ class ObservedQvdfT2Tests(unittest.TestCase):
                     self.assertAlmostEqual(
                         float(value), period_speed, delta=0.0011
                     )
+
+    def test_zero_volume_skips_qvdf_and_anchors_but_retains_flat_profile(self):
+        mode_cases = (
+            ("disabled", ["0", "0"]),
+            ("model", ["1", "1"]),
+            ("observed", ["2", "2"]),
+            ("legacy", None),
+        )
+        for label, profile_modes in mode_cases:
+            with self.subTest(label):
+                temporary, result, rows = _run_variant(
+                    profile_modes=profile_modes,
+                    start_speeds=["20", "25"],
+                    end_speeds=["30", "35"],
+                    demand_volumes=["0", "0"],
+                )
+                self.addCleanup(temporary.cleanup)
+                self.assertEqual(
+                    result.returncode, 0, result.stdout + result.stderr
+                )
+
+                for row in rows.values():
+                    period_speed = float(row["speed_mph"])
+                    self.assertEqual(
+                        row["qvdf_profile_status"], "flat_zero_volume"
+                    )
+                    self.assertEqual(float(row["volume"]), 0.0)
+                    self.assertEqual(float(row["P"]), 0.0)
+                    self.assertEqual(float(row["t0"]), 0.0)
+                    self.assertEqual(float(row["t2"]), 0.0)
+                    self.assertEqual(float(row["t3"]), 0.0)
+                    self.assertAlmostEqual(
+                        float(row["vt2_mph"]), period_speed, delta=0.0001
+                    )
+                    self.assertAlmostEqual(
+                        float(row["congestion_ref_speed_mph"]),
+                        period_speed,
+                        delta=0.0001,
+                    )
+                    self.assertAlmostEqual(
+                        float(row["avg_queue_speed_mph"]),
+                        period_speed,
+                        delta=0.0001,
+                    )
+                    self.assertAlmostEqual(
+                        float(row["avg_QVDF_period_speed_mph"]),
+                        period_speed,
+                        delta=0.0001,
+                    )
+                    self.assertAlmostEqual(
+                        float(row["avg_QVDF_period_travel_time"]),
+                        float(row["travel_time"]),
+                        delta=0.0001,
+                    )
+                    for column in self._speed_columns(row):
+                        self.assertAlmostEqual(
+                            float(row[column]), period_speed, delta=0.0011
+                        )
 
     def test_model_mode_selects_alternative_link_types_and_midpoint(self):
         temporary, result, rows = _run_variant(
@@ -612,7 +686,86 @@ class ObservedQvdfT2Tests(unittest.TestCase):
                 )
             )
 
-    def test_ineligible_anchor_ranges_keep_current_blend(self):
+    def test_low_anchors_connect_directly_to_vt2(self):
+        temporary, result, baseline = _run_variant()
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        for label, start_speed, end_speed in (
+            ("at_margin", 32.0, 31.0),
+            ("below_vt2", 20.0, 25.0),
+        ):
+            with self.subTest(label):
+                temporary, result, anchored = _run_variant(
+                    start_speeds=[str(start_speed), str(start_speed)],
+                    end_speeds=[str(end_speed), str(end_speed)],
+                )
+                self.addCleanup(temporary.cleanup)
+                self.assertEqual(
+                    result.returncode, 0, result.stdout + result.stderr
+                )
+
+                for link_id, row in anchored.items():
+                    raw = baseline[link_id]
+                    self.assertEqual(
+                        row["qvdf_profile_status"],
+                        "generated_low_anchor_connector",
+                    )
+                    for column in (
+                        "P",
+                        "t0",
+                        "t2",
+                        "t3",
+                        "vt2_mph",
+                        "avg_queue_speed_mph",
+                        "avg_QVDF_period_speed_mph",
+                        "avg_QVDF_period_travel_time",
+                    ):
+                        self.assertEqual(row[column], raw[column], column)
+
+                    speed_columns = self._speed_columns(row)
+                    profile_start = self._decimal_hour(speed_columns[0])
+                    profile_last = self._decimal_hour(speed_columns[-1])
+                    pivot = float(row["t2"])
+                    vt2 = float(row["vt2_mph"])
+                    profile = []
+                    for column in speed_columns:
+                        t = self._decimal_hour(column)
+                        if t <= pivot:
+                            factor = (t - profile_start) / (
+                                pivot - profile_start
+                            )
+                            smooth = factor * factor * (3.0 - 2.0 * factor)
+                            expected = (
+                                (1.0 - smooth) * start_speed + smooth * vt2
+                            )
+                        else:
+                            factor = (t - pivot) / (profile_last - pivot)
+                            smooth = factor * factor * (3.0 - 2.0 * factor)
+                            expected = (
+                                (1.0 - smooth) * vt2 + smooth * end_speed
+                            )
+                        actual = float(row[column])
+                        profile.append(actual)
+                        self.assertAlmostEqual(
+                            actual, expected, delta=0.0011, msg=column
+                        )
+
+                    pivot_index = min(
+                        range(len(speed_columns)),
+                        key=lambda index: abs(
+                            self._decimal_hour(speed_columns[index]) - pivot
+                        ),
+                    )
+                    self.assertAlmostEqual(
+                        profile[pivot_index], vt2, delta=0.0011
+                    )
+                    side_ceiling = max(start_speed, end_speed, vt2)
+                    side_floor = min(start_speed, end_speed, vt2)
+                    self.assertLessEqual(max(profile), side_ceiling + 0.0011)
+                    self.assertGreaterEqual(min(profile), side_floor - 0.0011)
+
+    def test_modeled_midpoint_anchors_keep_current_blend(self):
         def assert_current_blend(row, raw, start_speed, end_speed):
             speed_columns = self._speed_columns(row)
             profile_start = self._decimal_hour(speed_columns[0])
@@ -636,20 +789,6 @@ class ObservedQvdfT2Tests(unittest.TestCase):
                 self.assertAlmostEqual(
                     float(row[column]), expected, delta=0.0011, msg=column
                 )
-
-        temporary, result, baseline = _run_variant()
-        self.addCleanup(temporary.cleanup)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        temporary, result, near_trough = _run_variant(
-            start_speeds=["32", "32"],
-            end_speeds=["31", "31"],
-        )
-        self.addCleanup(temporary.cleanup)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for link_id, row in near_trough.items():
-            # vt2=30 and the configured margin is 2 mph, so the strict lower
-            # eligibility bound excludes a 32 mph anchor.
-            assert_current_blend(row, baseline[link_id], 32.0, 31.0)
 
         temporary, result, midpoint_baseline = _run_variant(
             values=["", ""],
