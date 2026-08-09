@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "C1_auto_Z1_Z4": true,
+    "C2_transit_Z1_Z2": true,
+    "C3_transfer_Z1_Z3": true,
+    "C4_pnr_Z5_Z3": true,
+    "C5_knr_Z1_Z3": true,
+    "C6_disconnected_detected": true,
+    "C7_supply_counts": true,
+    "C8_conservation_1200": true
+  },
+  "all_pass": true,
+  "supply": {
+    "L1_trips": 12,
+    "L2_trips_freq_expanded": 8
+  },
+  "demand_total": 1200
+}

@@ -1,0 +1,3 @@
+route_id,route_short_name,route_long_name,route_type
+L1,RAIL1,Golden A rail line (schedule-based),1
+L2,BUS2,Golden A bus line (frequency-based),3

@@ -1,0 +1,7 @@
+o_zone_id,d_zone_id,volume,submarket,expected_trip_type
+1,4,600,drive,auto: Z1 -> road 101-102-103-104 -> Z4
+1,2,200,transit_walk,transit: Z1 -walk- B1 -bus L2- B2 -walk- R2hub -walk- Z2
+1,3,150,transit_transfer,transfer: Z1 -walk- B1 -bus L2- B2 -transfer walk- R2 -rail L1- R3 -walk- Z3
+5,3,120,park_and_ride,P&R: Z5 -drive- 101 -park 301- walk R1 -rail L1- R3 -walk- Z3
+1,3,80,kiss_and_ride,K&R: Z1 -drive- 101-102 -dropoff 302- walk R2 -rail L1- R3 -walk- Z3
+6,3,50,disconnected,MUST BE DETECTED UNREACHABLE: Z6 has no connectors (deliberate)

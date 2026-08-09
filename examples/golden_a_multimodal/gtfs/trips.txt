@@ -1,0 +1,14 @@
+﻿trip_id,route_id,service_id,direction_id
+L1_t01,L1,WK,0
+L1_t02,L1,WK,0
+L1_t03,L1,WK,0
+L1_t04,L1,WK,0
+L1_t05,L1,WK,0
+L1_t06,L1,WK,0
+L1_t07,L1,WK,0
+L1_t08,L1,WK,0
+L1_t09,L1,WK,0
+L1_t10,L1,WK,0
+L1_t11,L1,WK,0
+L1_t12,L1,WK,0
+L2_template,L2,WK,0
