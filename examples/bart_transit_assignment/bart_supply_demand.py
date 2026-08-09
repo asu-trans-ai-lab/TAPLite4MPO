@@ -79,8 +79,11 @@ def build_crosswalk(links):
         rows.append({"zone_id": z, "station_code": code,
                      "conflict": conflict, "votes": dict(votes[z])})
     cw = pd.DataFrame(rows)
-    cw[["zone_id", "station_code", "conflict"]].to_csv(
-        os.path.join(HERE, "station_crosswalk.csv"), index=False)
+    # Never overwrite a curated crosswalk (it may carry inferred rows, e.g.
+    # zone 27 = MLBR, that chain alignment alone cannot recover).
+    out = os.path.join(HERE, "station_crosswalk.csv")
+    if not os.path.exists(out):
+        cw[["zone_id", "station_code", "conflict"]].to_csv(out, index=False)
     return cw
 
 
