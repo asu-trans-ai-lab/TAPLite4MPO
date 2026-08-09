@@ -44,7 +44,10 @@ path:
                                select-link reporting}
     proportional:       {status: planned}
     entropy_reconciled: {status: planned}
-  select_link:          {status: planned}
+  select_link:          {status: implemented, note: raw_fw_columns method
+                               only - diagnostics valid, official reporting
+                               awaits proportional reconstruction; WP-05
+                               conservation test exact on Chicago Sketch}
 
 facility:
   parking:         {status: interface}
@@ -58,3 +61,4 @@ solver_classes:
   state_expanded_ue:     {status: interface}
   nonseparable_fixed_point: {status: deferred, note: declared experimental
                                    when it arrives}
+
