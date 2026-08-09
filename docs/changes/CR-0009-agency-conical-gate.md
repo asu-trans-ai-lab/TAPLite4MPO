@@ -43,8 +43,21 @@ passes the staged one.
   hourly lane-capacity field exactly; free-speed matches the model's
   free-flow speed field — the FT×AT lookup outputs are baked per link.
 
-## Certification status
+## Certification status (updated after isolation + round 2)
 
-NOT CERTIFIED. The gate exists, refuses correctly, and the variant matrix
-is converging on the cause. Next: V3/V4 isolation results, per-class volume
-comparison, corridor-level scoring.
+NOT CERTIFIED — but the mismatch is now attributed and measured:
+- **The conical form IMPROVES reference parity** (isolation run beats the
+  delivered baseline on every metric once the period-capacity basis is
+  kept at plf=1 — the agency's assignment basis; the 0.6 factor belongs to
+  its V/C REPORTING convention, independently confirmed by the corridor
+  V/C ratio ≈ 0.6). Resolver consequence: RS-4 stays a must-declare
+  finding (`plf_convention`), not an automatic error.
+- General-purpose links: **R² 0.985**; single-occupancy class R² 0.986;
+  corridor volume R² 0.948 with speeds matching within ~1 mph.
+- The measured residual is CONCENTRATED in managed-lane classes
+  (hov2 R² 0.84, hov3 R² 0.57; restricted links under-assigned 0.88×):
+  the reference model prices those lanes (HOT semantics); TAPLite's
+  pricing operator is interface-only. **Blocker: pricing operator
+  (registry P4/P7) — with fields already present in the data.**
+- Standard run cost at the 20-iteration setting: ~15 s/iteration on 8
+  threads for the full network; auto cores−3 mode available (CR-0010).
