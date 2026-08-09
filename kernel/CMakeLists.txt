@@ -30,6 +30,24 @@ else()
 endif()
 set_target_properties(DTALite PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# ---- PR-1 (CR-0006): C++ self-test spine -----------------------------------
+# taplite_selftest #includes the production TU (no BUILD_EXE -> no main clash)
+# and certifies the production cost functions on hand-computed known values
+# and mathematical properties. Zero production-code change.
+enable_testing()
+option(BUILD_TAPLITE_SELFTEST "Build the taplite_selftest certification exe" ON)
+if(BUILD_TAPLITE_SELFTEST)
+    add_executable(taplite_selftest tests_cpp/selftest_main.cpp)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(taplite_selftest PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+    if(MINGW)
+        target_link_options(taplite_selftest PRIVATE
+            -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME scalar_certification COMMAND taplite_selftest)
+endif()
+
 if(BUILD_DTALITE_EXE)
     add_executable(DTALite_exe src/TAPLite.cpp)
     target_compile_definitions(DTALite_exe PRIVATE BUILD_EXE)

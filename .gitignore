@@ -74,3 +74,5 @@ legacy-profiling-scripts/
 examples/**/gmns_run/
 examples/**/gmns_run_quick/
 examples/**/kernel_console.log
+
+kernel/build_test/

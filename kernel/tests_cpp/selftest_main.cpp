@@ -1,0 +1,206 @@
+// taplite_selftest — PR-1 (CR-0006): scalar certification of the PRODUCTION
+// cost functions on known values and mathematical properties.
+//
+// This translation unit #includes the production source (BUILD_EXE undefined,
+// so no main() clash) and calls Link_Travel_Time() directly — the same code
+// path the assignment uses. NO production line is modified.
+//
+// Expected values are HAND-COMPUTED constants or closed-form identities
+// (never recomputed via the production formula). The independent C++ twin
+// and the external Python oracle arrive in PR-2; this spine proves the
+// harness and freezes today's numerical behavior.
+//
+// Run:  taplite_selftest            (exit 0 = all pass, nonzero = failures)
+
+#include "../src/TAPLite.cpp"
+
+#include <cstdio>
+#include <cmath>
+#include <vector>
+#include <string>
+
+static int g_pass = 0, g_fail = 0;
+static std::vector<std::string> g_failures;
+
+static void check(bool ok, const char* what) {
+    if (ok) { ++g_pass; }
+    else { ++g_fail; g_failures.push_back(what); }
+}
+static void near_(double a, double b, double tol, const char* what) {
+    char buf[256];
+    if (std::fabs(a - b) <= tol) { ++g_pass; return; }
+    ++g_fail;
+    snprintf(buf, sizeof buf, "%s (got %.9f expected %.9f tol %.1e)",
+             what, a, b, tol);
+    g_failures.push_back(buf);
+}
+
+// One-link laboratory: lanes=1, H=1h, plf=1  =>  IncomingDemand == Volume,
+// per-lane V/C == Volume / Lane_Capacity.
+static const double C_LANE = 1000.0;   // veh/h/lane
+static const double T0 = 10.0;         // free-flow minutes
+
+static void reset_link(int vdf_type) {
+    Link[0] = link_record();           // ctor defaults
+    Link[0].VDF_type = vdf_type;
+    Link[0].lanes = 1.0;
+    Link[0].Lane_Capacity = C_LANE;
+    Link[0].FreeTravelTime = T0;
+    Link[0].VDF_plf = 1.0;
+    Link[0].VDF_Alpha = 0.15;
+    Link[0].VDF_Beta = 4.0;
+    Link[0].VDF_A = 0.0;
+    Link[0].length = 5.0;              // miles (QVDF/ramp use it)
+    Link[0].free_speed = 60.0;         // mph
+    Link[0].Cutoff_Speed = 45.0;
+    Link[0].Q_cp = 0.28125; Link[0].Q_cd = 1.0;
+    Link[0].Q_n = 1.24;     Link[0].Q_s = 4.0;
+    Link[0].green_ratio = 0.45;
+    Link[0].cycle_length = 90;         // seconds
+}
+
+static double tt_at(double x) {        // x = V/C on the lab link
+    double vol[1] = { x * C_LANE };
+    return Link_Travel_Time(0, vol);
+}
+
+static const double GRID[] = {0.0, 0.1, 0.25, 0.5, 0.8,
+                              0.999999, 1.0, 1.000001, 1.2, 1.5, 2.0, 3.0};
+static const int NG = sizeof(GRID) / sizeof(GRID[0]);
+
+static void props(const char* name, double continuity_probe /*x or -1*/) {
+    double prev = -1.0;
+    for (int i = 0; i < NG; ++i) {
+        double t = tt_at(GRID[i]);
+        char b[128];
+        snprintf(b, sizeof b, "%s nonneg @x=%.6f", name, GRID[i]);
+        check(t >= 0.0, b);
+        snprintf(b, sizeof b, "%s monotone @x=%.6f", name, GRID[i]);
+        check(t >= prev - 1e-9, b);
+        prev = t;
+    }
+    if (continuity_probe > 0) {
+        double lo = tt_at(continuity_probe * 0.999999);
+        double hi = tt_at(continuity_probe * 1.000001);
+        char b[128];
+        snprintf(b, sizeof b, "%s continuous @x=%.4f", name, continuity_probe);
+        check(std::fabs(hi - lo) < 0.05 * (1.0 + lo), b);
+    }
+}
+
+int run_selftest() {
+    demand_period_starting_hours = 7.0;
+    demand_period_ending_hours = 8.0;      // H = 1
+    g_added_delay_per_mile = 0.0;
+    Link = new link_record[1];
+
+    std::printf("TAPLite C++ capability self-test (production functions)\n");
+    std::printf("=======================================================\n");
+
+    // ---- vdf_type 0: BPR + ARC modified ----
+    reset_link(0);
+    near_(tt_at(0.0), T0, 1e-9, "BPR t(0)=t0");
+    near_(tt_at(1.0), 11.5, 1e-9, "BPR t(1)=t0*(1+0.15)");     // 10*(1.15)
+    near_(tt_at(2.0), T0 * (1.0 + 0.15 * 16.0), 1e-9, "BPR t(2)");
+    props("BPR", -1);
+    Link[0].VDF_A = 0.5;                                        // ARC modified
+    near_(tt_at(1.0), T0 * (1.0 + 0.5 + 0.15), 1e-9, "MBPR t(1)");
+    props("ModifiedBPR", -1);
+
+    // ---- vdf_type 1: Spiess conic (Feng FT1: a=15, b=(2a-1)/(2a-2)) ----
+    reset_link(1);
+    Link[0].Conic_a = 15.0;
+    Link[0].Conic_b = 29.0 / 28.0;
+    near_(tt_at(1.0), 2.0 * T0, 1e-9, "Conic t(1)=2*t0 (Spiess identity)");
+    {   // x=0 closed form: t0*(2+sqrt(a^2+b^2)-a-b)
+        double a = 15.0, b = 29.0 / 28.0;
+        near_(tt_at(0.0), T0 * (2.0 + std::sqrt(a * a + b * b) - a - b),
+              1e-9, "Conic t(0) closed form");
+    }
+    props("ConicalSpiess", 1.0);
+    // documented fallback (deprecated in PR-3 strict mode): a/b from alpha/beta
+    Link[0].Conic_a = 0.0; Link[0].Conic_b = 0.0;
+    Link[0].VDF_Alpha = 15.0; Link[0].VDF_Beta = 29.0 / 28.0;
+    near_(tt_at(1.0), 2.0 * T0, 1e-9,
+          "Conic legacy alpha/beta fallback still active (PR-3 will gate)");
+
+    // ---- vdf_type 2: QVDF period-average (closed-form branch) ----
+    reset_link(2);
+    Link[0].VDF_Alpha = 0.272; Link[0].VDF_Beta = 4.0;
+    {   // x=0: P=0 => avg speed = 0*q + 1*(cong_ref+free)/2 with cong_ref=free
+        double t = tt_at(0.0);
+        near_(t, Link[0].length / 60.0 * 60.0, 1e-6, "QVDF t(0)=L/free*60");
+    }
+    props("QVDF", 1.0);
+
+    // ---- vdf_type 3: BPR2 ----
+    reset_link(3);
+    near_(tt_at(0.5), T0 * (1.0 + 0.15 * std::pow(0.5, 4.0)), 1e-9, "BPR2 below cap");
+    near_(tt_at(1.5), T0 * (1.0 + 0.15 * std::pow(1.5, 8.0)), 1e-9, "BPR2 doubled exponent");
+    props("BPR2", 1.0);
+
+    // ---- vdf_type 4: INRETS ----
+    reset_link(4);
+    Link[0].VDF_Alpha = 0.9;
+    near_(tt_at(0.5), T0 * (1.1 - 0.9 * 0.5) / (1.1 - 0.5), 1e-9, "INRETS below");
+    near_(tt_at(2.0), T0 * ((1.1 - 0.9) / 0.1) * 4.0, 1e-9, "INRETS above");
+    props("INRETS", -1);   // kernel guard fmax(0.05,...) flattens near x=1.05+
+
+    // ---- vdf_type 5: Akcelik ----
+    reset_link(5);
+    Link[0].VDF_Alpha = 2.0; Link[0].VDF_Beta = 0.5;
+    near_(tt_at(0.0), T0, 1e-9, "Akcelik t(0)=t0");
+    {   double z = 0.2, x = 1.2;
+        near_(tt_at(x), T0 + 2.0 * (z + std::sqrt(z * z + 0.5 * x)), 1e-9,
+              "Akcelik t(1.2)");
+    }
+    props("Akcelik", -1);
+
+    // ---- vdf_type 6: SANDAG signal (BPR + Webster uniform) ----
+    reset_link(6);
+    {   double d0 = 0.5 * 90.0 * 0.55 * 0.55 / 1.0 / 60.0;     // x=0
+        near_(tt_at(0.0), T0 + d0, 1e-9, "SANDAG t(0)=t0+webster");
+    }
+    props("SANDAGsignal", -1);
+
+    // ---- vdf_type 7: SCAG piecewise ----
+    reset_link(7);
+    Link[0].VDF_Alpha = 1.0; Link[0].VDF_Beta = 6.0;
+    near_(tt_at(0.999999), T0 * (1.0 + 1.0 * std::pow(0.999999, 4.0)), 1e-6,
+          "SCAG-PWL below breakpoint (beta=4)");
+    near_(tt_at(1.000001), T0 * (1.0 + 1.0 * std::pow(1.000001, 6.0)), 1e-6,
+          "SCAG-PWL above breakpoint (per-link beta)");
+    {   double lo = tt_at(0.999999), hi = tt_at(1.000001);
+        check(std::fabs(hi - lo) < 1e-3, "SCAG-PWL continuous at x=1");
+    }
+    props("SCAGpiecewise", 1.0);
+
+    // ---- vdf_type 8: SCAG ramp meter ----
+    reset_link(8);
+    {   double x = 0.5, plph = x * C_LANE;
+        double d_hr = (plph / 120.0) * 5.0 * std::pow(1.5, 8.0) / 60.0;
+        near_(tt_at(x), T0 + d_hr * 60.0, 1e-6, "SCAG ramp t(0.5)");
+    }
+    props("SCAGrampMeter", -1);
+
+    // ---- guard behavior: clamp at zero, added-delay off by default ----
+    reset_link(0);
+    check(tt_at(0.0) >= 0.0, "nonneg clamp");
+    // MAG per-mile added delay applies additively when enabled
+    g_added_delay_per_mile = 1.4;
+    near_(tt_at(0.0), T0 + 1.4 * 5.0, 1e-9, "MAG added delay per mile");
+    g_added_delay_per_mile = 0.0;
+
+    std::printf("  Performance functions: BPR, ModifiedBPR, Conical, QVDF,\n"
+                "    BPR2, INRETS, Akcelik, SANDAGsignal, SCAGpiecewise,\n"
+                "    SCAGrampMeter — exercised on the D/C grid.\n");
+    std::printf("-------------------------------------------------------\n");
+    std::printf("  PASS %d   FAIL %d\n", g_pass, g_fail);
+    for (size_t i = 0; i < g_failures.size(); ++i)
+        std::printf("  FAIL: %s\n", g_failures[i].c_str());
+    std::printf("OVERALL: %s\n", g_fail == 0 ? "PASS" : "BLOCKED");
+    delete[] Link; Link = NULL;
+    return g_fail == 0 ? 0 : 1;
+}
+
+int main() { return run_selftest(); }
