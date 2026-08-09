@@ -46,6 +46,21 @@ if(BUILD_TAPLITE_SELFTEST)
             -static -static-libgcc -static-libstdc++)
     endif()
     add_test(NAME scalar_certification COMMAND taplite_selftest)
+
+    # PR-2 (CR-0007): production vs independent twin, two translation units
+    # meeting only at link time. Dumps vdf_values.csv for the external
+    # Python oracle (three-way acceptance).
+    add_executable(twin_differential
+        tests_cpp/twin_differential_main.cpp
+        twin/twin_vdf.cpp)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(twin_differential PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+    if(MINGW)
+        target_link_options(twin_differential PRIVATE
+            -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME twin_differential_certification COMMAND twin_differential)
 endif()
 
 if(BUILD_DTALITE_EXE)
