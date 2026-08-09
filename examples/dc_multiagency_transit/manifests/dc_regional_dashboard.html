@@ -1,0 +1,294 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>NeXTA-X dashboard — gmns_dashboard</title>
+<style>
+body{margin:0;background:#14181d;color:#d8dee6;font:13px system-ui}
+#bar{display:flex;gap:14px;align-items:center;padding:8px 14px;background:#1d232b;border-bottom:1px solid #2c3540;flex-wrap:wrap}
+#bar b{color:#4db8ff;font-size:15px}
+.kpi{background:#232b35;border:1px solid #2c3540;border-radius:6px;padding:5px 12px;text-align:center}
+.kpi .v{font-size:17px;font-weight:700;color:#4db8ff}.kpi .l{font-size:10px;color:#8a94a3}
+button,select{background:#28303a;color:#d8dee6;border:1px solid #2c3540;border-radius:4px;padding:4px 9px;cursor:pointer}
+#wrap{position:relative}#cv{display:block;width:100vw;height:calc(100vh - 118px)}
+#hud{position:absolute;left:12px;bottom:12px;background:rgba(20,26,32,.9);padding:6px 12px;border-radius:6px;border:1px solid #2c3540}
+#clock{font-size:20px;font-weight:700;color:#4db8ff}
+#checks{padding:5px 14px;background:#171c22;border-top:1px solid #2c3540;font-size:11.5px;color:#8a94a3;max-height:52px;overflow-y:auto}
+.warn{color:#ffb45f}
+input[type=range]{width:260px;accent-color:#4db8ff}
+</style></head><body>
+<div id="bar"><b>NeXTA-X</b><span style="color:#8a94a3">gmns_dashboard · generated 2026-08-08</span>
+<span id="kpis" style="display:flex;gap:8px"></span>
+<select id="moe"><option value="volume">volume</option><option value="voc">V/C</option><option value="queue">queue</option><option value="td">time-dependent flow</option><option value="speed">t-dep speed (QVDF)</option><option value="bundle">path bundle</option></select>
+<label style="color:#8a94a3"><input type="checkbox" id="trails" checked onchange="draw()"> trails</label>
+<label style="color:#8a94a3"><input type="checkbox" id="tilt3d" onchange="draw()"> 3D</label>
+<button id="play" onclick="togglePlay()">▶ Play</button><input type="range" id="ts" oninput="clock=+this.value">
+<label style="color:#8a94a3"><input type="checkbox" id="base" checked onchange="draw()"> basemap</label>
+<label style="color:#8a94a3"><input type="checkbox" id="checks"> checks</label>
+<label style="color:#8a94a3">min vol <input type="range" id="minvol" min="0" max="100" value="0" style="width:90px"></label>
+<label id="demLab" style="color:#8a94a3;display:none"><input type="checkbox" id="demand" onchange="draw()"> demand OD</label>
+<button id="distBtn" style="display:none" onclick="toggleDist()">▦ distributions</button>
+<button id="corBtn" style="display:none" onclick="toggleCor()">▤ corridor speed</button>
+<button id="sciBtn" onclick="toggleSci()">✓ physics</button>
+<button onclick="fit()">Fit</button></div>
+<div id="scipanel" style="display:none;position:absolute;right:10px;top:10px;width:360px;background:rgba(20,26,32,.97);border:1px solid #2c3540;border-radius:6px;padding:8px 10px;max-height:80%;overflow:auto;z-index:6">
+  <div style="display:flex;align-items:center;gap:8px"><b style="color:#4db8ff">Physics-informed checks (SCI)</b>
+    <span style="margin-left:auto"><button onclick="toggleSci()" style="padding:1px 7px">✕</button></span></div>
+  <div id="scisum" style="text-align:center;font-weight:700;border-radius:4px;padding:4px;margin:6px 0"></div>
+  <div id="scibody"></div>
+  <div style="font-size:10px;color:#6e7681;margin-top:6px">Conservation & bound gates computed from this dashboard's own data — the reusable version of the Apache SCI panel.</div>
+</div>
+<div id="wrap"><canvas id="cv"></canvas><div id="hud"><span id="clock">--:--</span></div>
+<div id="corpanel" style="display:none;position:absolute;left:0;right:0;bottom:0;background:rgba(20,26,32,.96);border-top:1px solid #2c3540;padding:8px 12px;max-height:56%;overflow:auto">
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+    <b style="color:#4db8ff">Corridor speed contour</b>
+    <select id="corSel"></select>
+    <span id="corVal" style="color:#8a94a3"></span>
+    <span style="margin-left:auto;color:#8a94a3;font-size:11px">distance ↓ · time → · green=free-flow red=breakdown · click a bin to sync map clock</span>
+    <button onclick="toggleCor()" style="padding:2px 8px">✕</button>
+  </div>
+  <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:6px">
+    <div><div style="font-size:11px;color:#8a94a3;margin-bottom:2px">INRIX observed</div><canvas id="corObs"></canvas></div>
+    <div><div style="font-size:11px;color:#8a94a3;margin-bottom:2px">QVDF model</div><canvas id="corMod"></canvas></div>
+    <div><div style="font-size:11px;color:#8a94a3;margin-bottom:2px">model − observed (bias)</div><canvas id="corDif"></canvas></div>
+  </div>
+</div>
+<div id="distpanel" style="display:none;position:absolute;left:0;right:0;bottom:0;background:rgba(20,26,32,.96);border-top:1px solid #2c3540;padding:8px 12px;max-height:56%;overflow:auto">
+  <div style="display:flex;gap:14px;align-items:center"><b style="color:#4db8ff">Distributions &amp; demand</b>
+    <span style="margin-left:auto;color:#8a94a3;font-size:11px">learned from plot4gmns</span>
+    <button onclick="toggleDist()" style="padding:2px 8px">✕</button></div>
+  <div id="distbody" style="display:flex;gap:22px;flex-wrap:wrap;margin-top:8px"></div>
+</div>
+<div id="attrib" style="position:absolute;right:6px;bottom:4px;font-size:10px;color:#aab;background:rgba(16,20,24,.6);padding:1px 6px;border-radius:3px"></div></div>
+<div id="checks"></div>
+<script>window.NX=window.NX||{};</script>
+<script src="dashboard_layers/network.js"></script>
+<script src="dashboard_layers/moe.js"></script>
+<script src="dashboard_layers/td.js"></script>
+<script src="dashboard_layers/trajectories.js"></script>
+<script src="dashboard_layers/tiles_osm.js"></script>
+<script src="dashboard_layers/tiles_satellite.js"></script>
+<script src="dashboard_layers/corridor.js"></script>
+<script src="dashboard_layers/demand.js"></script>
+<script src="dashboard_layers/run.js"></script>
+<script>
+const DATA=(function(){const N=window.NX;const net=N.network||{meta:{checks:["WARN network layer missing"],geo:false},nodes:[],links:[]};const moe=N.moe||{};net.links.forEach(L=>{const m=moe[L[0]]||[0,0];L.splice(2,0,m[0],m[1]);});const td=N.td||{bins:[],td:{}};return{meta:net.meta,nodes:net.nodes,links:net.links,bins:td.bins,td:td.td,trajs:N.trajs||{},paths:(N.run&&N.run.paths)||[],run:(N.run&&N.run.run)||null,tiles:N.tiles_osm||[],tiles_sat:N.tiles_sat||[],corridor:N.corridor||{},demand:(N.demand&&N.demand.demand)||{},dist:(N.demand&&N.demand.dist)||{}};})();
+const M={links:DATA.links,nodes:DATA.nodes,geo:DATA.meta.geo,bins:DATA.bins,td:DATA.td,trajs:DATA.trajs,run:DATA.run};
+const my=lat=>180/Math.PI*Math.log(Math.tan(Math.PI/4+lat*Math.PI/360));
+const DEM=DATA.demand||{}, DIST=DATA.dist||{};
+if(M.geo){M.links.forEach(L=>L[1]=L[1].map(p=>[p[0],my(p[1])]));
+ (DEM.lines||[]).forEach(l=>{l[1]=my(l[1]);l[3]=my(l[3]);});}
+M.links.sort((a,b)=>a[2]-b[2]);                       // hot links stroke last (on top)
+const VS=DATA.meta.vstats||{p25:1,p99:1000},l1p=Math.log1p;
+const vscale=v=>Math.max(0,Math.min(1,(l1p(v)-l1p(VS.p25))/((l1p(VS.p99)-l1p(VS.p25))||1)));
+// E1 — flow-bundle: sum path volume traversing each link -> widening bands (Visum-style)
+const BUNDLE={}; let maxBundle=1;
+(DATA.paths||[]).forEach(([vol,ids])=>ids.forEach(id=>{BUNDLE[id]=(BUNDLE[id]||0)+vol;}));
+for(const k in BUNDLE) maxBundle=Math.max(maxBundle,BUNDLE[k]);
+function styleOf(L,mode,b){const t=L[6]||3;
+ if(mode==='bundle'){const bv=BUNDLE[L[0]]||0;if(bv<=0)return[-1,t===1?1.2:0.5];
+  const v=Math.sqrt(bv/maxBundle);return[Math.min(1,0.15+0.85*v),1+9*v];}   // width & warmth ∝ bundled flow
+ if(mode==='speed'){const d=(M.td[L[0]]||{})[b];
+  if(!d||d.length<4||!d[3])return[-1,t===1?1.4:0.6];             // no speed data -> dim gray
+  const r=d[2]/d[3];                                             // speed / free-flow
+  return[Math.max(0,Math.min(1,(1-r)/0.6)),2.5+3.5*Math.max(0,Math.min(1,(1-r)/0.6))];}
+ if(mode==='volume'){const v=vscale(L[2]);return[v,(t===1?2.2:t===2?1.2:0.6)+2.2*v];}
+ if(mode==='voc'){const v=Math.min(1,L[2]/(L[4]*8||1));return[v,1+4*v];}
+ if(mode==='queue'){const v=L[3]/maxQ;return[v,1+5*v];}
+ const d=(M.td[L[0]]||{})[b],inf=d?d[0]:0,q=d?d[1]:0;
+ return[q>0?0.55+0.45*Math.min(1,q/60):Math.min(1,inf*4/(L[4]||1800)),1+4*Math.min(1,inf/450)];}
+let bbox=null,zoom=1,px=0,py=0,clock=420,playing=false,maxVol=1,maxQ=1;
+// STATIC embedded hybrid basemap: OSM (network-wide) -> satellite (zoomed detail); offline-capable
+const mkImgs=a=>(a||[]).map(t=>{const im=new Image();im.src=t[0];return[im,t[1],t[2],t[3],t[4]];});
+let tiles=mkImgs(DATA.tiles), satTiles=mkImgs(DATA.tiles_sat);
+M.links.forEach(L=>{maxVol=Math.max(maxVol,L[2]);maxQ=Math.max(maxQ,L[3]);});
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+function fit(){let a=[1e18,1e18,-1e18,-1e18];M.links.forEach(L=>L[1].forEach(p=>{a[0]=Math.min(a[0],p[0]);a[1]=Math.min(a[1],p[1]);a[2]=Math.max(a[2],p[0]);a[3]=Math.max(a[3],p[1]);}));bbox=a;zoom=1;px=py=0;loadTiles();}
+function vt(){const w=cv.width,h=cv.height,ar=w/h,span=Math.max(bbox[2]-bbox[0],(bbox[3]-bbox[1])*ar)||1;
+ const s=w/span*0.94*zoom,cx=(bbox[0]+bbox[2])/2,cy=(bbox[1]+bbox[3])/2;return{s,tx:w/2-cx*s+px,ty:h/2+cy*s+py};}
+function loadTiles(){if(DATA.tiles&&DATA.tiles.length)return;   // static background embedded
+ tiles=[];if(!M.geo||!document.getElementById('base').checked)return;
+ const z=Math.max(1,Math.min(16,Math.floor(Math.log2(360*5/Math.max(bbox[2]-bbox[0],1e-6))))),n=2**z;
+ const tx0=Math.floor((bbox[0]+180)/360*n),tx1=Math.floor((bbox[2]+180)/360*n);
+ const ty0=Math.floor((1-bbox[3]/180)/2*n),ty1=Math.floor((1-bbox[1]/180)/2*n);
+ for(let tx=Math.max(0,tx0-1);tx<=Math.min(n-1,tx1+1);tx++)for(let ty=Math.max(0,ty0-1);ty<=Math.min(n-1,ty1+1);ty++){
+  const img=new Image();img.crossOrigin='anonymous';img.onload=()=>draw();
+  img.src=`https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`;
+  tiles.push([img,tx/n*360-180,(tx+1)/n*360-180,180*(1-2*(ty+1)/n),180*(1-2*ty/n)]);}}
+const ramp=t=>{t=Math.max(0,Math.min(1,t));const r=t<.5?510*t:255,g=t<.5?255:255-(t-.5)*510;return`rgb(${r|0},${g|0},60)`};
+function binOf(){let b=0;M.bins.forEach((t,i)=>{if(+t.slice(0,2)*60+ +t.slice(3,5)<=clock)b=i;});return b;}
+function draw(){cv.width=cv.clientWidth;cv.height=cv.clientHeight;if(!bbox)return;
+ ctx.fillStyle='#101418';ctx.fillRect(0,0,cv.width,cv.height);const T=vt();
+ // W(): top-down, or CityPhi-style oblique 3D when 'tilt3d' — same transform for tiles+network so they stay aligned
+ const t3=document.getElementById('tilt3d').checked, HZ=cv.height*0.30;
+ const W=(x,y,lift)=>{let sx=x*T.s+T.tx,sy=-y*T.s+T.ty;
+  if(t3){sy=HZ+(sy-HZ)*0.55;sy-=(lift||0)*4;}else sy-=(lift||0);return[sx,sy];};
+ if(document.getElementById('base').checked){
+  const set=(zoom>=2.2&&satTiles.length)?satTiles:tiles;   // OSM network-wide -> satellite in detail
+  try{ctx.filter='saturate(40%)';}catch(e){}
+  set.forEach(([im,x0,x1,y0,y1])=>{if(!im.complete||!im.naturalWidth)return;
+   const a=W(x0,y1),b=W(x1,y0);ctx.drawImage(im,a[0],a[1],b[0]-a[0],b[1]-a[1]);});
+  try{ctx.filter='none';}catch(e){}
+  ctx.fillStyle='rgba(16,20,24,0.55)';ctx.fillRect(0,0,cv.width,cv.height);}   // dim + desat
+ const mode=document.getElementById('moe').value,b=binOf();
+ const mv=Math.pow(+document.getElementById('minvol').value/100,2)*maxVol;
+ const zTier=zoom<2.5?1:zoom<8?2:3;                    // LOD: skeleton -> +middle -> all real roads
+ const path=L=>{ctx.beginPath();L[1].forEach((p,i)=>{const s=W(p[0],p[1]);i?ctx.lineTo(s[0],s[1]):ctx.moveTo(s[0],s[1]);});ctx.stroke();};
+ ctx.lineCap='round';
+ M.links.forEach(L=>{const t=L[6]||3;if(t>2||t>zTier||L[2]<mv)return;            // casing: tiers 1-2 only
+  const[,w]=styleOf(L,mode,b);ctx.strokeStyle='rgba(0,0,0,0.71)';ctx.lineWidth=w+3;path(L);});
+ M.links.forEach(L=>{const t=L[6]||3;if(t>zTier||L[2]<mv)return;
+  const[v,w]=styleOf(L,mode,b);ctx.strokeStyle=v<0?'#39424e':ramp(v);ctx.lineWidth=w;path(L);});
+ if(document.getElementById('checks').checked)
+  M.links.forEach(L=>{if((L[6]||3)===1&&L[2]===0){ctx.strokeStyle='#ff4df0';ctx.lineWidth=2.5;path(L);}});
+ if(document.getElementById('demand')&&document.getElementById('demand').checked&&DEM.lines){
+  const mx=Math.max(1,...DEM.lines.map(l=>l[4]));
+  DEM.lines.forEach(l=>{const a=W(l[0],l[1]),b=W(l[2],l[3]),v=l[4]/mx;
+   ctx.strokeStyle=`rgba(255,${(180-120*v)|0},${(80-60*v)|0},${0.25+0.5*v})`;ctx.lineWidth=0.5+3.5*v;
+   ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();});}
+ const lk={};M.links.forEach(L=>lk[L[0]]=L);
+ // world position of an agent's event list at time t (or null)
+ const posAt=(ev,t)=>{if(t<ev[0][0]||t>ev[ev.length-1][0])return null;
+  let i=0;while(i+1<ev.length&&ev[i+1][0]<=t)i++;const L=lk[ev[i][1]];if(!L)return null;let f=1;
+  if(ev[i][2]==='ENB'&&i+1<ev.length&&ev[i+1][1]===ev[i][1]&&ev[i+1][0]>ev[i][0])f=(t-ev[i][0])/(ev[i+1][0]-ev[i][0]);
+  const A=L[1][0],B=L[1][L[1].length-1];return[A[0]+(B[0]-A[0])*f,A[1]+(B[1]-A[1])*f,ev[i][2]==='ENB'];};
+ const trails=document.getElementById('trails').checked, TN=6, DT=1.3;   // E3: fading comet trails
+ ctx.lineCap='round';
+ for(const a in M.trajs){const ev=M.trajs[a];if(!ev.length||clock<ev[0][0]||clock>ev[ev.length-1][0])continue;
+  const head=posAt(ev,clock);if(!head)continue;const moving=head[2];
+  if(trails){for(let k=0;k<TN;k++){const p0=posAt(ev,clock-k*DT),p1=posAt(ev,clock-(k+1)*DT);if(!p0||!p1)break;
+    const s0=W(p0[0],p0[1],5),s1=W(p1[0],p1[1],5),al=(1-k/TN)*0.85;
+    ctx.strokeStyle=moving?`rgba(87,217,140,${al})`:`rgba(255,120,95,${al})`;ctx.lineWidth=(moving?2.4:2)*(1-k/TN*0.6);
+    ctx.beginPath();ctx.moveTo(s0[0],s0[1]);ctx.lineTo(s1[0],s1[1]);ctx.stroke();}}
+  const s=W(head[0],head[1],5);ctx.fillStyle=moving?'#7dffb0':'#ff8b6b';
+  ctx.beginPath();ctx.arc(s[0],s[1],trails?2.6:3,0,6.29);ctx.fill();}
+ document.getElementById('clock').textContent=`${String(Math.floor(clock/60)%24).padStart(2,'0')}:${String(Math.floor(clock%60)).padStart(2,'0')}`;
+ if(playing){clock+=0.35;if(clock>+document.getElementById('ts').max)clock=+document.getElementById('ts').min;document.getElementById('ts').value=clock;}
+ requestAnimationFrame(draw);}
+function togglePlay(){playing=!playing;document.getElementById('play').textContent=playing?'❚❚':'▶ Play';}
+cv.addEventListener('wheel',e=>{e.preventDefault();zoom*=e.deltaY<0?1.25:.8;loadTiles();},{passive:false});
+let dr=null;cv.addEventListener('mousedown',e=>dr=[e.offsetX,e.offsetY]);
+cv.addEventListener('mousemove',e=>{if(!dr)return;px+=e.offsetX-dr[0];py+=e.offsetY-dr[1];dr=[e.offsetX,e.offsetY];});
+window.addEventListener('mouseup',()=>dr=null);
+// ---- corridor speed contour (INRIX observed vs QVDF model, space-time) ----
+const COR=DATA.corridor||{};
+const spdRamp=(sp,ff)=>{const r=Math.max(0,Math.min(1,1-sp/(ff||60)));   // 0=free(green) 1=stopped(red)
+ return`rgb(${(r<.5?510*r:255)|0},${(r<.5?255:255-(r-.5)*510)|0},60)`;};
+const difRamp=d=>{const t=Math.max(-15,Math.min(15,d))/15;              // blue=model slower, red=faster
+ return t>0?`rgb(${(120+135*t)|0},${(120-100*t)|0},80)`:`rgb(80,${(120+100*-t)|0},${(160+95*-t)|0})`;};
+function drawContour(cid,c,mode){const cvx=document.getElementById(cid),g=cvx.getContext('2d');
+ const nb=c.bins.length,ns=c.seq.length,cw=Math.max(9,Math.min(20,Math.floor(460/nb))),ch=Math.max(4,Math.min(16,Math.floor(300/ns)));
+ cvx.width=nb*cw+2;cvx.height=ns*ch+2;g.fillStyle='#101418';g.fillRect(0,0,cvx.width,cvx.height);
+ c.seq.forEach((s,yi)=>c.bins.forEach((tb,xi)=>{const v=(c.cells[s]||{})[tb];if(!v)return;
+   const io=v[0],iq=v[1];let col;
+   if(mode==='obs')col=io>0?spdRamp(io,c.ff):'#1b2027';
+   else if(mode==='mod')col=iq>0?spdRamp(iq,c.ff):'#1b2027';
+   else col=(io>0&&iq>0)?difRamp(iq-io):'#1b2027';
+   g.fillStyle=col;g.fillRect(1+xi*cw,1+yi*ch,cw-1,ch-1);}));
+ cvx.onclick=e=>{const xi=Math.floor((e.offsetX-1)/cw);if(xi>=0&&xi<nb){
+   const tb=c.bins[xi],mm=+tb.slice(0,2)*60+ +tb.slice(3,5);clock=mm;
+   const sl=document.getElementById('ts');if(mm>=+sl.min&&mm<=+sl.max)sl.value=mm;
+   if(document.getElementById('moe').value!=='speed')document.getElementById('moe').value='speed';}};
+}
+function renderCorridor(){const name=document.getElementById('corSel').value,c=COR[name];if(!c)return;
+ drawContour('corObs',c,'obs');drawContour('corMod',c,'mod');drawContour('corDif',c,'dif');
+ const v=c.val||{};document.getElementById('corVal').innerHTML=v.n?
+  `<b>validation</b> n=${v.n} · RMSE <b style="color:#4db8ff">${v.rmse} mph</b> · R² <b style="color:#4db8ff">${v.r2}</b> · bias ${v.bias>0?'+':''}${v.bias} mph · free-flow ${v.ff} mph · length ${c.dist[c.seq[c.seq.length-1]]||''} mi`:'';}
+function toggleCor(){const p=document.getElementById('corpanel');
+ p.style.display=p.style.display==='none'?'block':'none';if(p.style.display==='block')renderCorridor();}
+(function(){const names=Object.keys(COR);if(!names.length)return;
+ document.getElementById('corBtn').style.display='';
+ const sel=document.getElementById('corSel');
+ names.forEach(n=>sel.insertAdjacentHTML('beforeend',`<option>${n}</option>`));
+ sel.onchange=renderCorridor;})();
+// ---- distributions + demand heatmap (learned from plot4gmns) ----
+function histSVG(title,h){if(!h)return'';const mx=Math.max(1,...h.bins),nb=h.bins.length,bw=180/nb;
+ let bars='';h.bins.forEach((c,i)=>{const bh=70*c/mx;
+  bars+=`<rect x="${i*bw}" y="${72-bh}" width="${bw-1.5}" height="${bh}" fill="#4db8ff"/>`;});
+ return`<div><div style="font-size:11px;color:#8a94a3;margin-bottom:2px">${title}</div>
+  <svg width="182" height="90"><g>${bars}</g>
+  <text x="0" y="88" fill="#8a94a3" font-size="9">${h.lo}</text>
+  <text x="150" y="88" fill="#8a94a3" font-size="9">${h.hi}</text></svg></div>`;}
+function demandHeatmap(){if(!DEM.mat||!DEM.mat.length)return'';
+ const hz=DEM.hz,n=hz.length,cs=Math.max(6,Math.min(16,Math.floor(280/n)));
+ const mx=Math.max(1,...DEM.mat.flat());let cells='';
+ DEM.mat.forEach((row,i)=>row.forEach((v,j)=>{const t=v/mx,
+  col=v?`rgb(${(40+215*t)|0},${(60+120*(1-t))|0},80)`:'#1b2027';
+  cells+=`<rect x="${j*cs}" y="${i*cs}" width="${cs-1}" height="${cs-1}" fill="${col}"><title>O${hz[i]}→D${hz[j]}: ${v}</title></rect>`;}));
+ return`<div><div style="font-size:11px;color:#8a94a3;margin-bottom:2px">demand matrix (top ${n} zones · O rows × D cols)</div>
+  <svg width="${n*cs}" height="${n*cs}">${cells}</svg></div>`;}
+function toggleDist(){const p=document.getElementById('distpanel');
+ const show=p.style.display==='none';p.style.display=show?'block':'none';if(!show)return;
+ let h='';['volume','capacity','free_speed','lanes'].forEach(k=>h+=histSVG(k.replace('_',' '),DIST[k]));
+ if(DEM.total)h=`<div style="font-size:12px;color:#d8dee6;width:100%">demand: <b>${DEM.n_od.toLocaleString()}</b> OD pairs · total <b>${(DEM.total||0).toLocaleString()}</b> veh</div>`+h+demandHeatmap();
+ document.getElementById('distbody').innerHTML=h;}
+(function(){if(DEM.lines&&DEM.lines.length){document.getElementById('demLab').style.display='';}
+ if((DIST&&DIST.volume)||DEM.total){document.getElementById('distBtn').style.display='';}})();
+// ---- 7-check SCI physics panel (ported from the Apache simulator; data-driven for any dashboard) ----
+function computeSCI(){
+ const R=[]; const td=M.td||{}, bins=M.bins||[];
+ const tdcells=()=>{const o=[];for(const l in td)for(const b in td[l]){const d=td[l][b];o.push([l,b,d]);}return o;};
+ // 1) speed bounds: 0 <= v <= free_flow*1.15 (TD speed cells)
+ {let n=0,bad=0,mx=0,ex='';tdcells().forEach(([l,b,d])=>{if(d.length<3)return;n++;const v=d[2],ff=d[3]||70;mx=Math.max(mx,v);
+   if(v<0||v>ff*1.15){bad++;if(!ex)ex=`link ${l} @${bins[b]||b}: ${v} mph > ${(ff*1.15).toFixed(0)}`;}});
+  R.push({id:'S',desc:'0 ≤ speed ≤ free-flow (TD speed cells)',pass:bad===0,na:n===0,
+   stat:n?`${n-bad}/${n} ok, max ${mx.toFixed(0)} mph`:'no TD speed',fail:ex});}
+ // 2) flow conservation: completed == agents (run), else volumes present & finite
+ {let pass=true,stat='n/a',fail='';if(M.run){const a=M.run.agents||0,c=M.run.completed||0;pass=(c>=a);
+   stat=`${c.toLocaleString()}/${a.toLocaleString()} completed`;if(!pass)fail=`${(a-c).toLocaleString()} agents unaccounted (CA<CD)`;}
+  else{const tot=M.links.reduce((s,L)=>s+(L[2]||0),0);stat=`Σvol ${Math.round(tot).toLocaleString()}`;pass=isFinite(tot);}
+  R.push({id:'C',desc:'Flow conservation — completed ≥ loaded (CA ≥ CD)',pass,na:false,stat,fail});}
+ // 3) non-negativity: volume, queue, inflow >= 0
+ {let bad=0,ex='';M.links.forEach(L=>{if((L[2]||0)<0||(L[3]||0)<0){bad++;if(!ex)ex=`link ${L[0]}: vol ${L[2]} q ${L[3]}`;}});
+  tdcells().forEach(([l,b,d])=>{if(d[0]<0||d[1]<0){bad++;if(!ex)ex=`link ${l} @${bins[b]||b}: inflow ${d[0]} q ${d[1]}`;}});
+  R.push({id:'N',desc:'Non-negativity — volume, queue, inflow ≥ 0',pass:bad===0,na:false,
+   stat:bad?`${bad} negative`:'all ≥ 0',fail:ex});}
+ // 4) capacity feasibility: volume <= capacity*hours*(1+slack)  (V/C physics)
+ {let n=0,bad=0,mx=0,ex='';const H=8,SLK=1.25;M.links.forEach(L=>{const cap=L[4]||0,v=L[2]||0;if(cap<=0||cap>=40000||v<=0)return;n++;
+   const vc=v/(cap*H);mx=Math.max(mx,vc);if(vc>SLK){bad++;if(!ex)ex=`link ${L[0]}: V/C ≈ ${vc.toFixed(2)}`;}});
+  R.push({id:'Q',desc:'Capacity feasibility — volume ≤ capacity·h (V/C bound)',pass:bad===0,na:n===0,
+   stat:n?`max V/C ${mx.toFixed(2)}, ${bad} over`:'no capacity data',fail:ex});}
+ // 5) congestion consistency: queue>0 ⇒ speed < free-flow (fundamental-relation sanity)
+ {let n=0,bad=0,ex='';tdcells().forEach(([l,b,d])=>{if(d.length<3||!d[3])return;const q=d[1],v=d[2],ff=d[3];if(q>0){n++;
+   if(v>=ff*0.98){bad++;if(!ex)ex=`link ${l} @${bins[b]||b}: queued but ${v}≈free-flow`;}}});
+  R.push({id:'K',desc:'Congestion consistency — queued ⇒ speed < free-flow',pass:bad===0,na:n===0,
+   stat:n?`${n-bad}/${n} queued cells ok`:'no queued speed cells',fail:ex});}
+ // 6) topology valid: each link ≥2 finite geometry points
+ {let bad=0,ex='';M.links.forEach(L=>{const g=L[1];if(!g||g.length<2||g.some(p=>!isFinite(p[0])||!isFinite(p[1]))){bad++;if(!ex)ex=`link ${L[0]}: degenerate geometry`;}});
+  R.push({id:'T',desc:'Topology — every link has ≥2 finite geometry points',pass:bad===0,na:false,
+   stat:bad?`${bad} degenerate`:`${M.links.length} links ok`,fail:ex});}
+ // 7) temporal ordering: per-agent trajectory times non-decreasing; bins sorted
+ {let bad=0,ex='',n=0;for(const a in M.trajs){const ev=M.trajs[a];n++;for(let i=1;i<ev.length;i++)if(ev[i][0]<ev[i-1][0]-1e-6){bad++;if(!ex)ex=`agent ${a}: time goes backward`;break;}}
+  for(let i=1;i<bins.length;i++){const p=+bins[i].slice(0,2)*60+ +bins[i].slice(3,5),q=+bins[i-1].slice(0,2)*60+ +bins[i-1].slice(3,5);if(p<q){bad++;if(!ex)ex='time bins not ordered';break;}}
+  R.push({id:'O',desc:'Temporal ordering — trajectory times & bins monotonic',pass:bad===0,na:(n===0&&bins.length<2),
+   stat:bad?`${bad} out of order`:(n?`${n} agents ok`:'bins ok'),fail:ex});}
+ return R;}
+function renderSci(){const R=computeSCI();const active=R.filter(r=>!r.na);const nf=active.filter(r=>!r.pass).length;
+ const sum=document.getElementById('scisum');
+ sum.textContent=nf?`${nf} of ${active.length} PHYSICS CHECKS FAILED`:`ALL ${active.length} PHYSICS CHECKS PASS`;
+ sum.style.background=nf?'rgba(248,81,73,.2)':'rgba(46,160,67,.18)';sum.style.color=nf?'#f85149':'#56d364';
+ sum.style.border='1px solid '+(nf?'#f85149':'#2ea043');
+ document.getElementById('scibody').innerHTML=R.map(r=>{
+  const st=r.na?'na':(r.pass?'pass':'fail');const ic=r.na?'–':(r.pass?'✓':'✗');
+  const col=r.na?'#6e7681':(r.pass?'#56d364':'#f85149');const bg=r.na?'transparent':(r.pass?'rgba(46,160,67,.08)':'rgba(248,81,73,.16)');
+  return `<div style="padding:4px 6px;border-radius:3px;margin-bottom:3px;background:${bg};border-left:2px solid ${col};font-size:11px">
+   <span style="color:${col};font-weight:700">${ic}</span> ${r.desc}
+   <div style="font-size:9px;color:#8a94a3;font-family:monospace;margin-top:1px">${r.stat}${r.fail?' — <span style=color:#f85149>'+r.fail+'</span>':''}</div></div>`;}).join('');
+ // badge on the button
+ const b=document.getElementById('sciBtn');b.textContent=(nf?'✗ '+nf+' physics':'✓ physics');
+ b.style.background=nf?'#5a2020':'';b.style.color=nf?'#f85149':'';}
+function toggleSci(){const p=document.getElementById('scipanel');const show=p.style.display==='none';
+ p.style.display=show?'block':'none';if(show)renderSci();}
+try{renderSci();}catch(e){}   // run once on load so the button badges immediately
+// KPIs + checks
+(function(){const k=document.getElementById('kpis');const vmt=M.links.reduce((s,L)=>s+L[2]*L[5],0);
+ const add=(v,l)=>k.insertAdjacentHTML('beforeend',`<span class="kpi"><div class="v">${v}</div><div class="l">${l}</div></span>`);
+ add(M.links.length.toLocaleString(),'links');add(Math.round(vmt).toLocaleString(),'VMT');
+ if(M.run){add(M.run.agents.toLocaleString(),'agents');add(M.run.conserved?'✓':'✗','conserved');
+  const g=M.run.gridlock||{};add(g.oversaturated?'YES':'no','oversat.');}
+ add(Object.keys(M.trajs).length,'vehicles');add(M.bins.length,'TD bins');
+ document.getElementById('checks').innerHTML='<b>preprocessing checks:</b> '+
+  DATA.meta.checks.map(c=>c.startsWith('WARN')?`<span class="warn">${c}</span>`:c).join(' · ');
+ if(DATA.meta.attrib)document.getElementById('attrib').textContent=DATA.meta.attrib;
+ let t0=420,t1=480;const ts=[];for(const a in M.trajs)M.trajs[a].forEach(e=>ts.push(e[0]));
+ if(ts.length){t0=Math.floor(Math.min(...ts));t1=Math.ceil(Math.max(...ts));}
+ else if(M.bins.length){t0=+M.bins[0].slice(0,2)*60+ +M.bins[0].slice(3,5);t1=t0+M.bins.length*15;}
+ const sl=document.getElementById('ts');sl.min=t0;sl.max=t1;sl.value=t0;clock=t0;})();
+fit();requestAnimationFrame(draw);
+</script></body></html>

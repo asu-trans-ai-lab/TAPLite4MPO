@@ -1,0 +1,22 @@
+{
+  "build": "0.3b regional multi-agency loading",
+  "feeds_in_graph": 20,
+  "stops": 24662,
+  "clusters": 6412,
+  "cross_agency_clusters": 707,
+  "demand_total_am": 121174.0,
+  "served": 80609.0,
+  "served_share": 0.6652,
+  "served_share_WMATA_only_baseline": 0.3529,
+  "unserved_no_walk_access_800m": 40561.0,
+  "unserved_unreachable": 4.0,
+  "segments": 72732,
+  "state_shares": {
+    "OVERSUPPLY": 0.9303,
+    "BALANCED": 0.0362,
+    "UNDERSUPPLY": 0.0287,
+    "CROWDED": 0.0048
+  },
+  "peak_vc": 33.02,
+  "assumptions": "walk 800 m @12 min/km; wait min(headway/2,20'); AON uncapacitated; veh caps by route_type tram 120 / metro 600 / commuter 600 / bus 60; feeds span 2019-2021 vintages (declared, not one date)"
+}
