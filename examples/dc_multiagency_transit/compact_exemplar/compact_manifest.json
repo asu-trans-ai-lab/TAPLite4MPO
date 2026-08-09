@@ -1,0 +1,13 @@
+{
+  "trips": 1461,
+  "stop_visits": 61509,
+  "patterns": 281,
+  "run_profiles": 453,
+  "frequency_blocks": 214,
+  "block_covered_trips": 966,
+  "exception_trips": 495,
+  "roundtrip_lossless": true,
+  "stageB_bytes": 367445,
+  "compact_bytes": 131341,
+  "ratio": 2.8
+}

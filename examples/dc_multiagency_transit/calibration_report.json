@@ -1,0 +1,29 @@
+{
+  "provenance": "synthetic_gravity_dc_kfactor",
+  "model": "T_ij = K(d_i,d_j) a_i b_j P_i A_j exp(-beta c_ij), doubly constrained (Furness)",
+  "target": "combined transit AM (4 overlapping mode segments summed)",
+  "zones": 2886,
+  "dropped_ref_volume_no_centroid": 5406.2,
+  "total_demand": 124787.7,
+  "impedance": "haversine km between zone centroids; intrazonal 0.5 km",
+  "beta_per_km": 0.10221,
+  "observed_mean_trip_km": 22.476,
+  "districts": "6x6 lon/lat quantile grid",
+  "K_cap": [
+    0.25,
+    4.0
+  ],
+  "gravity_only": {
+    "mean_trip_km": 22.476,
+    "district_R2": 0.99,
+    "cell_R2": 0.9087,
+    "TLD_coincidence": 0.9719
+  },
+  "gravity_plus_K": {
+    "mean_trip_km": 22.417,
+    "district_R2": 0.9995,
+    "cell_R2": 0.9262,
+    "TLD_coincidence": 0.9847
+  },
+  "marginals_preserved": true
+}

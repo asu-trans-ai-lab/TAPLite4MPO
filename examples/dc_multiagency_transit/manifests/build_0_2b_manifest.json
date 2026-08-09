@@ -1,0 +1,26 @@
+{
+  "build": "0.2b transfer contract + connected graph",
+  "radius_m": 200.0,
+  "bus_stops_matched": 423,
+  "rail_stations_with_bus_transfer": 69,
+  "shared_stations_after_contract": 67,
+  "cross_mode_transfer_arcs": 3078,
+  "arcs_by_tag": {
+    "board": 60048,
+    "wait": 54882,
+    "ride": 60048,
+    "stay": 58587,
+    "alight": 60048,
+    "transfer": 54411
+  },
+  "event_nodes": 240192,
+  "gate0_demo_path_found": true,
+  "gate0_demo_path": [
+    "board@PENNSYLVANIA AVE SE & E ST SE [bus:30N]",
+    "ride@EASTERN MARKET METRO STATION [bus:30N]",
+    "alight@EASTERN MARKET METRO STATION [bus:30N]",
+    "transfer@EASTERN MARKET METRO STATION [rail:ORANGE]",
+    "board@EASTERN MARKET METRO STATION [rail:ORANGE]",
+    "ride@CAPITOL SOUTH METRO STATION [rail:ORANGE]"
+  ]
+}

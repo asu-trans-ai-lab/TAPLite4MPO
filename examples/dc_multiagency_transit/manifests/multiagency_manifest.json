@@ -1,0 +1,12 @@
+{
+  "build": "0.3 NVTA_S1_FULL_MULTIAGENCY (stage B + compact per feed)",
+  "window": "06:30-09:00 Wednesday-service snapshot per feed",
+  "feeds_total": 20,
+  "feeds_ok": 20,
+  "trips_total": 5984,
+  "stop_visits_total": 209997,
+  "frequency_trips_instantiated": 260,
+  "vintage_warning": "feeds span 2019-2021+; NEVER present the merged snapshot as a single coherent date (TODO.md I-1); per-feed vintages in agency_inventory.csv",
+  "failures": [],
+  "skipped": []
+}

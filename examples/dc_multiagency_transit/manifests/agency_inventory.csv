@@ -1,0 +1,21 @@
+feed,vintage,service_resolution,times_interpolated,trips_dropped_no_times,freq_exact_trips,freq_synth_trips,n_trips,n_stop_visits,n_patterns,n_excluded,compact_ratio,freq_blocks,status
+10_ART Bus (Arlington VA)_202110,2021-10,calendar.txt wednesday=1,0,0,0,0,274,6964,38,887,3.78,32,OK
+11_Dash (Alexandria)_202109,2021-09,calendar.txt wednesday=1,0,0,0,0,234,8306,26,853,4.26,25,OK
+12_Fairfax CUE_202103,2021-03,calendar.txt wednesday=1,16740,0,0,0,42,1371,8,178,1.74,2,OK
+13_TransIT (Frederick County)_202007,2020-07,calendar.txt wednesday=1,9899,0,0,0,53,2014,35,166,1.54,0,OK
+15_Annapolis_2020,2020,calendar.txt wednesday=1,8018,0,124,0,69,1609,14,267,1.82,12,OK
+19_Carroll County Transit_202002,2020-02,calendar.txt wednesday=1,32,0,0,0,14,206,11,36,1.23,0,OK
+1_WMATA_202004,2020-04,calendar_dates 20200422,0,0,0,0,1464,61674,281,7000,2.8,215,OK
+24_Calvert County_201910,2019-10,calendar.txt wednesday=1,92,0,0,0,20,219,18,75,1.26,0,OK
+25_RTA Maryland_202109,2021-09,calendar.txt wednesday=1,0,0,0,0,96,2985,31,321,2.46,24,OK
+28_VANGO (Charles County)_201908,2019-08,calendar.txt wednesday=1,87,0,0,0,43,1218,20,162,1.44,9,OK
+29_LCTActiveFeed (1),unknown,calendar.txt wednesday=1,0,0,0,0,146,1591,49,495,1.85,22,OK
+2_DC Circulator_202109,2021-09,calendar.txt wednesday=1,0,0,0,0,195,2844,11,902,2.43,18,OK
+2_DC Streetcar_202109,2021-09,calendar.txt wednesday=1,0,0,0,0,28,224,2,154,1.15,2,OK
+31_VRE,unknown,calendar.txt wednesday=1,0,0,0,0,14,154,4,18,1.14,2,OK
+32_AMTRK_10_2021,2021,calendar.txt wednesday=1,0,0,0,0,231,2803,106,942,1.59,3,OK
+3_MTA (Maryland)_202004,2020-04,calendar.txt wednesday=1,0,0,0,0,790,35756,208,4176,3.25,66,OK
+5_PRTC_202109,2021-09,calendar.txt wednesday=1,0,0,0,0,166,3251,53,414,1.77,3,OK
+7_Ride On (Montgomery)_202110,2021-10,calendar.txt wednesday=1,0,0,0,0,913,38528,167,3382,3.2,122,OK
+8_Fairfax Connector_202107,2021-07,calendar.txt wednesday=1,0,0,0,0,884,26213,147,2734,3.48,104,OK
+9_Prince George_201911,2019-11,calendar.txt wednesday=1,38674,0,0,136,308,12067,61,1009,2.74,45,OK
