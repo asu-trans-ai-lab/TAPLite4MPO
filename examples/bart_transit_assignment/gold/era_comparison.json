@@ -1,0 +1,22 @@
+{
+  "dataset": "Transit Dataset 1 - BART (T1 observed-demand gold)",
+  "captured": "2026-08-08",
+  "supply": "FIXED FY2025 timetable (capacity era 2025-01-13..2025-04-01), period_capacity_td.csv, vehicle_capacity 750",
+  "loading": "equal split across enumerated path columns, uncapacitated (V/C diagnostic)",
+  "vc_states": {"UNDERSUPPLY": ">=1.0", "CROWDED": "0.80-1.00", "BALANCED": "0.20-0.80", "OVERSUPPLY": "<0.20 with service"},
+  "eras": {
+    "weekday_2019-10": {"dates": ["2019-10-15","2019-10-16","2019-10-17"], "riders_per_day": 432783,
+      "shares": {"UNDERSUPPLY": 0.0645, "CROWDED": 0.0251, "BALANCED": 0.2322, "OVERSUPPLY": 0.6782},
+      "peak_vc": 6.60, "excess_riders_per_day": 511822, "empty_seat_hours_per_day": 12185388},
+    "weekday_2021-10": {"dates": ["2021-10-12","2021-10-13","2021-10-14"], "riders_per_day": 111226,
+      "shares": {"UNDERSUPPLY": 0.0010, "CROWDED": 0.0017, "BALANCED": 0.0795, "OVERSUPPLY": 0.9177},
+      "peak_vc": 1.42, "excess_riders_per_day": 1497, "empty_seat_hours_per_day": 14177382},
+    "weekday_2023-10": {"dates": ["2023-10-10","2023-10-11","2023-10-12"], "riders_per_day": 185584,
+      "shares": {"UNDERSUPPLY": 0.0115, "CROWDED": 0.0077, "BALANCED": 0.1322, "OVERSUPPLY": 0.8487},
+      "peak_vc": 2.36, "excess_riders_per_day": 30736, "empty_seat_hours_per_day": 13695376},
+    "weekday_2025-02": {"dates": ["2025-02-11","2025-02-12","2025-02-13"], "riders_per_day": 178006,
+      "shares": {"UNDERSUPPLY": 0.0098, "CROWDED": 0.0074, "BALANCED": 0.1263, "OVERSUPPLY": 0.8566},
+      "peak_vc": 2.20, "excess_riders_per_day": 26996, "empty_seat_hours_per_day": 13745340}
+  },
+  "headline": "Undersupply is a peak-direction phenomenon (2019 demand on 2025 supply: 6.5% of link-hours over capacity, peak V/C 6.6, 512k excess rider-link-hours/day); oversupply is the dominant modern state (86-92% of served link-hours under 20% full since 2021); recovery plateaued at ~42% of 2019."
+}

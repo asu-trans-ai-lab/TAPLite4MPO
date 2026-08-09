@@ -1,0 +1,30 @@
+{
+  "tag": "weekday_2019-10",
+  "dates": [
+    "2019-10-15",
+    "2019-10-16",
+    "2019-10-17",
+    "historical_od/weekday_2019-10.csv"
+  ],
+  "days_averaged": 3,
+  "riders_per_day": 432783.0,
+  "unmatched_od_riders_per_day": 733.8,
+  "link_hours_served": 5689,
+  "state_counts": {
+    "OVERSUPPLY": 3858,
+    "BALANCED": 1321,
+    "UNDERSUPPLY": 367,
+    "CROWDED": 143
+  },
+  "state_shares": {
+    "OVERSUPPLY": 0.6782,
+    "BALANCED": 0.2322,
+    "UNDERSUPPLY": 0.0645,
+    "CROWDED": 0.0251
+  },
+  "peak_vc": 6.6,
+  "excess_riders_per_day": 511822.0,
+  "empty_seat_hours_per_day": 12185388.0,
+  "capacity_note": "supply = period_capacity_td (FY2025 timetable era 2025-01-13..2025-04-01, vehicle_capacity 750/train); historical demand years are loaded on THIS fixed supply = counterfactual under/oversupply analysis",
+  "loading_convention": "equal split across the OD's enumerated columns; no capacity constraint (V/C diagnostic, not capacitated assignment)"
+}

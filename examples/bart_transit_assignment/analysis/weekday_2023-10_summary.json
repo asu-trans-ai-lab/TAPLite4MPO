@@ -1,0 +1,30 @@
+{
+  "tag": "weekday_2023-10",
+  "dates": [
+    "2023-10-10",
+    "2023-10-11",
+    "2023-10-12",
+    "historical_od/weekday_2023-10.csv"
+  ],
+  "days_averaged": 3,
+  "riders_per_day": 185584.0,
+  "unmatched_od_riders_per_day": 545.2,
+  "link_hours_served": 5841,
+  "state_counts": {
+    "OVERSUPPLY": 4957,
+    "BALANCED": 772,
+    "UNDERSUPPLY": 67,
+    "CROWDED": 45
+  },
+  "state_shares": {
+    "OVERSUPPLY": 0.8487,
+    "BALANCED": 0.1322,
+    "UNDERSUPPLY": 0.0115,
+    "CROWDED": 0.0077
+  },
+  "peak_vc": 2.358,
+  "excess_riders_per_day": 30736.0,
+  "empty_seat_hours_per_day": 13695376.0,
+  "capacity_note": "supply = period_capacity_td (FY2025 timetable era 2025-01-13..2025-04-01, vehicle_capacity 750/train); historical demand years are loaded on THIS fixed supply = counterfactual under/oversupply analysis",
+  "loading_convention": "equal split across the OD's enumerated columns; no capacity constraint (V/C diagnostic, not capacitated assignment)"
+}

@@ -1,0 +1,29 @@
+{
+  "tag": "weekday_2025-02",
+  "dates": [
+    "2025-02-11",
+    "2025-02-12",
+    "2025-02-13"
+  ],
+  "days_averaged": 3,
+  "riders_per_day": 178006.0,
+  "unmatched_od_riders_per_day": 0.0,
+  "link_hours_served": 5845,
+  "state_counts": {
+    "OVERSUPPLY": 5007,
+    "BALANCED": 738,
+    "UNDERSUPPLY": 57,
+    "CROWDED": 43
+  },
+  "state_shares": {
+    "OVERSUPPLY": 0.8566,
+    "BALANCED": 0.1263,
+    "UNDERSUPPLY": 0.0098,
+    "CROWDED": 0.0074
+  },
+  "peak_vc": 2.196,
+  "excess_riders_per_day": 26996.0,
+  "empty_seat_hours_per_day": 13745340.0,
+  "capacity_note": "supply = period_capacity_td (FY2025 timetable era 2025-01-13..2025-04-01, vehicle_capacity 750/train); historical demand years are loaded on THIS fixed supply = counterfactual under/oversupply analysis",
+  "loading_convention": "equal split across the OD's enumerated columns; no capacity constraint (V/C diagnostic, not capacitated assignment)"
+}
