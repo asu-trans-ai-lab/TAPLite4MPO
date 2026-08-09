@@ -183,6 +183,12 @@ int run_selftest() {
     }
     props("SCAGrampMeter", -1);
 
+    // ---- CR-0010: processor-count contract ----
+    check(ProcessorCountValidationStatus(0) == 0,
+          "processors=0 accepted as auto-detect sentinel");
+    check(ProcessorCountValidationStatus(1) == 0, "processors=1 valid");
+    check(ProcessorCountValidationStatus(-1) != 0, "processors=-1 rejected");
+
     // ---- guard behavior: clamp at zero, added-delay off by default ----
     reset_link(0);
     check(tt_at(0.0) >= 0.0, "nonneg clamp");

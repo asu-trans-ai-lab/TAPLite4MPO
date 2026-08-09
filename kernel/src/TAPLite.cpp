@@ -914,7 +914,9 @@ static constexpr int MAX_SAFE_PROCESSOR_BUCKETS = 128;
 
 int ProcessorCountValidationStatus(int requested_processors)
 {
-	return requested_processors >= 1 &&
+	// 0 = auto-detect sentinel (CR-0010): resolved to max(1, cores-3) in
+	// ConfigureOpenMPRuntime, keeping 3 cores free for the interactive user.
+	return requested_processors >= 0 &&
 		requested_processors <= MAX_SAFE_PROCESSOR_BUCKETS ? 0 : 2;
 }
 
@@ -953,6 +955,18 @@ static bool ConfigureOpenMPRuntime()
 	compiled = 1;
 	openmp_version = _OPENMP;
 	omp_set_dynamic(0);
+	// Auto-detect mode (CR-0010): number_of_processors=0 in settings.csv
+	// means "detect cores and reserve 3 for the interactive user" ->
+	// max(1, cores-3). Explicit positive values behave exactly as before,
+	// so every existing scenario is byte-identical.
+	if (g_number_of_processors <= 0)
+	{
+		int detected = omp_get_num_procs();
+		g_number_of_processors = detected - 3 >= 1 ? detected - 3 : 1;
+		printf("processors=0 (auto): detected %d cores, using %d "
+		       "(3 reserved for the user)\n",
+		       detected, g_number_of_processors);
+	}
 	omp_set_num_threads(g_number_of_processors);
 	max_threads = omp_get_max_threads();
 	num_procs = omp_get_num_procs();
