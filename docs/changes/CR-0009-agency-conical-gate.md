@@ -61,3 +61,15 @@ NOT CERTIFIED — but the mismatch is now attributed and measured:
   (registry P4/P7) — with fields already present in the data.**
 - Standard run cost at the 20-iteration setting: ~15 s/iteration on 8
   threads for the full network; auto cores−3 mode available (CR-0010).
+
+## Round 3 addendum (2026-08-09, auto mode)
+
+The managed-lane residual is CLOSED at data level: the delivered conversion
+had copied one flat toll to all six classes (everyone avoided priced
+lanes). Restaging per-class tolls from the agency's own variable-pricing
+field through the EXISTING kernel toll_<mode> machinery (no kernel change):
+hov3 R^2 0.57 -> 0.93; restricted-lane volume ratio 0.88 -> 0.99; corridor
+volume ratio 0.996 (R^2 0.964); overall R^2 0.982. Remaining certification
+question is a SCORING convention (the +/-10% band on low-volume links), an
+owner call, plus the public synthetic pricing-grid twin cases to upgrade
+the pricing-operator status honestly.
