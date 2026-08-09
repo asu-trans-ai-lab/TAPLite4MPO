@@ -76,3 +76,4 @@ examples/**/gmns_run_quick/
 examples/**/kernel_console.log
 
 kernel/build_test/
+resolved_model_manifest.json
