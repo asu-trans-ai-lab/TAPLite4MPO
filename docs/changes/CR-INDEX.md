@@ -11,3 +11,7 @@ Process: see the release planning package (planning/02_CHANGE_CONTROL.md and
 | [CR-0003](CR-0003-dc-multiagency-transit.md) | DC multi-agency transit (T2): contracts, pipeline, manifests | FIXTURE | MERGED (main, 2026-08-08) | Owner (2026-08-08) |
 | [CR-0004](CR-0004-golden-a-multimodal.md) | Golden A synthetic multimodal teaching fixture (T0) | FIXTURE | MERGED (main, 2026-08-08) | Owner (2026-08-08) |
 | [CR-0005](CR-0005-opendta-export.md) | TAPLite -> OpenDTA export (R-06): four-CSV contract + fail-closed gates | TOOLING/CONTRACT | MERGED (main, 2026-08-09) | Owner (2026-08-09) |
+| [CR-0006](CR-0006-selftest-spine.md) | PR-1 C++ selftest spine (265/0, drift fixed, zero behavior change) | TOOLING | COMMITTED local | Owner (2026-08-09) |
+| [CR-0007](CR-0007-independent-twin.md) | PR-2 independent twin + oracle (240/240, 480/480; finding TW-1) | TOOLING | COMMITTED local | Owner (2026-08-09) |
+| [CR-0008](CR-0008-strict-model-resolution.md) | PR-3 strict model resolution (RS-1..5, negative fixture) | TOOLING/CONTRACT | COMMITTED local | Owner (2026-08-09) |
+| [CR-0009](CR-0009-agency-conical-gate.md) | PR-4 agency conical Gate A (private root; NOT CERTIFIED yet) | FIXTURE | IN PROGRESS | Owner (2026-08-09) |
