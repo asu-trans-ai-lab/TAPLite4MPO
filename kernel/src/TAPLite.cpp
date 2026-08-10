@@ -1712,6 +1712,260 @@ void AddLinkSequence(int m, int Orig, int Dest, int route_id, const std::vector<
 
 
 
+// ---- CR-0017: origin-rooted TREE column pool (tree_pool.bin) -------------
+// Stores one shortest-path tree per (mode x root x iteration) instead of one
+// record per OD path: O(origins x nodes) instead of O(OD x path_length), and
+// lossless (no volume floor). Arcs are kept farther-to-root, which is both
+// the routing policy and a valid post-order for bottom-up flow aggregation.
+// Layout: docs/TREE_POOL_BINARY_FORMAT.md
+struct TreePoolSnapshot {
+	int iteration, mode, root_zone, root_node;
+	unsigned long long arc_begin;
+	unsigned int arc_count;
+	double theta;
+};
+struct TreePoolArc { int node; int link; };   // link = policy link INTO node
+struct TreePoolOD {
+	unsigned int snapshot_idx;
+	int dest_node, dest_zone;
+	double volume;      // pure demand (not PCE-weighted)
+	int mode;           // agent class; consumer applies pce for link volumes
+};
+
+static bool WriteTreePool(const std::string& fn,
+	const std::vector<TreePoolSnapshot>& snaps,
+	const std::vector<TreePoolArc>& arcs,
+	const std::vector<TreePoolOD>& ods,
+	unsigned int orientation = 0u)
+{
+	FILE* f = fopen(fn.c_str(), "wb");
+	if (!f) return false;
+	unsigned int magic = 0x54504154u;   /* 'TAPT' */
+	unsigned int version = 1u;
+	unsigned int flags = 1u;            /* bit0: arcs carry node ids */
+	unsigned long long n_snap = snaps.size();
+	unsigned long long n_arc = arcs.size();
+	unsigned long long n_od = ods.size();
+	bool ok =
+		fwrite(&magic, 4, 1, f) == 1 && fwrite(&version, 4, 1, f) == 1 &&
+		fwrite(&orientation, 4, 1, f) == 1 && fwrite(&flags, 4, 1, f) == 1 &&
+		fwrite(&n_snap, 8, 1, f) == 1 && fwrite(&n_arc, 8, 1, f) == 1 &&
+		fwrite(&n_od, 8, 1, f) == 1;
+	for (size_t i = 0; ok && i < snaps.size(); ++i)
+	{
+		const TreePoolSnapshot& s = snaps[i];
+		unsigned int pad = 0u;
+		ok = fwrite(&s.iteration, 4, 1, f) == 1 && fwrite(&s.mode, 4, 1, f) == 1 &&
+			fwrite(&s.root_zone, 4, 1, f) == 1 && fwrite(&s.root_node, 4, 1, f) == 1 &&
+			fwrite(&s.arc_begin, 8, 1, f) == 1 && fwrite(&s.arc_count, 4, 1, f) == 1 &&
+			fwrite(&pad, 4, 1, f) == 1 && fwrite(&s.theta, 8, 1, f) == 1;
+	}
+	for (size_t i = 0; ok && i < arcs.size(); ++i)
+		ok = fwrite(&arcs[i].node, 4, 1, f) == 1 &&
+			fwrite(&arcs[i].link, 4, 1, f) == 1;
+	for (size_t i = 0; ok && i < ods.size(); ++i)
+	{
+		ok = fwrite(&ods[i].snapshot_idx, 4, 1, f) == 1 &&
+			fwrite(&ods[i].dest_node, 4, 1, f) == 1 &&
+			fwrite(&ods[i].dest_zone, 4, 1, f) == 1 &&
+			fwrite(&ods[i].volume, 8, 1, f) == 1 &&
+			fwrite(&ods[i].mode, 4, 1, f) == 1;
+	}
+	if (fclose(f) != 0) ok = false;
+	return ok;
+}
+
+static bool ReadTreePool(const std::string& fn,
+	std::vector<TreePoolSnapshot>& snaps,
+	std::vector<TreePoolArc>& arcs,
+	std::vector<TreePoolOD>& ods)
+{
+	FILE* f = fopen(fn.c_str(), "rb");
+	if (!f) return false;
+	unsigned int magic = 0, version = 0, orientation = 0, flags = 0;
+	unsigned long long n_snap = 0, n_arc = 0, n_od = 0;
+	if (fread(&magic, 4, 1, f) != 1 || magic != 0x54504154u ||
+		fread(&version, 4, 1, f) != 1 || version != 1u ||
+		fread(&orientation, 4, 1, f) != 1 || orientation > 1u ||
+		fread(&flags, 4, 1, f) != 1 || (flags & ~1u) != 0u ||
+		fread(&n_snap, 8, 1, f) != 1 || fread(&n_arc, 8, 1, f) != 1 ||
+		fread(&n_od, 8, 1, f) != 1)
+	{ fclose(f); return false; }
+	snaps.clear(); arcs.clear(); ods.clear();
+	unsigned long long arcs_declared = 0;
+	for (unsigned long long i = 0; i < n_snap; ++i)
+	{
+		TreePoolSnapshot s; unsigned int pad = 0;
+		if (fread(&s.iteration, 4, 1, f) != 1 || fread(&s.mode, 4, 1, f) != 1 ||
+			fread(&s.root_zone, 4, 1, f) != 1 || fread(&s.root_node, 4, 1, f) != 1 ||
+			fread(&s.arc_begin, 8, 1, f) != 1 || fread(&s.arc_count, 4, 1, f) != 1 ||
+			fread(&pad, 4, 1, f) != 1 || fread(&s.theta, 8, 1, f) != 1)
+		{ fclose(f); return false; }
+		if (s.arc_begin + s.arc_count > n_arc) { fclose(f); return false; }
+		arcs_declared += s.arc_count;
+		snaps.push_back(s);
+	}
+	if (arcs_declared != n_arc) { fclose(f); return false; }
+	arcs.resize((size_t)n_arc);
+	for (unsigned long long i = 0; i < n_arc; ++i)
+		if (fread(&arcs[(size_t)i].node, 4, 1, f) != 1 ||
+			fread(&arcs[(size_t)i].link, 4, 1, f) != 1)
+		{ fclose(f); return false; }
+	for (unsigned long long i = 0; i < n_od; ++i)
+	{
+		TreePoolOD o;
+		if (fread(&o.snapshot_idx, 4, 1, f) != 1 ||
+			fread(&o.dest_node, 4, 1, f) != 1 ||
+			fread(&o.dest_zone, 4, 1, f) != 1 ||
+			fread(&o.volume, 8, 1, f) != 1 || fread(&o.mode, 4, 1, f) != 1)
+		{ fclose(f); return false; }
+		if (o.snapshot_idx >= n_snap) { fclose(f); return false; }
+		ods.push_back(o);
+	}
+	fclose(f);
+	return true;
+}
+
+// Bottom-up flow aggregation — the whole point of the tree form. Seed mass at
+// each snapshot's destinations, then sweep its arc slice ONCE in stored
+// (farther-to-root) order: flow at a node passes through its policy link and
+// adds to the parent's mass. No path is ever materialized.
+// `link_from_node` maps an external link id to its upstream node id.
+static bool TreePoolAccumulate(
+	const std::vector<TreePoolSnapshot>& snaps,
+	const std::vector<TreePoolArc>& arcs,
+	const std::vector<TreePoolOD>& ods,
+	const std::map<int, int>& link_from_node,
+	std::map<int, double>& link_volume_out,
+	const std::map<int, double>* pce_by_mode = NULL)
+{
+	link_volume_out.clear();
+	std::vector<std::vector<size_t> > od_by_snapshot(snaps.size());
+	for (size_t i = 0; i < ods.size(); ++i)
+	{
+		if (ods[i].snapshot_idx >= snaps.size()) return false;
+		od_by_snapshot[ods[i].snapshot_idx].push_back(i);
+	}
+	for (size_t s = 0; s < snaps.size(); ++s)
+	{
+		std::map<int, double> mass;
+		for (size_t j = 0; j < od_by_snapshot[s].size(); ++j)
+		{
+			const TreePoolOD& o = ods[od_by_snapshot[s][j]];
+			double w = 1.0;
+			if (pce_by_mode)
+			{
+				std::map<int, double>::const_iterator pit =
+					pce_by_mode->find(o.mode);
+				if (pit != pce_by_mode->end()) w = pit->second;
+			}
+			mass[o.dest_node] += o.volume * w;
+		}
+		const TreePoolSnapshot& sn = snaps[s];
+		for (unsigned long long a = sn.arc_begin;
+			a < sn.arc_begin + sn.arc_count; ++a)
+		{
+			const TreePoolArc& arc = arcs[(size_t)a];
+			std::map<int, double>::iterator it = mass.find(arc.node);
+			if (it == mass.end() || it->second == 0.0) continue;
+			double flow = it->second;
+			link_volume_out[arc.link] += sn.theta * flow;
+			std::map<int, int>::const_iterator fn = link_from_node.find(arc.link);
+			if (fn == link_from_node.end()) return false;
+			mass[fn->second] += flow;
+		}
+	}
+	return true;
+}
+
+// CR-0017 accumulators for route_output level 4 (tree_pool.bin).
+static std::vector<TreePoolSnapshot> g_tree_snapshots;
+static std::vector<TreePoolArc> g_tree_arcs;
+static std::vector<TreePoolOD> g_tree_ods;
+
+// Capture one shortest-path tree as a PRUNED farther-to-root arc slice.
+// `pred[node_seq]` is the policy link into that node. Only arcs on a path to
+// a destination with positive demand are stored (an unused branch is pure
+// waste), and depth ordering guarantees children precede parents, so the
+// slice is a valid post-order for the bottom-up sweep.
+// Returns the snapshot index, or -1 when nothing is reachable/needed.
+static int CaptureTreeSnapshot(int iteration, int mode, int orig_zone,
+	int root_node_seq, int* pred, int n_nodes,
+	const std::vector<int>& dest_nodes_with_flow)
+{
+	// mark the union of paths root <- destination
+	std::vector<char> keep((size_t)n_nodes + 1, 0);
+	for (size_t d = 0; d < dest_nodes_with_flow.size(); ++d)
+	{
+		int cur = dest_nodes_with_flow[d], guard = 0;
+		while (cur >= 1 && cur <= n_nodes && cur != root_node_seq &&
+			!keep[cur] && guard++ <= n_nodes)
+		{
+			int k = pred[cur];
+			if (k <= 0 || k > number_of_links) break;
+			keep[cur] = 1;
+			cur = Link[k].internal_from_node_id;
+		}
+	}
+	std::vector<int> depth((size_t)n_nodes + 1, -1);
+	if (root_node_seq >= 0 && root_node_seq <= n_nodes)
+		depth[root_node_seq] = 0;
+	std::vector<int> chain;
+	for (int nd = 1; nd <= n_nodes; ++nd)
+	{
+		if (!keep[nd] || depth[nd] >= 0) continue;
+		chain.clear();
+		int cur = nd, guard = 0;
+		while (cur >= 1 && cur <= n_nodes && depth[cur] < 0 && guard++ <= n_nodes)
+		{
+			int k = pred[cur];
+			if (k <= 0 || k > number_of_links) { chain.clear(); break; }
+			chain.push_back(cur);
+			cur = Link[k].internal_from_node_id;
+		}
+		if (chain.empty() || cur < 1 || cur > n_nodes || depth[cur] < 0)
+			continue;
+		int d = depth[cur];
+		for (int i = (int)chain.size() - 1; i >= 0; --i)
+			depth[chain[i]] = ++d;
+	}
+	std::vector<std::pair<int, int> > by_depth;
+	for (int nd = 1; nd <= n_nodes; ++nd)
+		if (keep[nd] && depth[nd] > 0)
+			by_depth.push_back(std::make_pair(depth[nd], nd));
+	if (by_depth.empty()) return -1;
+	std::sort(by_depth.begin(), by_depth.end(),
+		std::greater<std::pair<int, int> >());
+
+	int snap_idx = -1;
+#pragma omp critical(tree_pool)
+	{
+		TreePoolSnapshot s;
+		s.iteration = iteration; s.mode = mode;
+		s.root_zone = g_zone_seq_2_old_zone_id[orig_zone];
+		s.root_node = (root_node_seq >= 0 && root_node_seq <
+			(int)g_map_node_seq_no_2_external_node_id.size())
+			? g_map_node_seq_no_2_external_node_id[root_node_seq]
+			: root_node_seq;
+		s.arc_begin = g_tree_arcs.size();
+		s.arc_count = (unsigned int)by_depth.size();
+		s.theta = 0.0;                        // patched at write time
+		snap_idx = (int)g_tree_snapshots.size();
+		g_tree_snapshots.push_back(s);
+		for (size_t i = 0; i < by_depth.size(); ++i)
+		{
+			int nd = by_depth[i].second;
+			int k = pred[nd];
+			TreePoolArc a;
+			a.node = Link[k].external_to_node_id;
+			a.link = Link[k].external_link_id;
+			g_tree_arcs.push_back(a);
+		}
+	}
+	return snap_idx;
+}
+
+
 void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int*** MinPathPredLink, double* Volume)
 {
 //	printf("All or nothing assignment\n");
@@ -1797,14 +2051,39 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 			int CurrentNode;
 			double RouteFlow;
 			std::vector<int> currentLinkSequence; // Temporary vector to store link indices
-
+			std::map<int, int> tree_snap_by_mpred;   // CR-0017: shared trees
 
 			for (int m = 1; m <= number_of_modes; m++)
 			{
-
+				// CR-0017 (route_output level 4): capture this (mode, origin)
+				// shortest-path tree once, before walking destinations.
+				int tree_snap_idx = -1;
+				if (shortest_path_log_flag >= 4)
+				{
+					int mp = (g_mode_type_vector[m].dedicated_shortest_path == 0)
+						? 1 : ((g_rep_mode[m] >= 1) ? g_rep_mode[m] : m);
+					// modes sharing a predecessor tree share ONE snapshot; the
+					// per-mode demand rides on the OD records instead.
+					std::map<int, int>::iterator sh = tree_snap_by_mpred.find(mp);
+					if (sh != tree_snap_by_mpred.end())
+						tree_snap_idx = sh->second;
+					else
+					{
+						std::vector<int> dests_with_flow;
+						for (int dd = 1; dd <= no_zones; ++dd)
+							if (dd != Orig && ODflow[m][Orig][dd] > 0.000001)
+								dests_with_flow.push_back(dd);
+						tree_snap_idx = CaptureTreeSnapshot(
+							Assignment_iteration_no, mp, Orig,
+							Orig /* zone seq == node seq for centroids */,
+							MinPathPredLink[mp][Orig], no_nodes,
+							dests_with_flow);
+						tree_snap_by_mpred[mp] = tree_snap_idx;
+					}
+				}
 
 				//	printf("Assign", "Assigning origin %6d.", Orig);
-				for (Dest = 1; Dest <= no_zones; Dest++)  // Dest zone 
+				for (Dest = 1; Dest <= no_zones; Dest++)  // Dest zone
 				{
 					if (Dest == Orig)
 						continue;
@@ -1830,6 +2109,25 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 					CurrentNode = Dest;
 					CurrentNode = Dest;   // dense zone seq == node seq (internal renumbering)
 					int internal_node_for_origin_node = Orig;   // dense zone seq == node seq (internal renumbering)
+
+					// CR-0017: one OD record per (snapshot, destination). The
+					// tree already carries the routing; only the terminal mass
+					// is needed for the bottom-up sweep.
+					if (tree_snap_idx >= 0)
+					{
+#pragma omp critical(tree_pool)
+						{
+							TreePoolOD o;
+							o.snapshot_idx = (unsigned int)tree_snap_idx;
+							o.dest_node =
+								(Dest >= 0 && Dest < (int)g_map_node_seq_no_2_external_node_id.size())
+								? g_map_node_seq_no_2_external_node_id[Dest] : Dest;
+							o.dest_zone = g_zone_seq_2_old_zone_id[Dest];
+							o.volume = RouteFlow;
+							o.mode = m;
+							g_tree_ods.push_back(o);
+						}
+					}
 					// MinPathPredLink is coded as internal node id 
 					// 
 					//double total_travel_time = 0;
@@ -6028,7 +6326,64 @@ int AssignmentAPI()
 		GenerateAggregatedPerformanceAndAccessibility();
 	}
 
-	if (shortest_path_log_flag)
+	if (shortest_path_log_flag >= 4)
+	{
+		// CR-0017: patch each snapshot's FW weight, write the tree pool, then
+		// the mandatory read-back + bottom-up identity self-test.
+		for (size_t si = 0; si < g_tree_snapshots.size(); ++si)
+		{
+			int it = g_tree_snapshots[si].iteration;
+			g_tree_snapshots[si].theta =
+				(it >= 0 && it < (int)m_theta.size()) ? m_theta[it]
+				: (TotalAssignIterations <= 1 ? 1.0 : 0.0);
+		}
+		bool ok = WriteTreePool("tree_pool.bin", g_tree_snapshots,
+			g_tree_arcs, g_tree_ods);
+		std::vector<TreePoolSnapshot> s2;
+		std::vector<TreePoolArc> a2;
+		std::vector<TreePoolOD> o2;
+		ok = ok && ReadTreePool("tree_pool.bin", s2, a2, o2) &&
+			s2.size() == g_tree_snapshots.size() &&
+			a2.size() == g_tree_arcs.size() && o2.size() == g_tree_ods.size();
+		double max_dv = -1.0;
+		if (ok)
+		{
+			std::map<int, int> from_node;
+			for (int k = 1; k <= number_of_links; ++k)
+				from_node[Link[k].external_link_id] =
+					Link[k].external_from_node_id;
+			std::map<int, double> pce;
+			for (int mm = 1; mm <= number_of_modes; ++mm)
+				pce[mm] = g_mode_type_vector[mm].pce;
+			std::map<int, double> lv;
+			ok = TreePoolAccumulate(s2, a2, o2, from_node, lv, &pce);
+			if (ok)
+			{
+				max_dv = 0.0;
+				for (int k = 1; k <= number_of_links; ++k)
+				{
+					double got = lv.count(Link[k].external_link_id)
+						? lv[Link[k].external_link_id] : 0.0;
+					double d = fabs(got - MainVolume[k]);
+					if (d > max_dv) max_dv = d;
+				}
+				ok = max_dv < 1e-4;
+			}
+		}
+		printf("tree_pool binary: %llu snapshots, %llu arcs, %llu OD records "
+			"-> tree_pool.bin | bottom-up identity vs link volume %s "
+			"(max |dv| = %.3e)\n",
+			(unsigned long long)g_tree_snapshots.size(),
+			(unsigned long long)g_tree_arcs.size(),
+			(unsigned long long)g_tree_ods.size(),
+			ok ? "PASS" : "FAIL", max_dv);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "tree_pool: %llu snapshots, identity %s "
+				"(max |dv| = %.3e)\n",
+				(unsigned long long)g_tree_snapshots.size(),
+				ok ? "PASS" : "FAIL", max_dv);
+	}
+	else if (shortest_path_log_flag)
 	{
 		OutputRouteDetails(shortest_path_log_flag >= 3 ? "route_pool.bin" : "route_assignment.csv", m_theta, shortest_path_log_flag);
 		if (vehicle_log_flag)

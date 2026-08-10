@@ -270,6 +270,110 @@ int run_selftest() {
               "missing file fails loudly");
     }
 
+    // ---- CR-0017: tree column pool codec + bottom-up identity ----
+    // Hand-computed tree (root=1):  1 --L10--> 2 --L20--> 3
+    //                                          2 --L30--> 4
+    // Arc slice in farther-to-root order: (4,L30), (3,L20), (2,L10).
+    // Demand: dest 3 = 100, dest 4 = 50.  Bottom-up sweep must give
+    //   L30 = 50, L20 = 100, L10 = 150  (and L10 == total demand: the
+    //   conservation identity at the root).
+    {
+        std::map<int, int> from_node;
+        from_node[10] = 1; from_node[20] = 2; from_node[30] = 2;
+
+        std::vector<TreePoolSnapshot> snaps(1);
+        snaps[0].iteration = 0; snaps[0].mode = 1;
+        snaps[0].root_zone = 1; snaps[0].root_node = 1;
+        snaps[0].arc_begin = 0; snaps[0].arc_count = 3; snaps[0].theta = 1.0;
+        std::vector<TreePoolArc> arcs(3);
+        arcs[0].node = 4; arcs[0].link = 30;
+        arcs[1].node = 3; arcs[1].link = 20;
+        arcs[2].node = 2; arcs[2].link = 10;
+        std::vector<TreePoolOD> ods(2);
+        ods[0].snapshot_idx = 0; ods[0].dest_node = 3; ods[0].dest_zone = 3;
+        ods[0].volume = 100.0;
+        ods[1].snapshot_idx = 0; ods[1].dest_node = 4; ods[1].dest_zone = 4;
+        ods[1].volume = 50.0;
+
+        std::map<int, double> lv;
+        check(TreePoolAccumulate(snaps, arcs, ods, from_node, lv),
+              "tree bottom-up sweep runs");
+        near_(lv[30], 50.0, 1e-12, "tree bottom-up leaf L30");
+        near_(lv[20], 100.0, 1e-12, "tree bottom-up leaf L20");
+        near_(lv[10], 150.0, 1e-12, "tree bottom-up trunk L10 = sum of demand");
+
+        // theta scaling is linear and applies to every arc of the snapshot
+        snaps[0].theta = 0.4;
+        std::map<int, double> lv04;
+        check(TreePoolAccumulate(snaps, arcs, ods, from_node, lv04),
+              "tree sweep with theta=0.4");
+        near_(lv04[10], 60.0, 1e-12, "theta scales trunk");
+        near_(lv04[30], 20.0, 1e-12, "theta scales leaf");
+        snaps[0].theta = 1.0;
+
+        // FW accumulation across two snapshots: thetas must sum into one x
+        std::vector<TreePoolSnapshot> two(2);
+        two[0] = snaps[0]; two[0].theta = 0.25;
+        two[1] = snaps[0]; two[1].iteration = 1; two[1].theta = 0.75;
+        std::vector<TreePoolOD> ods2 = ods;
+        ods2.push_back(ods[0]); ods2.back().snapshot_idx = 1;
+        ods2.push_back(ods[1]); ods2.back().snapshot_idx = 1;
+        std::map<int, double> lv2;
+        check(TreePoolAccumulate(two, arcs, ods2, from_node, lv2),
+              "two-snapshot FW accumulation");
+        near_(lv2[10], 150.0, 1e-12, "sum of thetas = 1 reproduces x exactly");
+
+        // binary round trip
+        const char* tf = "selftest_tree_pool.bin";
+        check(WriteTreePool(tf, snaps, arcs, ods), "tree pool write");
+        std::vector<TreePoolSnapshot> s2;
+        std::vector<TreePoolArc> a2;
+        std::vector<TreePoolOD> o2;
+        check(ReadTreePool(tf, s2, a2, o2), "tree pool read");
+        check(s2.size() == 1 && a2.size() == 3 && o2.size() == 2,
+              "tree pool counts round trip");
+        if (s2.size() == 1) {
+            near_(s2[0].theta, 1.0, 1e-15, "theta round trip");
+            check(s2[0].root_node == 1 && s2[0].arc_count == 3,
+                  "snapshot fields round trip");
+        }
+        if (a2.size() == 3)
+            check(a2[0].node == 4 && a2[0].link == 30 && a2[2].link == 10,
+                  "arc order preserved (farther-to-root)");
+        if (o2.size() == 2)
+            near_(o2[0].volume, 100.0, 1e-12, "OD volume round trip");
+        // reloaded pool must reproduce the same link volumes
+        std::map<int, double> lv_rt;
+        check(TreePoolAccumulate(s2, a2, o2, from_node, lv_rt),
+              "reloaded pool sweeps");
+        near_(lv_rt[10], 150.0, 1e-12, "reload identity: trunk");
+        near_(lv_rt[20], 100.0, 1e-12, "reload identity: branch");
+        std::remove(tf);
+
+        // corruption must fail loudly, never be silently repaired
+        std::vector<TreePoolSnapshot> bad_s = snaps;
+        bad_s[0].arc_count = 99;              // slice past the arc pool
+        check(WriteTreePool(tf, bad_s, arcs, ods), "write oversized slice");
+        std::vector<TreePoolSnapshot> s3; std::vector<TreePoolArc> a3;
+        std::vector<TreePoolOD> o3;
+        check(!ReadTreePool(tf, s3, a3, o3),
+              "arc slice past end of pool rejected");
+        std::remove(tf);
+        std::vector<TreePoolOD> bad_o = ods;
+        bad_o[0].snapshot_idx = 7;            // dangling snapshot reference
+        check(WriteTreePool(tf, snaps, arcs, bad_o), "write dangling OD");
+        check(!ReadTreePool(tf, s3, a3, o3), "dangling snapshot_idx rejected");
+        std::remove(tf);
+        check(!ReadTreePool("selftest_no_tree_here.bin", s3, a3, o3),
+              "missing tree pool fails loudly");
+        // an unmapped link must fail, not silently drop flow
+        std::map<int, int> holes = from_node;
+        holes.erase(20);
+        std::map<int, double> lvh;
+        check(!TreePoolAccumulate(snaps, arcs, ods, holes, lvh),
+              "unknown link in arc pool rejected");
+    }
+
     std::printf("  Performance functions: BPR, ModifiedBPR, Conical, QVDF,\n"
                 "    BPR2, INRETS, Akcelik, SANDAGsignal, SCAGpiecewise,\n"
                 "    SCAGrampMeter — exercised on the D/C grid.\n");

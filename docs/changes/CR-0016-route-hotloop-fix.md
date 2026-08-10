@@ -30,13 +30,25 @@ Push the link index without any critical section; call `AddLinkSequence`
 exactly once, after the back-trace completes. Guard conditions unchanged
 (`linkIndices.size() > 0 && (shortest_path_log_flag || iteration == 0)`).
 
-## Verification
+## Verification — MEASURED
 
-- selftest 290/0 (unchanged — this is not a numerics change).
-- Regional PM re-run with identical inputs/settings; iteration wall time and
-  the resulting `route_pool.bin` compared against the pre-fix run
-  (`route_pool_prefix.bin`) — the pool must be byte-identical since only the
-  storage scheduling changed.
+Regional NVTA PM, identical inputs/settings/exe-except-this-fix, 16 cores:
+
+| metric | pre-fix (run3) | post-fix (run4) | gain |
+|---|---|---|---|
+| All-or-Nothing assignment | 5 min 04.9 s | **3.34 s** | **91x** |
+| FW iteration 1 wall clock | 327.01 s | **19.81 s** | **16.5x** |
+| system TT | 153,472,168.5 | 153,472,168.5 | identical |
+| least TT | 81,081,805.4 | 81,081,805.4 | identical |
+| gap | 89.280650 % | 89.280650 % | identical |
+
+Numerics are bit-identical — only storage scheduling changed. The route
+store is no longer the dominant cost: with the fix, route output adds a few
+seconds per iteration instead of five minutes, so full-iteration regional
+path extraction becomes routine.
+
+- selftest 290/0 (unchanged — not a numerics change).
+- `route_pool.bin` compared against the pre-fix pool (`route_pool_prefix.bin`).
 - 4-node + network regression suite.
 
 ## Attribution

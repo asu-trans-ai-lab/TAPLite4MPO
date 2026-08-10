@@ -21,3 +21,4 @@ Process: see the release planning package (planning/02_CHANGE_CONTROL.md and
 | [CR-0014](CR-0014-output-contract-integrity.md) | Output-contract integrity: QVDF lineage guard + TAP_log schema (K-1..K-5) | KERNEL (output layer) | COMMITTED local | Owner (2026-08-09) |
 | [CR-0015](CR-0015-route-output-binary.md) | Route output levels 2/3: volume-floor CSV + binary route_pool.bin with read-back self-test | KERNEL (output) | COMMITTED local | Owner (2026-08-10) |
 | [CR-0016](CR-0016-route-hotloop-fix.md) | Route-store hot loop: remove omp critical on thread-local vector + quadratic per-hop copy | KERNEL (perf) | COMMITTED local | Owner (2026-08-10) |
+| [CR-0017](CR-0017-tree-column-pool.md) | Origin-rooted tree column pool (route_output=4, EXPERIMENTAL): pruned trees + bottom-up identity self-test | KERNEL (output) | COMMITTED local | Owner (2026-08-10) |
