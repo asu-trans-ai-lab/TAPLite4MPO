@@ -1,0 +1,136 @@
+{
+ "adapter_profile_version": "1.1.0",
+ "description": "Generic Cube wide-periodic network profile ({P} = AM/MD/PM/NT). Field derivations EMPIRICALLY LOCKED against a published narrow export (Gold-Resolver, 100% x 3 periods x 49k links). Agency-specific bindings beyond these generic Cube conventions live privately.",
+ "identity": {
+  "source_link_id": "LINKID",
+  "native_feature_id": "@FID",
+  "a_node": "A",
+  "b_node": "B",
+  "record_id_basis": [
+   "@dataset",
+   "@layer",
+   "A",
+   "B",
+   "LINKID",
+   "@FID"
+  ]
+ },
+ "common": {
+  "facility_type": "FTYPE",
+  "area_type": "ATYPE",
+  "length_miles": "DISTANCE",
+  "street_name": "STREETNAME"
+ },
+ "periods": [
+  "AM",
+  "MD",
+  "PM",
+  "NT"
+ ],
+ "per_period": {
+  "lanes_{P}": "{P}LANE",
+  "limit_{P}": "{P}LIMIT",
+  "capacity_hourly_per_lane_{P}": [
+   "I{P}HRLNCAP",
+   "{P}HRLNCAP"
+  ],
+  "capacity_hourly_link_{P}": [
+   "I{P}HRLKCAP",
+   "{P}HRLKCAP"
+  ],
+  "source_volume_{P}": "I4{P}VOL",
+  "source_vc_{P}": "I4{P}VC",
+  "free_speed_mph_{P}": "I4{P}FFSPD",
+  "vdf_code_{P}": "I4{P}VDF",
+  "toll_{P}": "{P}TOLL",
+  "toll_vp_{P}": "{P}TOLL_VP",
+  "capacity_period_{P}": {
+   "origin": "DERIVED",
+   "derivation": "capacity_hourly_link_{P} * source_period_factor_{P}",
+   "units": "veh per period, whole link",
+   "consumer": "static VDF only (BPR, conical, and every non-QVDF form)",
+   "note": "CR-0019: the static VDF computes x = source_volume_{P} / capacity_period_{P} directly. lanes, period duration and PLF play no part."
+  },
+  "source_period_factor_{P}": {
+   "origin": "DECLARED",
+   "meaning": "phi = C_period / C_hourly_link = 1 / peak-hour share",
+   "provenance_only": true,
+   "note": "Adapter input for building capacity_period_{P}. NEVER a kernel input. Must come from a declared period definition or a measured constant - never from a per-link inversion of source_volume, which is circular against the comparison target."
+  },
+  "source_plf_{P}": {
+   "origin": "LEGACY",
+   "meaning": "phi / H - the retired kernel PLF",
+   "provenance_only": true,
+   "note": "Retained so legacy networks remain traceable. Not read at run time."
+  },
+  "kd_{P}": {
+   "origin": "CALIBRATED",
+   "meaning": "k_d = D / (V/H), demand peaking of the congested episode",
+   "consumer": "QVDF only",
+   "note": "NOT 1/PLF. That identity is WITHDRAWN (CR-0019). k_d comes from demand reconstruction on observed speed/flow; deriving it from a period factor makes the QVDF calibration circular."
+  },
+  "kmu_{P}": {
+   "origin": "CALIBRATED",
+   "meaning": "k_mu = mu / C_hourly, measured queue-discharge retention",
+   "consumer": "QVDF only",
+   "note": "Supply-side. No counterpart in the legacy schema."
+  },
+  "vdf_type_{P}": "0=BPR 1=conical 2=QVDF 3..8 see registry",
+  "vdf_parameter_1_{P}": "form-dependent: BPR(alpha,beta) conical(a,b) QVDF(fd,n,fp,s)",
+  "vdf_parameter_2_{P}": "form-dependent: BPR(alpha,beta) conical(a,b) QVDF(fd,n,fp,s)",
+  "vdf_parameter_3_{P}": "form-dependent: BPR(alpha,beta) conical(a,b) QVDF(fd,n,fp,s)",
+  "vdf_parameter_4_{P}": "form-dependent: BPR(alpha,beta) conical(a,b) QVDF(fd,n,fp,s)",
+  "tap_volume_{P}": {
+   "origin": "TAPLITE_OUTPUT",
+   "note": "written back by export; never an input"
+  },
+  "tap_vc_{P}": {
+   "origin": "TAPLITE_OUTPUT",
+   "note": "written back by export; never an input"
+  },
+  "tap_speed_{P}": {
+   "origin": "TAPLITE_OUTPUT",
+   "note": "written back by export; never an input"
+  },
+  "tap_time_{P}": {
+   "origin": "TAPLITE_OUTPUT",
+   "note": "written back by export; never an input"
+  }
+ },
+ "resolver": {
+  "active_rule": "lanes_{P} > 0",
+  "note_limit9": "limit-9 rows with lanes>0 are KEPT (restriction expressed via allowed_use, not row presence) - empirically locked",
+  "narrow_capacity": "capacity_hourly_per_lane_{P}",
+  "narrow_length": "length_miles (carried as-is; kernel vdf_length_mi semantics)",
+  "narrow_free_speed": "free_speed_mph_{P}",
+  "vdf_staging": {
+   "source": "vdf_code_table",
+   "keying": "vdf_code_{P} x period index",
+   "status": "DEVIATION-BY-CORRECTION: published narrow files carry hand-set alpha/beta + flat plf=1.0 matching no public table; authoritative-table confirmation pending from the model owner"
+  }
+ },
+ "capacity_semantics": {
+  "rule": "three capacities, three names, disjoint consumers",
+  "capacity_hourly_per_lane_{P}": "QVDF and the capacity identities",
+  "capacity_hourly_link_{P}": "= lanes_{P} * capacity_hourly_per_lane_{P}",
+  "capacity_period_{P}": "the static VDF, and nothing else",
+  "forbidden": "scaling capacity_hourly_* by a period factor in place - it would make one field mean two things depending on consumer"
+ },
+ "gates": {
+  "G_period_basis": {
+   "expr": "source_vc_{P} ~= source_volume_{P} / capacity_period_{P}",
+   "tolerance": "p95 relative error < 0.005",
+   "when": "BEFORE assignment",
+   "on_fail": "STOP. The capacity is on the wrong basis and no downstream assignment number is interpretable.",
+   "nvta_pm_result": "31416 links, max rel err 0.00026, p95 0.00005, 100% within 0.5% - PASS"
+  },
+  "G_hourly_identity": {
+   "expr": "capacity_hourly_link_{P} == lanes_{P} * capacity_hourly_per_lane_{P}",
+   "nvta_pm_result": "100.00% of links - PASS"
+  },
+  "G_no_runtime_plf": {
+   "expr": "perturbing source_plf_{P} must not change any tap_* output when capacity_period_{P} is present",
+   "note": "Asserted in the kernel selftest ('PLF is inert', 'lanes are inert', 'period hours are inert') and re-checked in the field by staging a deliberately wrong vdf_plf."
+  }
+ }
+}

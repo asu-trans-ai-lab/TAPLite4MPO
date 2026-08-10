@@ -1,0 +1,39 @@
+# Analytical VDF case spec — the SINGLE SOURCE for the differential tests.
+# Compiled to kernel/tests_cpp/vdf_cases.inc by test_cases/case_compiler.py
+# (regeneration is checked in CI-style: compiler output must match the
+# committed .inc). The external Python oracle reads THIS file directly, so a
+# compiler bug is detectable as a three-way disagreement.
+#
+# Lab link: lanes=1, period_hours=1, plf=1, capacity 1000 veh/h/lane,
+# fftt 10 min, length 5 mi, free 60 mph, cutoff 45 mph.
+
+grid: [0.0, 0.1, 0.25, 0.5, 0.8, 0.999999, 1.0, 1.000001, 1.2, 1.5, 2.0, 3.0]
+
+cases:
+  - {id: bpr_default,      kernel_id: 0, alpha: 0.15, beta: 4.0}
+  - {id: bpr_arterial,     kernel_id: 0, alpha: 0.80, beta: 6.0}
+  - {id: mbpr_arc,         kernel_id: 0, alpha: 0.15, beta: 4.0, mbpr_A: 0.5}
+  - {id: conic_ft1_freeway,kernel_id: 1, conic_a: 15.0, conic_b: 1.0357142857142858}
+  - {id: conic_ft2_majart, kernel_id: 1, conic_a: 7.0,  conic_b: 1.0833333333333333}
+  - {id: conic_ft3_minart, kernel_id: 1, conic_a: 5.5,  conic_b: 1.1111111111111112}
+  - {id: conic_ft4_coll,   kernel_id: 1, conic_a: 3.0,  conic_b: 1.25}
+  - {id: conic_ft5_expwy,  kernel_id: 1, conic_a: 8.0,  conic_b: 1.0714285714285714}
+  - {id: conic_derived_b,  kernel_id: 1, conic_a: 15.0, conic_b: 0.0}
+  - {id: qvdf_calibrated,  kernel_id: 2, alpha: 0.272, beta: 4.0,
+     q_cp: 0.28125, q_cd: 1.0, q_n: 1.24, q_s: 4.0}
+  - {id: qvdf_alt,         kernel_id: 2, alpha: 0.1632, beta: 4.5725,
+     q_cp: 0.1602, q_cd: 0.9897, q_n: 1.1941, q_s: 4.0}
+  - {id: bpr2_default,     kernel_id: 3, alpha: 0.15, beta: 4.0}
+  - {id: inrets_09,        kernel_id: 4, alpha: 0.9}
+  - {id: inrets_10,        kernel_id: 4, alpha: 1.0}
+  - {id: akcelik_a2b05,    kernel_id: 5, alpha: 2.0, beta: 0.5}
+  - {id: sandag_g45_c90,   kernel_id: 6, alpha: 0.15, beta: 4.0,
+     green_ratio: 0.45, cycle_length_s: 90.0}
+  - {id: scag_fwy_a1b6,    kernel_id: 7, alpha: 1.0, beta: 6.0}
+  - {id: scag_oth_a08b5,   kernel_id: 7, alpha: 0.8, beta: 5.0}
+  - {id: scag_ramp,        kernel_id: 8}
+  - {id: mag_added_delay,  kernel_id: 0, alpha: 0.15, beta: 4.0,
+     added_delay_per_mile: 1.4}
+
+tolerances:
+  rel: 1.0e-9

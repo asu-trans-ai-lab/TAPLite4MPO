@@ -1,0 +1,64 @@
+# Capability registry — machine-readable feature status (PR-1, CR-0006).
+# Statuses: certified | implemented | prototype | interface | planned | deferred
+# "certified" requires: scalar selftest PASS + (from PR-2) twin differential
+# PASS + external oracle PASS. Nothing is "supported" because a branch exists.
+# Ladder levels (L0 schema … L8 memory/perf): implemented = L0-L5,
+# agency_validated = L0-L8. See planning doc 09 (kept outside this repo).
+
+performance_functions:
+  bpr:              {kernel_id: 0, status: implemented, scalar_selftest: pass}
+  modified_bpr:     {kernel_id: 0, status: implemented, scalar_selftest: pass,
+                     note: vdf_A linear term}
+  conical_spiess:   {kernel_id: 1, status: implemented, scalar_selftest: pass,
+                     note: explicit conic_a/conic_b preferred; legacy
+                           alpha/beta fallback deprecated (strict mode of
+                           PR-3 rejects it)}
+  qvdf:             {kernel_id: 2, status: implemented, scalar_selftest: pass}
+  bpr2:             {kernel_id: 3, status: implemented, scalar_selftest: pass}
+  inrets:           {kernel_id: 4, status: implemented, scalar_selftest: pass}
+  akcelik:          {kernel_id: 5, status: implemented, scalar_selftest: pass}
+  sandag_signal:    {kernel_id: 6, status: implemented, scalar_selftest: pass}
+  scag_piecewise:   {kernel_id: 7, status: implemented, scalar_selftest: pass}
+  scag_ramp_meter:  {kernel_id: 8, status: implemented, scalar_selftest: pass}
+
+pricing_functions:
+  none:               {status: implemented}
+  fixed_link:         {status: implemented, note: mode_Toll via toll_<mode>}
+  distance_based:     {status: planned}
+  class_based:        {status: implemented, note: per-mode toll columns}
+  occupancy_based:    {status: planned}
+  period_based:       {status: planned, note: one period per run today}
+  facility_event:     {status: interface}
+  entrance_exit:      {status: interface, note: path/state pricing - needs
+                             state-expanded solver class}
+  cordon_area:        {status: interface}
+  carbon_externality: {status: interface, note: emission operator external}
+  congestion_dynamic: {status: deferred, note: OpenDTA scope}
+
+path:
+  link_based_fw:        {status: certified, note: primary equilibrium state}
+  dtac_column_store:    {status: implemented, note: compact binary, cache not
+                               contract}
+  path_flow_reconstruction:
+    raw_fw_columns:     {status: implemented, note: NOT valid for official
+                               select-link reporting}
+    proportional:       {status: planned}
+    entropy_reconciled: {status: planned}
+  select_link:          {status: implemented, note: raw_fw_columns method
+                               only - diagnostics valid, official reporting
+                               awaits proportional reconstruction; WP-05
+                               conservation test exact on Chicago Sketch}
+
+facility:
+  parking:         {status: interface}
+  park_ride:       {status: interface}
+  kiss_ride:       {status: interface}
+  transit_station: {status: interface}
+  toll_gate:       {status: interface}
+
+solver_classes:
+  separable_ue:          {status: certified}
+  state_expanded_ue:     {status: interface}
+  nonseparable_fixed_point: {status: deferred, note: declared experimental
+                                   when it arrives}
+

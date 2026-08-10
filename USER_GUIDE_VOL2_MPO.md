@@ -74,12 +74,18 @@ monotone form is solved exactly (no per-VDF calibration of the solver).
 |---|---|---|
 | **0** BPR | `t0(1 + α·x^β)` | TRPA, ODOT, VDOT, MTC |
 | **0+`vdf_A`** modified BPR | `t0(1 + A·x + α·x^β)` | **ARC** |
-| **1** conical (Spiess) | `t0(2 + √(α²(1−x)²+β²) − α(1−x) − β)` | MWCOG, VDOT |
+| **1** conical (Spiess) | `t0(2 + √(a²(1−x)²+b²) − a(1−x) − b)` — parameters from the **explicit `conic_a`/`conic_b` columns** (per facility type; `b=(2a−1)/(2a−2)` derived when absent). A legacy fallback reads a/b from `vdf_alpha/vdf_beta`; it is deprecated and will be rejected in strict mode. | MWCOG, VDOT |
 | **2** QVDF (queue) | DTALite queue VDF (`vdf_cp/cd/n/s`, `cutoff_speed`) | DTALite-native |
 | **3** BPR2 | exponent doubles for x>1 | AequilibraE |
 | **4** INRETS | `t0(1.1−α·x)/(1.1−x)`, quadratic for x>1 | AequilibraE |
 | **5** Akcelik | `t0 + α(z+√(z²+β·x))`, z=x−1 | VDOT-allowed |
 | **6** SANDAG-signal | BPR + Webster delay (`cycle_length`,`green_ratio`) | SANDAG |
+| **7** SCAG piecewise-BPR | `t0(1 + α·x^e)`, `e=4` below capacity, per-link `β` (5/6/8) at/above; continuous at x=1 | SCAG |
+| **8** SCAG ramp-meter | `t0 + (PLPH/120)·5·(1+x)^8 /60` hr→min metered-queue delay | SCAG (facility 82/84) |
+
+Every form above is certified per release by `taplite_selftest`
+(`kernel/tests_cpp/`) on hand-computed known values and property checks
+(non-negativity, monotonicity, breakpoint continuity).
 
 Per-facility α/β/A come from the agency's FACTYPE×ATYPE table and are written into
 link.csv by the converter (not a global setting).

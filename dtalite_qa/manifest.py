@@ -39,7 +39,10 @@ _FIELD_DOC = {
         "vdf_free_speed_mph": ("number", "free-flow speed in mph (unambiguous)"),
         "length": ("number", "length in meters (converted to miles internally)"),
         "vdf_length_mi": ("number", "length in miles; overrides 'length' when >= 0"),
-        "vdf_type": ("int", "0 BPR, 1 conic, 2 QVDF"),
+        "vdf_type": ("int", "0 BPR/modified-BPR, 1 conic (explicit conic_a/"
+                            "conic_b), 2 QVDF, 3 BPR2, 4 INRETS, 5 Akcelik, "
+                            "6 SANDAG-signal, 7 SCAG piecewise, 8 SCAG "
+                            "ramp-meter"),
         "vdf_alpha": ("number", "BPR/conic alpha"),
         "vdf_beta": ("number", "BPR/conic beta"),
         "vdf_plf": ("number", "peak load factor"),

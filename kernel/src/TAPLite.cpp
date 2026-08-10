@@ -86,6 +86,17 @@ struct link_record {
 	double Conic_a;      // conic alpha (per functional type)
 	double Conic_b;      // conic beta  (= (2a-1)/(2a-2) per Spiess)
 	double Q_cd, Q_n, Q_cp, Q_s;
+	bool qvdf_params_provided;   // true only when link.csv supplied vdf_cd/vdf_n (calibrated duration model)
+	// CR-0019: explicit PERIOD capacity, veh/period for the whole link.
+	// When supplied (> 0) the static VDFs use x = V_period / C_period
+	// DIRECTLY — no lanes, no period hours, no PLF. Hourly capacity stays
+	// separate and is used only by QVDF. 0 = not supplied (legacy path).
+	double capacity_period;
+	// CR-0020: QVDF demand/supply modifiers, both 0 = not supplied.
+	//   Q_kd  : D = k_d * (V / lanes / H)   -- the V->D mapping. Replaces the
+	//           implicit k_d = 1/vdf_plf. Free to exceed 1; that is the point.
+	//   Q_kmu : discharge cap mu <= k_mu * C_lane (measured capacity drop).
+	double Q_kd, Q_kmu;
 	// Optional reporting-profile selector from link.csv. -1 preserves the
 	// historical link_type/observed-t2 activation rule.
 	int QVDF_profile_mode;
@@ -167,6 +178,9 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		capacity_period = 0.0;      // CR-0019: 0 = not supplied
+		Q_kd = 0.0; Q_kmu = 0.0;    // CR-0020: 0 = not supplied
+		qvdf_params_provided = false;
 		QVDF_profile_mode = -1;
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
@@ -210,6 +224,9 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		capacity_period = 0.0;      // CR-0019: 0 = not supplied
+		Q_kd = 0.0; Q_kmu = 0.0;    // CR-0020: 0 = not supplied
+		qvdf_params_provided = false;
 		QVDF_profile_mode = -1;
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
@@ -914,7 +931,9 @@ static constexpr int MAX_SAFE_PROCESSOR_BUCKETS = 128;
 
 int ProcessorCountValidationStatus(int requested_processors)
 {
-	return requested_processors >= 1 &&
+	// 0 = auto-detect sentinel (CR-0010): resolved to max(1, cores-3) in
+	// ConfigureOpenMPRuntime, keeping 3 cores free for the interactive user.
+	return requested_processors >= 0 &&
 		requested_processors <= MAX_SAFE_PROCESSOR_BUCKETS ? 0 : 2;
 }
 
@@ -953,6 +972,18 @@ static bool ConfigureOpenMPRuntime()
 	compiled = 1;
 	openmp_version = _OPENMP;
 	omp_set_dynamic(0);
+	// Auto-detect mode (CR-0010): number_of_processors=0 in settings.csv
+	// means "detect cores and reserve 3 for the interactive user" ->
+	// max(1, cores-3). Explicit positive values behave exactly as before,
+	// so every existing scenario is byte-identical.
+	if (g_number_of_processors <= 0)
+	{
+		int detected = omp_get_num_procs();
+		g_number_of_processors = detected - 3 >= 1 ? detected - 3 : 1;
+		printf("processors=0 (auto): detected %d cores, using %d "
+		       "(3 reserved for the user)\n",
+		       detected, g_number_of_processors);
+	}
 	omp_set_num_threads(g_number_of_processors);
 	max_threads = omp_get_max_threads();
 	num_procs = omp_get_num_procs();
@@ -1695,6 +1726,340 @@ void AddLinkSequence(int m, int Orig, int Dest, int route_id, const std::vector<
 
 
 
+// ---- CR-0018: compact OD matrix binary (od_performance.bin) --------------
+// The CSV form repeats zone coordinates on every row, carries an always-empty
+// WKT column and a route_key derivable from (mode,o,d), and costs ~200 B per
+// OD pair -> 3.9 GB and ~24 minutes of wall clock on the regional PM network.
+// Binary layout (little-endian, no padding):
+//   HEADER 32 B: magic 'TAPO' u32 | version u32 = 1 | n_zones u32 |
+//                n_modes u32 | n_records u64 | flags u32 | reserved u32
+//   ZONE TABLE  n_zones x 12 B: i32 zone_id | f32 x | f32 y
+//   RECORDS     n_records x 32 B: i32 mode | i32 o_zone | i32 d_zone |
+//     f32 dist_mile | f32 straight_mile | f32 fftt_min | f32 tt_min | f32 vol
+// Derived columns (km, distance_ratio, route_key, geometry) are the
+// consumer's business — never stored.
+struct OdZoneRec { int zone_id; float x, y; };
+struct OdPerfRec {
+	int mode, o_zone, d_zone;
+	float dist_mile, straight_mile, fftt_min, tt_min, volume;
+};
+
+static bool WriteOdPerfBinaryHeader(FILE* f, unsigned int n_zones,
+	unsigned int n_modes)
+{
+	unsigned int magic = 0x4F504154u;   /* 'TAPO' */
+	unsigned int version = 1u, flags = 0u, reserved = 0u;
+	unsigned long long zero = 0;
+	return fwrite(&magic, 4, 1, f) == 1 && fwrite(&version, 4, 1, f) == 1 &&
+		fwrite(&n_zones, 4, 1, f) == 1 && fwrite(&n_modes, 4, 1, f) == 1 &&
+		fwrite(&zero, 8, 1, f) == 1 && fwrite(&flags, 4, 1, f) == 1 &&
+		fwrite(&reserved, 4, 1, f) == 1;
+}
+
+static bool WriteOdPerfBinary(const std::string& fn,
+	const std::vector<OdZoneRec>& zones, unsigned int n_modes,
+	const std::vector<OdPerfRec>& recs)
+{
+	FILE* f = fopen(fn.c_str(), "wb");
+	if (!f) return false;
+	bool ok = WriteOdPerfBinaryHeader(f, (unsigned int)zones.size(), n_modes);
+	for (size_t i = 0; ok && i < zones.size(); ++i)
+		ok = fwrite(&zones[i].zone_id, 4, 1, f) == 1 &&
+			fwrite(&zones[i].x, 4, 1, f) == 1 &&
+			fwrite(&zones[i].y, 4, 1, f) == 1;
+	for (size_t i = 0; ok && i < recs.size(); ++i)
+		ok = fwrite(&recs[i], sizeof(OdPerfRec), 1, f) == 1;
+	unsigned long long n = recs.size();
+	ok = ok && fseek(f, 16, SEEK_SET) == 0 && fwrite(&n, 8, 1, f) == 1;
+	if (fclose(f) != 0) ok = false;
+	return ok;
+}
+
+static bool ReadOdPerfBinary(const std::string& fn,
+	std::vector<OdZoneRec>& zones, unsigned int& n_modes,
+	std::vector<OdPerfRec>& recs)
+{
+	FILE* f = fopen(fn.c_str(), "rb");
+	if (!f) return false;
+	unsigned int magic = 0, version = 0, n_zones = 0, flags = 0, reserved = 0;
+	unsigned long long n_rec = 0;
+	if (fread(&magic, 4, 1, f) != 1 || magic != 0x4F504154u ||
+		fread(&version, 4, 1, f) != 1 || version != 1u ||
+		fread(&n_zones, 4, 1, f) != 1 || fread(&n_modes, 4, 1, f) != 1 ||
+		fread(&n_rec, 8, 1, f) != 1 || fread(&flags, 4, 1, f) != 1 ||
+		fread(&reserved, 4, 1, f) != 1)
+	{ fclose(f); return false; }
+	zones.resize(n_zones);
+	for (unsigned int i = 0; i < n_zones; ++i)
+		if (fread(&zones[i].zone_id, 4, 1, f) != 1 ||
+			fread(&zones[i].x, 4, 1, f) != 1 ||
+			fread(&zones[i].y, 4, 1, f) != 1)
+		{ fclose(f); return false; }
+	recs.resize((size_t)n_rec);
+	for (unsigned long long i = 0; i < n_rec; ++i)
+		if (fread(&recs[(size_t)i], sizeof(OdPerfRec), 1, f) != 1)
+		{ fclose(f); return false; }
+	// trailing bytes mean a truncated/extended file: reject rather than guess
+	char probe = 0;
+	bool clean_eof = (fread(&probe, 1, 1, f) == 0);
+	fclose(f);
+	return clean_eof;
+}
+
+// ---- CR-0017: origin-rooted TREE column pool (tree_pool.bin) -------------
+// Stores one shortest-path tree per (mode x root x iteration) instead of one
+// record per OD path: O(origins x nodes) instead of O(OD x path_length), and
+// lossless (no volume floor). Arcs are kept farther-to-root, which is both
+// the routing policy and a valid post-order for bottom-up flow aggregation.
+// Layout: docs/TREE_POOL_BINARY_FORMAT.md
+struct TreePoolSnapshot {
+	int iteration, mode, root_zone, root_node;
+	unsigned long long arc_begin;
+	unsigned int arc_count;
+	double theta;
+};
+struct TreePoolArc { int node; int link; };   // link = policy link INTO node
+struct TreePoolOD {
+	unsigned int snapshot_idx;
+	int dest_node, dest_zone;
+	double volume;      // pure demand (not PCE-weighted)
+	int mode;           // agent class; consumer applies pce for link volumes
+};
+
+static bool WriteTreePool(const std::string& fn,
+	const std::vector<TreePoolSnapshot>& snaps,
+	const std::vector<TreePoolArc>& arcs,
+	const std::vector<TreePoolOD>& ods,
+	unsigned int orientation = 0u)
+{
+	FILE* f = fopen(fn.c_str(), "wb");
+	if (!f) return false;
+	unsigned int magic = 0x54504154u;   /* 'TAPT' */
+	unsigned int version = 1u;
+	unsigned int flags = 1u;            /* bit0: arcs carry node ids */
+	unsigned long long n_snap = snaps.size();
+	unsigned long long n_arc = arcs.size();
+	unsigned long long n_od = ods.size();
+	bool ok =
+		fwrite(&magic, 4, 1, f) == 1 && fwrite(&version, 4, 1, f) == 1 &&
+		fwrite(&orientation, 4, 1, f) == 1 && fwrite(&flags, 4, 1, f) == 1 &&
+		fwrite(&n_snap, 8, 1, f) == 1 && fwrite(&n_arc, 8, 1, f) == 1 &&
+		fwrite(&n_od, 8, 1, f) == 1;
+	for (size_t i = 0; ok && i < snaps.size(); ++i)
+	{
+		const TreePoolSnapshot& s = snaps[i];
+		unsigned int pad = 0u;
+		ok = fwrite(&s.iteration, 4, 1, f) == 1 && fwrite(&s.mode, 4, 1, f) == 1 &&
+			fwrite(&s.root_zone, 4, 1, f) == 1 && fwrite(&s.root_node, 4, 1, f) == 1 &&
+			fwrite(&s.arc_begin, 8, 1, f) == 1 && fwrite(&s.arc_count, 4, 1, f) == 1 &&
+			fwrite(&pad, 4, 1, f) == 1 && fwrite(&s.theta, 8, 1, f) == 1;
+	}
+	for (size_t i = 0; ok && i < arcs.size(); ++i)
+		ok = fwrite(&arcs[i].node, 4, 1, f) == 1 &&
+			fwrite(&arcs[i].link, 4, 1, f) == 1;
+	for (size_t i = 0; ok && i < ods.size(); ++i)
+	{
+		ok = fwrite(&ods[i].snapshot_idx, 4, 1, f) == 1 &&
+			fwrite(&ods[i].dest_node, 4, 1, f) == 1 &&
+			fwrite(&ods[i].dest_zone, 4, 1, f) == 1 &&
+			fwrite(&ods[i].volume, 8, 1, f) == 1 &&
+			fwrite(&ods[i].mode, 4, 1, f) == 1;
+	}
+	if (fclose(f) != 0) ok = false;
+	return ok;
+}
+
+static bool ReadTreePool(const std::string& fn,
+	std::vector<TreePoolSnapshot>& snaps,
+	std::vector<TreePoolArc>& arcs,
+	std::vector<TreePoolOD>& ods)
+{
+	FILE* f = fopen(fn.c_str(), "rb");
+	if (!f) return false;
+	unsigned int magic = 0, version = 0, orientation = 0, flags = 0;
+	unsigned long long n_snap = 0, n_arc = 0, n_od = 0;
+	if (fread(&magic, 4, 1, f) != 1 || magic != 0x54504154u ||
+		fread(&version, 4, 1, f) != 1 || version != 1u ||
+		fread(&orientation, 4, 1, f) != 1 || orientation > 1u ||
+		fread(&flags, 4, 1, f) != 1 || (flags & ~1u) != 0u ||
+		fread(&n_snap, 8, 1, f) != 1 || fread(&n_arc, 8, 1, f) != 1 ||
+		fread(&n_od, 8, 1, f) != 1)
+	{ fclose(f); return false; }
+	snaps.clear(); arcs.clear(); ods.clear();
+	unsigned long long arcs_declared = 0;
+	for (unsigned long long i = 0; i < n_snap; ++i)
+	{
+		TreePoolSnapshot s; unsigned int pad = 0;
+		if (fread(&s.iteration, 4, 1, f) != 1 || fread(&s.mode, 4, 1, f) != 1 ||
+			fread(&s.root_zone, 4, 1, f) != 1 || fread(&s.root_node, 4, 1, f) != 1 ||
+			fread(&s.arc_begin, 8, 1, f) != 1 || fread(&s.arc_count, 4, 1, f) != 1 ||
+			fread(&pad, 4, 1, f) != 1 || fread(&s.theta, 8, 1, f) != 1)
+		{ fclose(f); return false; }
+		if (s.arc_begin + s.arc_count > n_arc) { fclose(f); return false; }
+		arcs_declared += s.arc_count;
+		snaps.push_back(s);
+	}
+	if (arcs_declared != n_arc) { fclose(f); return false; }
+	arcs.resize((size_t)n_arc);
+	for (unsigned long long i = 0; i < n_arc; ++i)
+		if (fread(&arcs[(size_t)i].node, 4, 1, f) != 1 ||
+			fread(&arcs[(size_t)i].link, 4, 1, f) != 1)
+		{ fclose(f); return false; }
+	for (unsigned long long i = 0; i < n_od; ++i)
+	{
+		TreePoolOD o;
+		if (fread(&o.snapshot_idx, 4, 1, f) != 1 ||
+			fread(&o.dest_node, 4, 1, f) != 1 ||
+			fread(&o.dest_zone, 4, 1, f) != 1 ||
+			fread(&o.volume, 8, 1, f) != 1 || fread(&o.mode, 4, 1, f) != 1)
+		{ fclose(f); return false; }
+		if (o.snapshot_idx >= n_snap) { fclose(f); return false; }
+		ods.push_back(o);
+	}
+	fclose(f);
+	return true;
+}
+
+// Bottom-up flow aggregation — the whole point of the tree form. Seed mass at
+// each snapshot's destinations, then sweep its arc slice ONCE in stored
+// (farther-to-root) order: flow at a node passes through its policy link and
+// adds to the parent's mass. No path is ever materialized.
+// `link_from_node` maps an external link id to its upstream node id.
+static bool TreePoolAccumulate(
+	const std::vector<TreePoolSnapshot>& snaps,
+	const std::vector<TreePoolArc>& arcs,
+	const std::vector<TreePoolOD>& ods,
+	const std::map<int, int>& link_from_node,
+	std::map<int, double>& link_volume_out,
+	const std::map<int, double>* pce_by_mode = NULL)
+{
+	link_volume_out.clear();
+	std::vector<std::vector<size_t> > od_by_snapshot(snaps.size());
+	for (size_t i = 0; i < ods.size(); ++i)
+	{
+		if (ods[i].snapshot_idx >= snaps.size()) return false;
+		od_by_snapshot[ods[i].snapshot_idx].push_back(i);
+	}
+	for (size_t s = 0; s < snaps.size(); ++s)
+	{
+		std::map<int, double> mass;
+		for (size_t j = 0; j < od_by_snapshot[s].size(); ++j)
+		{
+			const TreePoolOD& o = ods[od_by_snapshot[s][j]];
+			double w = 1.0;
+			if (pce_by_mode)
+			{
+				std::map<int, double>::const_iterator pit =
+					pce_by_mode->find(o.mode);
+				if (pit != pce_by_mode->end()) w = pit->second;
+			}
+			mass[o.dest_node] += o.volume * w;
+		}
+		const TreePoolSnapshot& sn = snaps[s];
+		for (unsigned long long a = sn.arc_begin;
+			a < sn.arc_begin + sn.arc_count; ++a)
+		{
+			const TreePoolArc& arc = arcs[(size_t)a];
+			std::map<int, double>::iterator it = mass.find(arc.node);
+			if (it == mass.end() || it->second == 0.0) continue;
+			double flow = it->second;
+			link_volume_out[arc.link] += sn.theta * flow;
+			std::map<int, int>::const_iterator fn = link_from_node.find(arc.link);
+			if (fn == link_from_node.end()) return false;
+			mass[fn->second] += flow;
+		}
+	}
+	return true;
+}
+
+// CR-0017 accumulators for route_output level 4 (tree_pool.bin).
+static std::vector<TreePoolSnapshot> g_tree_snapshots;
+static std::vector<TreePoolArc> g_tree_arcs;
+static std::vector<TreePoolOD> g_tree_ods;
+
+// Capture one shortest-path tree as a PRUNED farther-to-root arc slice.
+// `pred[node_seq]` is the policy link into that node. Only arcs on a path to
+// a destination with positive demand are stored (an unused branch is pure
+// waste), and depth ordering guarantees children precede parents, so the
+// slice is a valid post-order for the bottom-up sweep.
+// Returns the snapshot index, or -1 when nothing is reachable/needed.
+static int CaptureTreeSnapshot(int iteration, int mode, int orig_zone,
+	int root_node_seq, int* pred, int n_nodes,
+	const std::vector<int>& dest_nodes_with_flow)
+{
+	// mark the union of paths root <- destination
+	std::vector<char> keep((size_t)n_nodes + 1, 0);
+	for (size_t d = 0; d < dest_nodes_with_flow.size(); ++d)
+	{
+		int cur = dest_nodes_with_flow[d], guard = 0;
+		while (cur >= 1 && cur <= n_nodes && cur != root_node_seq &&
+			!keep[cur] && guard++ <= n_nodes)
+		{
+			int k = pred[cur];
+			if (k <= 0 || k > number_of_links) break;
+			keep[cur] = 1;
+			cur = Link[k].internal_from_node_id;
+		}
+	}
+	std::vector<int> depth((size_t)n_nodes + 1, -1);
+	if (root_node_seq >= 0 && root_node_seq <= n_nodes)
+		depth[root_node_seq] = 0;
+	std::vector<int> chain;
+	for (int nd = 1; nd <= n_nodes; ++nd)
+	{
+		if (!keep[nd] || depth[nd] >= 0) continue;
+		chain.clear();
+		int cur = nd, guard = 0;
+		while (cur >= 1 && cur <= n_nodes && depth[cur] < 0 && guard++ <= n_nodes)
+		{
+			int k = pred[cur];
+			if (k <= 0 || k > number_of_links) { chain.clear(); break; }
+			chain.push_back(cur);
+			cur = Link[k].internal_from_node_id;
+		}
+		if (chain.empty() || cur < 1 || cur > n_nodes || depth[cur] < 0)
+			continue;
+		int d = depth[cur];
+		for (int i = (int)chain.size() - 1; i >= 0; --i)
+			depth[chain[i]] = ++d;
+	}
+	std::vector<std::pair<int, int> > by_depth;
+	for (int nd = 1; nd <= n_nodes; ++nd)
+		if (keep[nd] && depth[nd] > 0)
+			by_depth.push_back(std::make_pair(depth[nd], nd));
+	if (by_depth.empty()) return -1;
+	std::sort(by_depth.begin(), by_depth.end(),
+		std::greater<std::pair<int, int> >());
+
+	int snap_idx = -1;
+#pragma omp critical(tree_pool)
+	{
+		TreePoolSnapshot s;
+		s.iteration = iteration; s.mode = mode;
+		s.root_zone = g_zone_seq_2_old_zone_id[orig_zone];
+		s.root_node = (root_node_seq >= 0 && root_node_seq <
+			(int)g_map_node_seq_no_2_external_node_id.size())
+			? g_map_node_seq_no_2_external_node_id[root_node_seq]
+			: root_node_seq;
+		s.arc_begin = g_tree_arcs.size();
+		s.arc_count = (unsigned int)by_depth.size();
+		s.theta = 0.0;                        // patched at write time
+		snap_idx = (int)g_tree_snapshots.size();
+		g_tree_snapshots.push_back(s);
+		for (size_t i = 0; i < by_depth.size(); ++i)
+		{
+			int nd = by_depth[i].second;
+			int k = pred[nd];
+			TreePoolArc a;
+			a.node = Link[k].external_to_node_id;
+			a.link = Link[k].external_link_id;
+			g_tree_arcs.push_back(a);
+		}
+	}
+	return snap_idx;
+}
+
+
 void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int*** MinPathPredLink, double* Volume)
 {
 //	printf("All or nothing assignment\n");
@@ -1780,14 +2145,39 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 			int CurrentNode;
 			double RouteFlow;
 			std::vector<int> currentLinkSequence; // Temporary vector to store link indices
-
+			std::map<int, int> tree_snap_by_mpred;   // CR-0017: shared trees
 
 			for (int m = 1; m <= number_of_modes; m++)
 			{
-
+				// CR-0017 (route_output level 4): capture this (mode, origin)
+				// shortest-path tree once, before walking destinations.
+				int tree_snap_idx = -1;
+				if (shortest_path_log_flag >= 4)
+				{
+					int mp = (g_mode_type_vector[m].dedicated_shortest_path == 0)
+						? 1 : ((g_rep_mode[m] >= 1) ? g_rep_mode[m] : m);
+					// modes sharing a predecessor tree share ONE snapshot; the
+					// per-mode demand rides on the OD records instead.
+					std::map<int, int>::iterator sh = tree_snap_by_mpred.find(mp);
+					if (sh != tree_snap_by_mpred.end())
+						tree_snap_idx = sh->second;
+					else
+					{
+						std::vector<int> dests_with_flow;
+						for (int dd = 1; dd <= no_zones; ++dd)
+							if (dd != Orig && ODflow[m][Orig][dd] > 0.000001)
+								dests_with_flow.push_back(dd);
+						tree_snap_idx = CaptureTreeSnapshot(
+							Assignment_iteration_no, mp, Orig,
+							Orig /* zone seq == node seq for centroids */,
+							MinPathPredLink[mp][Orig], no_nodes,
+							dests_with_flow);
+						tree_snap_by_mpred[mp] = tree_snap_idx;
+					}
+				}
 
 				//	printf("Assign", "Assigning origin %6d.", Orig);
-				for (Dest = 1; Dest <= no_zones; Dest++)  // Dest zone 
+				for (Dest = 1; Dest <= no_zones; Dest++)  // Dest zone
 				{
 					if (Dest == Orig)
 						continue;
@@ -1813,6 +2203,25 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 					CurrentNode = Dest;
 					CurrentNode = Dest;   // dense zone seq == node seq (internal renumbering)
 					int internal_node_for_origin_node = Orig;   // dense zone seq == node seq (internal renumbering)
+
+					// CR-0017: one OD record per (snapshot, destination). The
+					// tree already carries the routing; only the terminal mass
+					// is needed for the bottom-up sweep.
+					if (tree_snap_idx >= 0)
+					{
+#pragma omp critical(tree_pool)
+						{
+							TreePoolOD o;
+							o.snapshot_idx = (unsigned int)tree_snap_idx;
+							o.dest_node =
+								(Dest >= 0 && Dest < (int)g_map_node_seq_no_2_external_node_id.size())
+								? g_map_node_seq_no_2_external_node_id[Dest] : Dest;
+							o.dest_zone = g_zone_seq_2_old_zone_id[Dest];
+							o.volume = RouteFlow;
+							o.mode = m;
+							g_tree_ods.push_back(o);
+						}
+					}
 					// MinPathPredLink is coded as internal node id 
 					// 
 					//double total_travel_time = 0;
@@ -1891,28 +2300,22 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 							break;
 						}
 
-						if(linkIndices.size() >0)
-						{
-						if (shortest_path_log_flag || Assignment_iteration_no == 0)
-						{
-#pragma omp critical
-							{
-								currentLinkSequence.push_back(k); // Store the link index
-							}
-
-						}
+						// CR-0016: currentLinkSequence is thread-local to this origin
+						// worker — an omp critical section around it serialized every
+						// hop of every path for no reason.
+						if (linkIndices.size() > 0 &&
+							(shortest_path_log_flag || Assignment_iteration_no == 0))
+							currentLinkSequence.push_back(k);
 					}
 
-							if (linkIndices.size() > 0)
-							{
-								if (shortest_path_log_flag || Assignment_iteration_no == 0)
-								{
-									AddLinkSequence(m, Orig, Dest, Assignment_iteration_no, currentLinkSequence);
-									// Store the link sequence for this OD pair
-
-								}
-						}
-						}
+					// CR-0016: store ONCE, after the full path is traced. The old
+					// placement was inside the hop loop, re-copying the growing
+					// vector after every hop (quadratic in path length: ~2,500 int
+					// copies per 71-link NVTA path instead of 71).
+					if (linkIndices.size() > 0 &&
+						(shortest_path_log_flag || Assignment_iteration_no == 0))
+						AddLinkSequence(m, Orig, Dest, Assignment_iteration_no,
+							currentLinkSequence);
 
 				}
 			}
@@ -2566,6 +2969,7 @@ struct RouteData {
 	std::string nodeIDsStr;          // Node IDs (string)
 	std::string linkIDsStr;          // Link IDs (string)
 	std::string linkLengthStr;          // Link Length (string)
+	std::vector<int> linkExtIDs;     // external link ids (binary route pool)
 	double totalDistance;
 	double totalFreeFlowTravelTime;
 	double totalTravelTime;
@@ -2573,16 +2977,120 @@ struct RouteData {
 	std::string routeKey;            // Unique key (e.g., based on node and link sums)
 };
 
-void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
+// ---- CR-0015: binary route pool (route_output level 3) --------------------
+// Fixed little-endian layout, one file: 24-byte header
+//   magic 'TAPR' (4B) | version u32 = 1 | n_records u64 | total_links u64
+// then per record:
+//   mode i32 | o_zone i32 | d_zone i32 | prob f64 | volume f64 |
+//   n_links i32 | n_links x external link id i32
+struct RoutePoolRecord {
+	int mode, o_zone, d_zone;
+	double prob, volume;
+	std::vector<int> link_ext_ids;
+};
+
+static bool WriteRoutePool(const std::string& fn,
+	const std::vector<RoutePoolRecord>& recs)
 {
-	std::ofstream outputFile(filename);  // Open the file for writing
+	FILE* f = fopen(fn.c_str(), "wb");
+	if (!f) return false;
+	unsigned int magic = 0x52504154u;  /* 'TAPR' */
+	unsigned int version = 1u;
+	unsigned long long n = (unsigned long long)recs.size(), total_links = 0;
+	for (size_t i = 0; i < recs.size(); ++i)
+		total_links += recs[i].link_ext_ids.size();
+	fwrite(&magic, 4, 1, f); fwrite(&version, 4, 1, f);
+	fwrite(&n, 8, 1, f); fwrite(&total_links, 8, 1, f);
+	for (size_t i = 0; i < recs.size(); ++i)
+	{
+		const RoutePoolRecord& r = recs[i];
+		int nl = (int)r.link_ext_ids.size();
+		fwrite(&r.mode, 4, 1, f); fwrite(&r.o_zone, 4, 1, f);
+		fwrite(&r.d_zone, 4, 1, f);
+		fwrite(&r.prob, 8, 1, f); fwrite(&r.volume, 8, 1, f);
+		fwrite(&nl, 4, 1, f);
+		if (nl) fwrite(r.link_ext_ids.data(), 4, nl, f);
+	}
+	fclose(f);
+	return true;
+}
+
+static bool ReadRoutePool(const std::string& fn,
+	std::vector<RoutePoolRecord>& out)
+{
+	FILE* f = fopen(fn.c_str(), "rb");
+	if (!f) return false;
+	unsigned int magic = 0, version = 0;
+	unsigned long long n = 0, total_links = 0;
+	if (fread(&magic, 4, 1, f) != 1 || magic != 0x52504154u ||
+		fread(&version, 4, 1, f) != 1 || version != 1u ||
+		fread(&n, 8, 1, f) != 1 || fread(&total_links, 8, 1, f) != 1)
+	{ fclose(f); return false; }
+	out.clear(); out.reserve((size_t)n);
+	unsigned long long links_seen = 0;
+	for (unsigned long long i = 0; i < n; ++i)
+	{
+		RoutePoolRecord r; int nl = 0;
+		if (fread(&r.mode, 4, 1, f) != 1 || fread(&r.o_zone, 4, 1, f) != 1 ||
+			fread(&r.d_zone, 4, 1, f) != 1 || fread(&r.prob, 8, 1, f) != 1 ||
+			fread(&r.volume, 8, 1, f) != 1 || fread(&nl, 4, 1, f) != 1 ||
+			nl < 0)
+		{ fclose(f); return false; }
+		r.link_ext_ids.resize(nl);
+		if (nl && fread(r.link_ext_ids.data(), 4, nl, f) != (size_t)nl)
+		{ fclose(f); return false; }
+		links_seen += nl;
+		out.push_back(r);
+	}
+	fclose(f);
+	return links_seen == total_links;
+}
+
+void OutputRouteDetails(const std::string& filename, std::vector<double> theta,
+	int level = 1)
+{
+	// CR-0015 route_output levels: 1 = full CSV (legacy, zone-count floor
+	// applies); 2 = CSV, volume floor applied on every network size;
+	// 3 = BINARY route pool + read-back self-test. CR-0015b: level 3 STREAMS
+	// records to disk (57M-record regional pools cannot be materialized in
+	// memory), checks every fwrite, patches the header at the end, and
+	// honors TAPLITE_ROUTE_VOL_MIN (default 0 = full coverage; dropped
+	// volume goes to background_volume and is reported so the identity
+	// A·f + dropped = x stays exact).
+	std::ofstream outputFile;
+	FILE* pool_f = NULL;
+	std::map<int, double> pool_vol_w;
+	unsigned long long pool_n = 0, pool_links = 0, pool_dropped_n = 0;
+	double pool_dropped_vol = 0.0, pool_vol_min3 = 0.0;
+	bool pool_write_error = false;
+	if (level >= 3)
+	{
+		const char* ev3 = getenv("TAPLITE_ROUTE_VOL_MIN");
+		pool_vol_min3 = (ev3 != NULL) ? atof(ev3) : 0.0;
+		pool_f = fopen(filename.c_str(), "wb");
+		if (pool_f)
+		{
+			unsigned int magic = 0x52504154u;
+			unsigned int version = 1u;
+			unsigned long long zero = 0;
+			pool_write_error =
+				fwrite(&magic, 4, 1, pool_f) != 1 ||
+				fwrite(&version, 4, 1, pool_f) != 1 ||
+				fwrite(&zero, 8, 1, pool_f) != 1 ||
+				fwrite(&zero, 8, 1, pool_f) != 1;
+		}
+	}
+	else
+		outputFile.open(filename);
 
 	if (linkIndices.size() == 0)
-		return; 
+		return;
 	// Write the CSV header in lowercase
-	outputFile << "mode,route_id,o_zone_id,d_zone_id,unique_route_id,prob,node_ids,link_ids,distance_mile,total_distance_km,total_free_flow_travel_time,total_travel_time,route_key,seed_od_volume,target_od_volume,final_est_od_volume,volume,";
-
-	outputFile << "\n";
+	if (level < 3)
+	{
+		outputFile << "mode,route_id,o_zone_id,d_zone_id,unique_route_id,prob,node_ids,link_ids,distance_mile,total_distance_km,total_free_flow_travel_time,total_travel_time,route_key,seed_od_volume,target_od_volume,final_est_od_volume,volume,";
+		outputFile << "\n";
+	}
 
 
 	for (int m = 1; m < linkIndices.size(); ++m)
@@ -2607,7 +3115,8 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 						std::string nodeIDsStr;
 						std::string linkIDsStr;
 						std::string linkLengthStr;
-						
+						std::vector<int> linkExtVec;   // CR-0015 binary pool
+
 						int nodeSum = 0;  // Sum of node IDs (for uniqueness key)
 						int linkSum = 0;  // Sum of link IDs (for uniqueness key)
 
@@ -2624,6 +3133,7 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 							// Append the external (link.csv) link id; keep the internal
 							// index k only for the uniqueness checksum below.
 							linkIDsStr += std::to_string(Link[k].external_link_id) + ";";
+							linkExtVec.push_back(Link[k].external_link_id);
 							//double length = Link[k].length;
 							//linkLengthStr += std::to_string(length) + ";";
 							linkSum += k;
@@ -2655,7 +3165,8 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 							rd.unique_route_id = unique_route_id;  // Unique id for output.
 							rd.nodeIDsStr = nodeIDsStr;
 							rd.linkIDsStr = linkIDsStr;
-							//rd.linkLengthStr = linkLengthStr; 
+							rd.linkExtIDs = linkExtVec;
+							//rd.linkLengthStr = linkLengthStr;
 							rd.totalDistance = totalDistance;
 							rd.totalFreeFlowTravelTime = totalFreeFlowTravelTime;
 							rd.totalTravelTime = totalTravelTime;
@@ -2719,7 +3230,45 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 						const char* ev = getenv("TAPLITE_ROUTE_VOL_MIN");
 						route_vol_min = (ev != NULL) ? atof(ev) : 1.0;
 					}
-					if(no_zones <1000 || (no_zones>=1000 && od_volume >= route_vol_min))
+					if (level >= 3)
+					{
+						if (pool_f == NULL)
+							continue;
+						if (route_volume < pool_vol_min3)
+						{
+							// below-floor: exact residual accounting
+							pool_dropped_n++;
+							pool_dropped_vol += route_volume;
+							for (int i = (int)linkIndices[m][Orig][Dest][rd.firstRouteID].size() - 1; i >= 0; --i)
+								Link[linkIndices[m][Orig][Dest][rd.firstRouteID][i]].background_volume += route_volume;
+							continue;
+						}
+						int oz = g_zone_seq_2_old_zone_id[Orig];
+						int dz = g_zone_seq_2_old_zone_id[Dest];
+						double pv = accumulatedTheta, vv = route_volume;
+						int nl = (int)rd.linkExtIDs.size();
+						bool okw =
+							fwrite(&m, 4, 1, pool_f) == 1 &&
+							fwrite(&oz, 4, 1, pool_f) == 1 &&
+							fwrite(&dz, 4, 1, pool_f) == 1 &&
+							fwrite(&pv, 8, 1, pool_f) == 1 &&
+							fwrite(&vv, 8, 1, pool_f) == 1 &&
+							fwrite(&nl, 4, 1, pool_f) == 1 &&
+							(nl == 0 || fwrite(rd.linkExtIDs.data(), 4, nl,
+								pool_f) == (size_t)nl);
+						if (!okw)
+							pool_write_error = true;
+						pool_n++;
+						pool_links += nl;
+						for (int j = 0; j < nl; ++j)
+							pool_vol_w[rd.linkExtIDs[j]] += vv;
+						continue;
+					}
+					bool write_row = (level == 2)
+						? (od_volume >= route_vol_min)
+						: (no_zones < 1000 ||
+						   (no_zones >= 1000 && od_volume >= route_vol_min));
+					if (write_row)
 					{
 					// (Optional) Remove trailing semicolon from linkIDsStr if needed.
 					std::string cleanedLinkIDsStr = rd.linkIDsStr;
@@ -2760,6 +3309,82 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 
 			}
 		}
+	}
+
+	if (level >= 3)
+	{
+		// CR-0015b: patch the header with real counts, then the MANDATORY
+		// STREAMING read-back self-test — re-read record by record (a
+		// reusable buffer, never materializing the pool) and re-verify the
+		// per-link volume accumulation (the A·f identity).
+		bool ok = (pool_f != NULL) && !pool_write_error;
+		if (pool_f)
+		{
+			ok = ok && fseek(pool_f, 8, SEEK_SET) == 0 &&
+				fwrite(&pool_n, 8, 1, pool_f) == 1 &&
+				fwrite(&pool_links, 8, 1, pool_f) == 1 &&
+				fflush(pool_f) == 0;
+			fclose(pool_f);
+		}
+		double max_dv = -1.0;
+		if (ok)
+		{
+			FILE* rf = fopen(filename.c_str(), "rb");
+			ok = (rf != NULL);
+			if (rf)
+			{
+				unsigned int magic = 0, version = 0;
+				unsigned long long n = 0, tl = 0, seen = 0;
+				ok = fread(&magic, 4, 1, rf) == 1 && magic == 0x52504154u &&
+					fread(&version, 4, 1, rf) == 1 && version == 1u &&
+					fread(&n, 8, 1, rf) == 1 && n == pool_n &&
+					fread(&tl, 8, 1, rf) == 1 && tl == pool_links;
+				std::map<int, double> vol_r;
+				std::vector<int> buf;
+				for (unsigned long long i = 0; ok && i < n; ++i)
+				{
+					int md = 0, oz = 0, dz = 0, nl = 0;
+					double pv = 0, vv = 0;
+					ok = fread(&md, 4, 1, rf) == 1 &&
+						fread(&oz, 4, 1, rf) == 1 &&
+						fread(&dz, 4, 1, rf) == 1 &&
+						fread(&pv, 8, 1, rf) == 1 &&
+						fread(&vv, 8, 1, rf) == 1 &&
+						fread(&nl, 4, 1, rf) == 1 && nl >= 0;
+					if (!ok) break;
+					buf.resize(nl);
+					if (nl && fread(buf.data(), 4, nl, rf) != (size_t)nl)
+					{ ok = false; break; }
+					seen += nl;
+					for (int j = 0; j < nl; ++j)
+						vol_r[buf[j]] += vv;
+				}
+				ok = ok && seen == pool_links;
+				if (ok)
+				{
+					max_dv = 0.0;
+					for (std::map<int, double>::iterator it = pool_vol_w.begin();
+						it != pool_vol_w.end(); ++it)
+					{
+						double d = fabs(it->second - vol_r[it->first]);
+						if (d > max_dv) max_dv = d;
+					}
+					ok = max_dv < 1e-6;
+				}
+				fclose(rf);
+			}
+		}
+		printf("route_pool binary: %llu records (+%llu below floor %.3f, "
+			"%.1f veh -> background) -> %s | streaming read-back self-test "
+			"%s (max per-link |dv| = %.2e)\n",
+			pool_n, pool_dropped_n, pool_vol_min3, pool_dropped_vol,
+			filename.c_str(), ok ? "PASS" : "FAIL", max_dv);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "route_pool binary: %llu records, "
+				"dropped %llu (%.1f veh), self-test %s\n",
+				pool_n, pool_dropped_n, pool_dropped_vol,
+				ok ? "PASS" : "FAIL");
+		return;
 	}
 
 	// Close the file after writing
@@ -3042,19 +3667,32 @@ void OutputVehicleDetails(const std::string& filename, std::vector<double> theta
 }
 
 
+// CR-0018: accessibility_output levels — 0 = off (nothing written),
+// 1 = legacy CSV, 2 = compact binary od_performance.bin (see
+// docs/OD_PERFORMANCE_BINARY_FORMAT.md).
+static std::vector<OdPerfRec> g_od_perf_records;
+
 void OutputODPerformance(const std::string& filename)
 {
-	std::ofstream outputFile(filename);
-	std::ofstream googleMapsFile("google_maps_od_distance.csv");
-
-	if (!googleMapsFile.is_open())
+	const bool binary_mode = (g_accessibility_output >= 2);
+	std::ofstream outputFile;
+	std::ofstream googleMapsFile;
+	g_od_perf_records.clear();
+	if (!binary_mode)
 	{
-		std::cerr << "Error: Could not open Google Maps OD distance file." << std::endl;
-		return;
+		outputFile.open(filename);
+		googleMapsFile.open("google_maps_od_distance.csv");
+		if (!googleMapsFile.is_open())
+		{
+			std::cerr << "Error: Could not open Google Maps OD distance file." << std::endl;
+			return;
+		}
 	}
 
+	if (!binary_mode)
 	googleMapsFile << "route_key,mode,o_zone_id,d_zone_id,volume,total_distance_mile,total_distance_km,straight_line_distance_mile,straight_line_distance_km,distance_ratio,total_free_flow_travel_time,total_congestion_travel_time,google_maps_http_link,WKT_geometry\n";
 
+	if (!binary_mode)
 	outputFile << "route_key,mode,o_zone_id,d_zone_id,o_x_coord,o_y_coord,d_x_coord,d_y_coord,total_distance_mile,total_distance_km,straight_line_distance_mile,straight_line_distance_km,distance_ratio,total_free_flow_travel_time,total_congestion_travel_time,volume,WKT_geometry\n";
 
 	double grand_totalDistance = 0.0;
@@ -3199,6 +3837,48 @@ void OutputODPerformance(const std::string& filename)
 		}
 	}
 	outputFile.close();
+	if (binary_mode)
+	{
+		std::vector<OdZoneRec> zt;
+		for (int z = 1; z <= no_zones; ++z)
+		{
+			OdZoneRec zr;
+			zr.zone_id = g_zone_seq_2_old_zone_id[z];
+			zr.x = (float)g_node_vector[z].x;
+			zr.y = (float)g_node_vector[z].y;
+			zt.push_back(zr);
+		}
+		std::string bfn = "od_performance.bin";
+		bool ok = WriteOdPerfBinary(bfn, zt, (unsigned int)number_of_modes,
+			g_od_perf_records);
+		std::vector<OdZoneRec> z2; std::vector<OdPerfRec> r2;
+		unsigned int nm2 = 0;
+		ok = ok && ReadOdPerfBinary(bfn, z2, nm2, r2) &&
+			z2.size() == zt.size() && r2.size() == g_od_perf_records.size();
+		double max_dv = 0.0;
+		if (ok)
+			for (size_t i2 = 0; i2 < r2.size(); ++i2)
+			{
+				double d = fabs((double)r2[i2].volume -
+					(double)g_od_perf_records[i2].volume);
+				if (d > max_dv) max_dv = d;
+				if (r2[i2].o_zone != g_od_perf_records[i2].o_zone ||
+					r2[i2].d_zone != g_od_perf_records[i2].d_zone ||
+					r2[i2].mode != g_od_perf_records[i2].mode)
+				{ ok = false; break; }
+			}
+		printf("od_performance binary: %llu records, %llu zones -> %s | "
+			"read-back self-test %s (max |dvol| = %.3e)\n",
+			(unsigned long long)g_od_perf_records.size(),
+			(unsigned long long)zt.size(), bfn.c_str(),
+			ok ? "PASS" : "FAIL", max_dv);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "od_performance binary: %llu records, "
+				"self-test %s\n",
+				(unsigned long long)g_od_perf_records.size(),
+				ok ? "PASS" : "FAIL");
+		std::vector<OdPerfRec>().swap(g_od_perf_records);
+	}
 	googleMapsFile.close();
 	std::cout << "Output written to " << filename << std::endl;
 	std::cout << "Google Maps links saved to google_maps_od_distance.csv" << std::endl;
@@ -3771,7 +4451,17 @@ void InitializeLinkIndices(int num_modes, int no_zones, int max_routes)
 	// correct per-mode link volumes. When route output IS requested, allocate
 	// the full inner structure only for dedicated (main) modes.
 	linkIndices.clear();
-	if (shortest_path_log_flag == 1)
+	// CR-0021: at route_output level 4 the origin-rooted TREE pool is the route
+	// representation and it is lossless, so this 5D explicit store is pure
+	// duplication -- and it is the peak-memory term (33.7 GB on the NVTA PM
+	// SOV run) while tree_pool.bin is ~5x smaller. Level 4 therefore skips it.
+	// ODME walks the explicit store, so keep it when ODME is active rather than
+	// silently changing ODME's basis -- and say so.
+	bool tree_only = (shortest_path_log_flag >= 4) && (g_ODME_mode == 0) &&
+		!(g_ODME_obs_VMT > 0);
+	if (shortest_path_log_flag >= 4 && !tree_only)
+		printf("NOTE: route_output=4 with ODME active keeps the explicit route store (ODME walks it); peak memory will match level 3.\n");
+	if (shortest_path_log_flag >= 1 && !tree_only)
 	{
 		linkIndices = std::vector<std::vector<std::vector<std::vector<std::vector<int>>>>>(
 			num_modes + 1);
@@ -5243,6 +5933,50 @@ static double RunColumnAdjustSweeps(double* MainVolume)
 	return system_wide;
 }
 
+struct QvdfProfileDecision { bool eligible; const char* status; };
+// CR-0014 (K-1/K-2 guard): the analytical QVDF reporting profile is generated
+// only when the assignment itself is QVDF (vdf_type==2), or when the link
+// carries calibrated duration parameters (vdf_cd/vdf_n in link.csv) alongside
+// an explicit request (qvdf_profile_mode 1/2) or an observed t2. A bare
+// freeway link_type on a non-QVDF assignment no longer manufactures an
+// analytical profile, and constructor defaults (Q_cd=Q_n=1 => P=DOC) are
+// never presented as a calibrated result.
+static QvdfProfileDecision DecideQvdfProfile(int profile_mode,
+	bool is_freeway_link_type, bool has_observed_t2, int vdf_type,
+	bool params_provided)
+{
+	bool calibrated = (vdf_type == 2) || params_provided;
+	switch (profile_mode)
+	{
+	case 0:
+		return { false, "flat_disabled" };
+	case 1:
+		if (!calibrated) return { false, "flat_missing_parameters" };
+		return { true, "generated_model" };
+	case 2:
+		if (!has_observed_t2) return { false, "flat_missing_observation" };
+		if (!calibrated) return { false, "flat_missing_parameters" };
+		return { true, "generated_observed" };
+	default:
+		if (vdf_type == 2)
+		{
+			if (is_freeway_link_type)
+				return { true, "generated_legacy_link_type" };
+			if (has_observed_t2)
+				return { true, "generated_legacy_observed_t2" };
+			return { false, "flat_legacy_not_selected" };
+		}
+		if (has_observed_t2)
+		{
+			if (params_provided)
+				return { true, "generated_legacy_observed_t2" };
+			return { false, "flat_missing_parameters" };
+		}
+		return { false, is_freeway_link_type
+			? "flat_non_qvdf_assignment" : "flat_legacy_not_selected" };
+	}
+}
+
 int AssignmentAPI()
 {
 	auto api_setup_t0 = std::chrono::high_resolution_clock::now();  // SETUP timer (parse + reads + allocations)
@@ -5443,7 +6177,11 @@ int AssignmentAPI()
 		"iteration_no,link_id,from_node_id,to_node_id,volume,ref_volume,base_demand_volume,obs_volume,background_volume,"
 		"link_capacity,lane_capacity,D,doc,vdf_fftt,travel_time,vdf_alpha,vdf_beta,vdf_plf,speed_mph,speed_kmph,VMT,VHT,PMT,PHT,VHT_QVDF,PHT_QVDF,geometry,");
 
-	fprintf(logfile, "iteration_no,link_id,from_node_id,to_node_id,volume,ref_volume,obs_volume,capacity,doc,fftt,travel_time,delay,");
+	// CR-0014 (K-4/K-5): header and both writer sites emit the identical
+	// 14-column fixed schema. The D/C column is basis-stamped in its name:
+	// period volume over hourly link capacity (no H, no PLF) — a diagnostic
+	// ratio, NOT the assignment DOC (which is per-lane hourly with H and PLF).
+	fprintf(logfile, "iteration_no,link_id,from_node_id,to_node_id,volume,ref_volume,obs_volume,background_volume,lane_capacity_hourly,link_capacity_hourly,vol_over_link_capacity_hourly,fftt,travel_time,delay,");
 
 	for (int m = 1; m <= number_of_modes; m++)
 		fprintf(logfile, "mod_vol_%s,", g_mode_type_vector[m].mode_type.c_str());
@@ -5558,17 +6296,15 @@ int AssignmentAPI()
 	{
 		for (int k = 1; k <= number_of_links; k++)
 		{
-			fprintf(logfile, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,",
+			fprintf(logfile, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,",
 				iteration_no, k, Link[k].external_from_node_id, Link[k].external_to_node_id,
-				MainVolume[k], Link[k].Ref_volume, Link[k].Obs_volume[1], Link[k].background_volume, Link[k].Link_Capacity,
+				MainVolume[k], Link[k].Ref_volume, Link[k].Obs_volume[1], Link[k].background_volume,
+				Link[k].Lane_Capacity, Link[k].Link_Capacity,
 				MainVolume[k] / fmax(0.01, Link[k].Link_Capacity), Link[k].FreeTravelTime,
 				Link[k].Travel_time, Link[k].Travel_time - Link[k].FreeTravelTime);
 
 			for (int m = 1; m <= number_of_modes; m++)
 				fprintf(logfile, "%2lf,", Link[k].mode_MainVolume[m]);
-
-			for (int m = 1; m <= number_of_modes; m++)
-				fprintf(logfile, "%2lf,", Link[k].Obs_volume[m]);
 
 			fprintf(logfile, "%2lf,", MainVolume[k]);
 
@@ -5676,9 +6412,10 @@ int AssignmentAPI()
 		{
 			for (int k = 1; k <= number_of_links; k++)
 			{
-				fprintf(logfile, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,",
+				fprintf(logfile, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,",
 					iteration_no, k, Link[k].external_from_node_id, Link[k].external_to_node_id,
-					MainVolume[k], Link[k].Ref_volume, Link[k].Lane_Capacity, Link[k].Link_Capacity,
+					MainVolume[k], Link[k].Ref_volume, Link[k].Obs_volume[1], Link[k].background_volume,
+					Link[k].Lane_Capacity, Link[k].Link_Capacity,
 					MainVolume[k] / fmax(0.01, Link[k].Link_Capacity), Link[k].FreeTravelTime,
 					Link[k].Travel_time, Link[k].Travel_time - Link[k].FreeTravelTime);
 
@@ -5748,9 +6485,66 @@ int AssignmentAPI()
 		GenerateAggregatedPerformanceAndAccessibility();
 	}
 
-	if (shortest_path_log_flag)
+	if (shortest_path_log_flag >= 4)
 	{
-		OutputRouteDetails("route_assignment.csv", m_theta);
+		// CR-0017: patch each snapshot's FW weight, write the tree pool, then
+		// the mandatory read-back + bottom-up identity self-test.
+		for (size_t si = 0; si < g_tree_snapshots.size(); ++si)
+		{
+			int it = g_tree_snapshots[si].iteration;
+			g_tree_snapshots[si].theta =
+				(it >= 0 && it < (int)m_theta.size()) ? m_theta[it]
+				: (TotalAssignIterations <= 1 ? 1.0 : 0.0);
+		}
+		bool ok = WriteTreePool("tree_pool.bin", g_tree_snapshots,
+			g_tree_arcs, g_tree_ods);
+		std::vector<TreePoolSnapshot> s2;
+		std::vector<TreePoolArc> a2;
+		std::vector<TreePoolOD> o2;
+		ok = ok && ReadTreePool("tree_pool.bin", s2, a2, o2) &&
+			s2.size() == g_tree_snapshots.size() &&
+			a2.size() == g_tree_arcs.size() && o2.size() == g_tree_ods.size();
+		double max_dv = -1.0;
+		if (ok)
+		{
+			std::map<int, int> from_node;
+			for (int k = 1; k <= number_of_links; ++k)
+				from_node[Link[k].external_link_id] =
+					Link[k].external_from_node_id;
+			std::map<int, double> pce;
+			for (int mm = 1; mm <= number_of_modes; ++mm)
+				pce[mm] = g_mode_type_vector[mm].pce;
+			std::map<int, double> lv;
+			ok = TreePoolAccumulate(s2, a2, o2, from_node, lv, &pce);
+			if (ok)
+			{
+				max_dv = 0.0;
+				for (int k = 1; k <= number_of_links; ++k)
+				{
+					double got = lv.count(Link[k].external_link_id)
+						? lv[Link[k].external_link_id] : 0.0;
+					double d = fabs(got - MainVolume[k]);
+					if (d > max_dv) max_dv = d;
+				}
+				ok = max_dv < 1e-4;
+			}
+		}
+		printf("tree_pool binary: %llu snapshots, %llu arcs, %llu OD records "
+			"-> tree_pool.bin | bottom-up identity vs link volume %s "
+			"(max |dv| = %.3e)\n",
+			(unsigned long long)g_tree_snapshots.size(),
+			(unsigned long long)g_tree_arcs.size(),
+			(unsigned long long)g_tree_ods.size(),
+			ok ? "PASS" : "FAIL", max_dv);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "tree_pool: %llu snapshots, identity %s "
+				"(max |dv| = %.3e)\n",
+				(unsigned long long)g_tree_snapshots.size(),
+				ok ? "PASS" : "FAIL", max_dv);
+	}
+	else if (shortest_path_log_flag)
+	{
+		OutputRouteDetails(shortest_path_log_flag >= 3 ? "route_pool.bin" : "route_assignment.csv", m_theta, shortest_path_log_flag);
 		if (vehicle_log_flag)
 			OutputVehicleDetails("vehicle.csv", m_theta);
 	}
@@ -5831,13 +6625,12 @@ int AssignmentAPI()
 		double avg_QVDF_period_speed = 0;
 		double IncomingDemand = 0;
 		double DOC = 0;
-		// Select the reporting profile independently from the assignment VDF. A
-		// missing qvdf_profile_mode (-1) preserves the historical behavior exactly:
-		// freeway link_type encodings or an observed t2 request a QVDF profile.
-		// Explicit mode 0 disables it, mode 1 selects it independent of link_type,
-		// and mode 2 gates it on an observed t2. Positive assigned volume and the
-		// volume threshold remain hard computational guards for every mode that is
-		// otherwise eligible.
+		// Reporting-profile selection (see DecideQvdfProfile above): QVDF
+		// assignments (vdf_type==2) keep the historical legacy-auto behavior;
+		// non-QVDF assignments generate an analytical profile only with
+		// calibrated vdf_cd/vdf_n plus an explicit request or observed t2.
+		// Positive assigned volume and the volume threshold remain hard
+		// computational guards for every mode that is otherwise eligible.
 		bool is_freeway_link_type =
 			(Link[k].link_type == 1) ||
 			(Link[k].link_type >= 100 && Link[k].link_type % 100 == 1);
@@ -5846,30 +6639,12 @@ int AssignmentAPI()
 			std::isfinite(Link[k].QVDF_start_speed_observed);
 		bool has_observed_end_speed =
 			std::isfinite(Link[k].QVDF_end_speed_observed);
-		bool qvdf_eligible = false;
-		const char* qvdf_profile_status = "flat_legacy_not_selected";
-		switch (Link[k].QVDF_profile_mode)
-		{
-		case 0:
-			qvdf_profile_status = "flat_disabled";
-			break;
-		case 1:
-			qvdf_eligible = true;
-			qvdf_profile_status = "generated_model";
-			break;
-		case 2:
-			qvdf_eligible = has_observed_qvdf_t2;
-			qvdf_profile_status = qvdf_eligible
-				? "generated_observed" : "flat_missing_observation";
-			break;
-		default:
-			qvdf_eligible = is_freeway_link_type || has_observed_qvdf_t2;
-			if (qvdf_eligible)
-				qvdf_profile_status = is_freeway_link_type
-					? "generated_legacy_link_type"
-					: "generated_legacy_observed_t2";
-			break;
-		}
+		QvdfProfileDecision qvdf_decision = DecideQvdfProfile(
+			Link[k].QVDF_profile_mode, is_freeway_link_type,
+			has_observed_qvdf_t2, Link[k].VDF_type,
+			Link[k].qvdf_params_provided);
+		bool qvdf_eligible = qvdf_decision.eligible;
+		const char* qvdf_profile_status = qvdf_decision.status;
 		bool has_positive_qvdf_volume =
 			std::isfinite(MainVolume[k]) && MainVolume[k] > 0.0;
 		bool do_qvdf = qvdf_eligible && has_positive_qvdf_volume &&
@@ -6390,10 +7165,34 @@ void ReadLinks()
 				Link[k].BoverC = 0;
 
 
+			// CR-0020: QVDF demand modifier k_d and discharge retention k_mu.
+			// Accept the canonical names plus the wide-contract aliases.
+			parser_link.GetValueByFieldName("kd", Link[k].Q_kd, false);
+			if (Link[k].Q_kd <= 0.0)
+				parser_link.GetValueByFieldName("demand_modifier_kd", Link[k].Q_kd, false);
+			parser_link.GetValueByFieldName("kmu", Link[k].Q_kmu, false);
+			if (Link[k].Q_kmu <= 0.0)
+				parser_link.GetValueByFieldName("capacity_retention_kmu", Link[k].Q_kmu, false);
+			if (Link[k].Q_kd < 0.0)  Link[k].Q_kd = 0.0;
+			if (Link[k].Q_kmu < 0.0) Link[k].Q_kmu = 0.0;
+
+			// CR-0019: explicit period capacity (veh/period, whole link).
+			// When present the static VDFs use V_period / C_period directly
+			// and PLF/lanes/period-hours play no part. Absent (or <= 0) keeps
+			// the legacy path so existing networks are unaffected.
+			parser_link.GetValueByFieldName("capacity_period",
+				Link[k].capacity_period, false);
+			if (Link[k].capacity_period < 0.0)
+				Link[k].capacity_period = 0.0;
+
 			parser_link.GetValueByFieldName("vdf_cp", Link[k].Q_cp);
-			parser_link.GetValueByFieldName("vdf_cd", Link[k].Q_cd);
-			parser_link.GetValueByFieldName("vdf_n", Link[k].Q_n);
+			bool has_qvdf_cd = parser_link.GetValueByFieldName("vdf_cd", Link[k].Q_cd);
+			bool has_qvdf_n = parser_link.GetValueByFieldName("vdf_n", Link[k].Q_n);
 			parser_link.GetValueByFieldName("vdf_s", Link[k].Q_s);
+			// Calibrated congestion-duration model requires vdf_cd/vdf_n from the
+			// input; the constructor defaults (Q_cd=Q_n=1 => P=DOC) must never be
+			// presented as calibrated output for a non-QVDF assignment.
+			Link[k].qvdf_params_provided = has_qvdf_cd || has_qvdf_n;
 
 			// Optional QVDF reporting-profile mode: blank/missing = legacy auto,
 			// 0 = disabled, 1 = model-generated, 2 = observed-t2 gated. Parse as
@@ -7096,9 +7895,34 @@ int Read_ODtable(double*** ODtable, double*** DiffODtable, double*** Seed_ODtabl
 	return 1;
 }
 
+// CR-0019: the static-VDF loading ratio.
+//   x = V_period / C_period                    when capacity_period is given
+//   x = V/(lanes*H*PLF) / C_hourly_per_lane    legacy fallback
+// The first form has no PLF, no period hours and no lane arithmetic — the
+// period volume and the period capacity share one time basis by construction,
+// which is the whole point. Hourly capacity is left alone for QVDF.
+static inline double StaticLoadingRatio(int k, double volume)
+{
+	if (Link[k].capacity_period > 0.0)
+		return volume / Link[k].capacity_period;
+	double incoming = volume / fmax(0.01, Link[k].lanes)
+		/ fmax(0.001, demand_period_ending_hours - demand_period_starting_hours)
+		/ fmax(0.0001, Link[k].VDF_plf);
+	return incoming / fmax(0.1, Link[k].Lane_Capacity);
+}
+
 double Link_Travel_Time(int k, double* Volume)
 {
-	double IncomingDemand = Volume[k] / fmax(0.01, Link[k].lanes) / fmax(0.001, demand_period_ending_hours - demand_period_starting_hours) / fmax(0.0001, Link[k].VDF_plf);
+	// CR-0019: when capacity_period is supplied the static VDFs consume
+	// x = V_period / C_period directly. IncomingDemand is retained only so
+	// the legacy branches below keep compiling; it is expressed so that
+	// IncomingDemand / Lane_Capacity == StaticLoadingRatio in both modes.
+	double IncomingDemand;
+	if (Link[k].capacity_period > 0.0)
+		IncomingDemand = Volume[k] / Link[k].capacity_period
+			* fmax(0.1, Link[k].Lane_Capacity);
+	else
+		IncomingDemand = Volume[k] / fmax(0.01, Link[k].lanes) / fmax(0.001, demand_period_ending_hours - demand_period_starting_hours) / fmax(0.0001, Link[k].VDF_plf);
 
 	if (Link[k].VDF_type == 1)
 	{
@@ -7106,7 +7930,7 @@ double Link_Travel_Time(int k, double* Volume)
 		//   t = t0 * ( 2 + sqrt(a^2 (1-x)^2 + b^2) - a(1-x) - b ),  x = V/C
 		// a (Conic_a) per functional type; b (Conic_b) per Spiess. Asymptotically
 		// linear (unlike BPR power). Uses Lane_Capacity for a true per-lane V/C.
-		double x = IncomingDemand / fmax(0.1, Link[k].Lane_Capacity);
+		double x = StaticLoadingRatio(k, Volume[k]);
 		// Conic a/b: prefer explicit conic_a/conic_b columns; otherwise the
 		// staged convention stores conic a in vdf_alpha and b in vdf_beta.
 		double a = (Link[k].Conic_a > 0.0) ? Link[k].Conic_a : Link[k].VDF_Alpha;
@@ -7225,11 +8049,32 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 	double& avg_queue_speed, double& avg_QVDF_period_speed, double& Severe_Congestion_P, double model_speed[300])
 {
 
-	IncomingDemand = Volume / fmax(0.01, Link[k].lanes) / fmax(0.001, demand_period_ending_hours - demand_period_starting_hours) / fmax(0.0001, Link[k].VDF_plf);
+	// CR-0020: the V->D mapping. With k_d supplied this is the QVDF demand
+	// model and PLF plays no part; without it we keep the historical
+	// k_d = 1/vdf_plf so existing networks are bit-identical.
+	double lane_hourly_volume =
+		Volume / fmax(0.01, Link[k].lanes)
+		/ fmax(0.001, demand_period_ending_hours - demand_period_starting_hours);
+	if (Link[k].Q_kd > 0.0)
+		IncomingDemand = Link[k].Q_kd * lane_hourly_volume;
+	else
+		IncomingDemand = lane_hourly_volume / fmax(0.0001, Link[k].VDF_plf);
 	DOC = IncomingDemand / fmax(0.1, Link[k].Lane_Capacity);
 
+	// CR-0014 (K-3): the internal BPR-style reference model must not consume
+	// the deprecated alias staging of a conical run (vdf_alpha/vdf_beta then
+	// hold conic a/b, not BPR parameters). Standard BPR coefficients are used
+	// for any non-BPR assignment VDF.
+	double q_alpha = Link[k].VDF_Alpha;
+	double q_beta = Link[k].VDF_Beta;
+	if (Link[k].VDF_type != 0 && Link[k].VDF_type != 2)
+	{
+		q_alpha = 0.15;
+		q_beta = 4.0;
+	}
+
 	double Travel_time =
-		Link[k].FreeTravelTime * (1.0 + Link[k].VDF_Alpha * (pow(DOC, Link[k].VDF_Beta)));
+		Link[k].FreeTravelTime * (1.0 + q_alpha * (pow(DOC, q_beta)));
 
 	congestion_ref_speed = Link[k].Cutoff_Speed;
 	if (DOC < 1)
@@ -7237,7 +8082,7 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 
 
 	//step 3.2 calculate speed from VDF based on D/C ratio
-	avg_queue_speed = congestion_ref_speed / (1.0 + Link[k].VDF_Alpha * pow(DOC, Link[k].VDF_Beta));
+	avg_queue_speed = congestion_ref_speed / (1.0 + q_alpha * pow(DOC, q_beta));
 
 
 	P = Link[k].Q_cd * pow(DOC, Link[k].Q_n);  // applifed for both uncongested and congested conditions
@@ -7292,7 +8137,13 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 		demand_period_ending_hours,
 		t2 + (1.0 - observed_left_fraction) * P);
 
-	Q_mu = std::min(Link[k].Lane_Capacity, IncomingDemand / std::max(0.01, P));
+	// CR-0020: k_mu caps discharge below nominal capacity (measured capacity
+	// drop). The analytical D/P form is retained; k_mu only lowers the ceiling,
+	// so the duration model stays internally consistent.
+	double mu_ceiling = (Link[k].Q_kmu > 0.0)
+		? Link[k].Q_kmu * Link[k].Lane_Capacity
+		: Link[k].Lane_Capacity;
+	Q_mu = std::min(mu_ceiling, IncomingDemand / std::max(0.01, P));
 
 	//use  as the lower speed compared to 8/15 values for the congested states
 	double RTT = Link[k].length / fmax(0.01, congestion_ref_speed);
@@ -9612,7 +10463,7 @@ int mapmatchingAPI() {
 				std::vector<double> m_theta; 
 
 
-				OutputRouteDetails("route_assignment.csv", m_theta);
+				OutputRouteDetails(shortest_path_log_flag >= 3 ? "route_pool.bin" : "route_assignment.csv", m_theta, shortest_path_log_flag);
 	
 	Free_3D((void***)MDMinPathPredLink, number_of_modes, no_zones, no_nodes); 
 	Free_2D((void**)CostTo, no_zones, no_nodes);

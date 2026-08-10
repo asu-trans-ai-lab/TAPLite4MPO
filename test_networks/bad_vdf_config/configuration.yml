@@ -1,0 +1,19 @@
+# Synthetic NEGATIVE fixture — the bad-configuration pattern the strict
+# resolution gate exists to reject. (Generic reproduction of a real failure
+# class: a delivered run that claimed replication of a conical baseline while
+# every link silently resolved to default BPR with foreign alpha/beta values
+# and placeholder PLF=1.0 on a multi-hour period.)
+#
+# EXPECTED: python -m dtalite_qa.resolve configuration.yml --strict
+#           exits 2 with findings RS-3 (undeclared functional family) and
+#           RS-4 (flat placeholder PLF). This fixture MUST keep failing;
+#           a PASS here is a regression of the gate itself.
+scenario: bad_vdf_config_negative
+network:
+  link: link.csv
+run:
+  active_period: {id: 1, name: AM, start: "06:00", end: "10:00"}
+vdf:
+  strict: true
+claims:
+  replication_family: conical

@@ -1,0 +1,18 @@
+# LDN034_BD teaching example — run contract (public release authorized by
+# the owner 2026-08-09: subarea only; the full regional model stays private).
+scenario: LDN034_BD_multiclass_teaching
+network:
+  link: link.csv
+run:
+  active_period: {id: 1, name: AM, start: "06:00", end: "09:00"}
+vdf:
+  strict: true            # explicit conic_a/conic_b columns — no fallback
+claims:
+  replication_family: conical
+notes: >
+  Six demand classes converted from the public AM_SubArea.OMX cores
+  (sov/hov2/hov3/com/trk/apv), zone ids = sorted-TAZ renumbering (documented
+  in CONSISTENCY.md). Reference volumes per class embedded as
+  cube_ref_vol_*. Known identity teaching case: link_id is NOT unique
+  (multi-segment chains share one business LINKID) — never merge on
+  link_id; use row order or (cube_A, cube_B).
