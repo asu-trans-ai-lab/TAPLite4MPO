@@ -1908,28 +1908,22 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 							break;
 						}
 
-						if(linkIndices.size() >0)
-						{
-						if (shortest_path_log_flag || Assignment_iteration_no == 0)
-						{
-#pragma omp critical
-							{
-								currentLinkSequence.push_back(k); // Store the link index
-							}
-
-						}
+						// CR-0016: currentLinkSequence is thread-local to this origin
+						// worker — an omp critical section around it serialized every
+						// hop of every path for no reason.
+						if (linkIndices.size() > 0 &&
+							(shortest_path_log_flag || Assignment_iteration_no == 0))
+							currentLinkSequence.push_back(k);
 					}
 
-							if (linkIndices.size() > 0)
-							{
-								if (shortest_path_log_flag || Assignment_iteration_no == 0)
-								{
-									AddLinkSequence(m, Orig, Dest, Assignment_iteration_no, currentLinkSequence);
-									// Store the link sequence for this OD pair
-
-								}
-						}
-						}
+					// CR-0016: store ONCE, after the full path is traced. The old
+					// placement was inside the hop loop, re-copying the growing
+					// vector after every hop (quadratic in path length: ~2,500 int
+					// copies per 71-link NVTA path instead of 71).
+					if (linkIndices.size() > 0 &&
+						(shortest_path_log_flag || Assignment_iteration_no == 0))
+						AddLinkSequence(m, Orig, Dest, Assignment_iteration_no,
+							currentLinkSequence);
 
 				}
 			}
