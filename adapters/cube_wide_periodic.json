@@ -1,0 +1,42 @@
+{
+  "adapter_profile_version": "1.0.0",
+  "description": "Generic Cube wide-periodic network profile ({P} = AM/MD/PM/NT). Field derivations EMPIRICALLY LOCKED against a published narrow export (Gold-Resolver, 100% x 3 periods x 49k links). Agency-specific bindings beyond these generic Cube conventions live privately.",
+  "identity": {
+    "source_link_id": "LINKID",
+    "native_feature_id": "@FID",
+    "a_node": "A",
+    "b_node": "B",
+    "record_id_basis": ["@dataset", "@layer", "A", "B", "LINKID", "@FID"]
+  },
+  "common": {
+    "facility_type": "FTYPE",
+    "area_type": "ATYPE",
+    "length_miles": "DISTANCE",
+    "street_name": "STREETNAME"
+  },
+  "periods": ["AM", "MD", "PM", "NT"],
+  "per_period": {
+    "lanes_{P}": "{P}LANE",
+    "limit_{P}": "{P}LIMIT",
+    "capacity_hourly_per_lane_{P}": ["I{P}HRLNCAP", "{P}HRLNCAP"],
+    "capacity_hourly_link_{P}": ["I{P}HRLKCAP", "{P}HRLKCAP"],
+    "source_volume_{P}": "I4{P}VOL",
+    "source_vc_{P}": "I4{P}VC",
+    "free_speed_mph_{P}": "I4{P}FFSPD",
+    "vdf_code_{P}": "I4{P}VDF",
+    "toll_{P}": "{P}TOLL",
+    "toll_vp_{P}": "{P}TOLL_VP"
+  },
+  "resolver": {
+    "active_rule": "lanes_{P} > 0",
+    "note_limit9": "limit-9 rows with lanes>0 are KEPT (restriction expressed via allowed_use, not row presence) - empirically locked",
+    "narrow_capacity": "capacity_hourly_per_lane_{P}",
+    "narrow_length": "length_miles (carried as-is; kernel vdf_length_mi semantics)",
+    "narrow_free_speed": "free_speed_mph_{P}",
+    "vdf_staging": {
+      "source": "vdf_code_table",
+      "keying": "vdf_code_{P} x period index",
+      "status": "DEVIATION-BY-CORRECTION: published narrow files carry hand-set alpha/beta + flat plf=1.0 matching no public table; authoritative-table confirmation pending from the model owner"
+    }
+  }
+}

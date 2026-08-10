@@ -30,9 +30,9 @@ dependencies = []          # core is stdlib-only; the C++ kernel is compiled in 
 [project.optional-dependencies]
 data = ["pandas"]                      # pytaplite Result.to_pandas
 science = ["numpy", "scipy"]           # super-zone encoders + skim recovery
-gis = ["pyshp", "pandas"]              # example/provenance converters
+gis = ["pyshp", "pandas", "pyogrio", "geopandas", "pyarrow"]  # Network Adapter GIS round trip (CR-0013)
 runconfig = ["pyyaml"]                 # `taplite run <config.yml>` (falls back to a stdlib parser)
-all = ["pandas", "numpy", "scipy", "pyshp", "pyyaml"]
+all = ["pandas", "numpy", "scipy", "pyshp", "pyyaml", "pyogrio", "geopandas", "pyarrow"]
 
 [project.urls]
 Homepage = "https://github.com/asu-trans-ai-lab/TAPLite4MPO"
