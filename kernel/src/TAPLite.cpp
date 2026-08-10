@@ -2665,10 +2665,36 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta,
 {
 	// CR-0015 route_output levels: 1 = full CSV (legacy, zone-count floor
 	// applies); 2 = CSV, volume floor applied on every network size;
-	// 3 = BINARY route pool, NO floor (full coverage) + read-back self-test.
-	std::vector<RoutePoolRecord> pool_records;
+	// 3 = BINARY route pool + read-back self-test. CR-0015b: level 3 STREAMS
+	// records to disk (57M-record regional pools cannot be materialized in
+	// memory), checks every fwrite, patches the header at the end, and
+	// honors TAPLITE_ROUTE_VOL_MIN (default 0 = full coverage; dropped
+	// volume goes to background_volume and is reported so the identity
+	// A·f + dropped = x stays exact).
 	std::ofstream outputFile;
-	if (level < 3)
+	FILE* pool_f = NULL;
+	std::map<int, double> pool_vol_w;
+	unsigned long long pool_n = 0, pool_links = 0, pool_dropped_n = 0;
+	double pool_dropped_vol = 0.0, pool_vol_min3 = 0.0;
+	bool pool_write_error = false;
+	if (level >= 3)
+	{
+		const char* ev3 = getenv("TAPLITE_ROUTE_VOL_MIN");
+		pool_vol_min3 = (ev3 != NULL) ? atof(ev3) : 0.0;
+		pool_f = fopen(filename.c_str(), "wb");
+		if (pool_f)
+		{
+			unsigned int magic = 0x52504154u;
+			unsigned int version = 1u;
+			unsigned long long zero = 0;
+			pool_write_error =
+				fwrite(&magic, 4, 1, pool_f) != 1 ||
+				fwrite(&version, 4, 1, pool_f) != 1 ||
+				fwrite(&zero, 8, 1, pool_f) != 1 ||
+				fwrite(&zero, 8, 1, pool_f) != 1;
+		}
+	}
+	else
 		outputFile.open(filename);
 
 	if (linkIndices.size() == 0)
@@ -2820,16 +2846,36 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta,
 					}
 					if (level >= 3)
 					{
-						// binary pool: NO volume floor — full coverage so the
-						// tensor identity A·f = x holds without a residual
-						RoutePoolRecord pr;
-						pr.mode = m;
-						pr.o_zone = g_zone_seq_2_old_zone_id[Orig];
-						pr.d_zone = g_zone_seq_2_old_zone_id[Dest];
-						pr.prob = accumulatedTheta;
-						pr.volume = route_volume;
-						pr.link_ext_ids = rd.linkExtIDs;
-						pool_records.push_back(pr);
+						if (pool_f == NULL)
+							continue;
+						if (route_volume < pool_vol_min3)
+						{
+							// below-floor: exact residual accounting
+							pool_dropped_n++;
+							pool_dropped_vol += route_volume;
+							for (int i = (int)linkIndices[m][Orig][Dest][rd.firstRouteID].size() - 1; i >= 0; --i)
+								Link[linkIndices[m][Orig][Dest][rd.firstRouteID][i]].background_volume += route_volume;
+							continue;
+						}
+						int oz = g_zone_seq_2_old_zone_id[Orig];
+						int dz = g_zone_seq_2_old_zone_id[Dest];
+						double pv = accumulatedTheta, vv = route_volume;
+						int nl = (int)rd.linkExtIDs.size();
+						bool okw =
+							fwrite(&m, 4, 1, pool_f) == 1 &&
+							fwrite(&oz, 4, 1, pool_f) == 1 &&
+							fwrite(&dz, 4, 1, pool_f) == 1 &&
+							fwrite(&pv, 8, 1, pool_f) == 1 &&
+							fwrite(&vv, 8, 1, pool_f) == 1 &&
+							fwrite(&nl, 4, 1, pool_f) == 1 &&
+							(nl == 0 || fwrite(rd.linkExtIDs.data(), 4, nl,
+								pool_f) == (size_t)nl);
+						if (!okw)
+							pool_write_error = true;
+						pool_n++;
+						pool_links += nl;
+						for (int j = 0; j < nl; ++j)
+							pool_vol_w[rd.linkExtIDs[j]] += vv;
 						continue;
 					}
 					bool write_row = (level == 2)
@@ -2881,38 +2927,76 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta,
 
 	if (level >= 3)
 	{
-		// CR-0015: write the binary pool, then the MANDATORY read-back
-		// self-test — reload the file and re-verify the per-link volume
-		// accumulation (the A·f identity) before reporting success.
-		bool okw = WriteRoutePool(filename, pool_records);
-		std::vector<RoutePoolRecord> check;
-		bool okr = okw && ReadRoutePool(filename, check);
-		bool ok = okr && check.size() == pool_records.size();
-		double max_dv = 0.0;
+		// CR-0015b: patch the header with real counts, then the MANDATORY
+		// STREAMING read-back self-test — re-read record by record (a
+		// reusable buffer, never materializing the pool) and re-verify the
+		// per-link volume accumulation (the A·f identity).
+		bool ok = (pool_f != NULL) && !pool_write_error;
+		if (pool_f)
+		{
+			ok = ok && fseek(pool_f, 8, SEEK_SET) == 0 &&
+				fwrite(&pool_n, 8, 1, pool_f) == 1 &&
+				fwrite(&pool_links, 8, 1, pool_f) == 1 &&
+				fflush(pool_f) == 0;
+			fclose(pool_f);
+		}
+		double max_dv = -1.0;
 		if (ok)
 		{
-			std::map<int, double> vol_w, vol_r;
-			for (size_t i = 0; i < pool_records.size(); ++i)
-				for (size_t j = 0; j < pool_records[i].link_ext_ids.size(); ++j)
-					vol_w[pool_records[i].link_ext_ids[j]] += pool_records[i].volume;
-			for (size_t i = 0; i < check.size(); ++i)
-				for (size_t j = 0; j < check[i].link_ext_ids.size(); ++j)
-					vol_r[check[i].link_ext_ids[j]] += check[i].volume;
-			for (std::map<int, double>::iterator it = vol_w.begin();
-				it != vol_w.end(); ++it)
+			FILE* rf = fopen(filename.c_str(), "rb");
+			ok = (rf != NULL);
+			if (rf)
 			{
-				double d = fabs(it->second - vol_r[it->first]);
-				if (d > max_dv) max_dv = d;
+				unsigned int magic = 0, version = 0;
+				unsigned long long n = 0, tl = 0, seen = 0;
+				ok = fread(&magic, 4, 1, rf) == 1 && magic == 0x52504154u &&
+					fread(&version, 4, 1, rf) == 1 && version == 1u &&
+					fread(&n, 8, 1, rf) == 1 && n == pool_n &&
+					fread(&tl, 8, 1, rf) == 1 && tl == pool_links;
+				std::map<int, double> vol_r;
+				std::vector<int> buf;
+				for (unsigned long long i = 0; ok && i < n; ++i)
+				{
+					int md = 0, oz = 0, dz = 0, nl = 0;
+					double pv = 0, vv = 0;
+					ok = fread(&md, 4, 1, rf) == 1 &&
+						fread(&oz, 4, 1, rf) == 1 &&
+						fread(&dz, 4, 1, rf) == 1 &&
+						fread(&pv, 8, 1, rf) == 1 &&
+						fread(&vv, 8, 1, rf) == 1 &&
+						fread(&nl, 4, 1, rf) == 1 && nl >= 0;
+					if (!ok) break;
+					buf.resize(nl);
+					if (nl && fread(buf.data(), 4, nl, rf) != (size_t)nl)
+					{ ok = false; break; }
+					seen += nl;
+					for (int j = 0; j < nl; ++j)
+						vol_r[buf[j]] += vv;
+				}
+				ok = ok && seen == pool_links;
+				if (ok)
+				{
+					max_dv = 0.0;
+					for (std::map<int, double>::iterator it = pool_vol_w.begin();
+						it != pool_vol_w.end(); ++it)
+					{
+						double d = fabs(it->second - vol_r[it->first]);
+						if (d > max_dv) max_dv = d;
+					}
+					ok = max_dv < 1e-6;
+				}
+				fclose(rf);
 			}
-			ok = max_dv < 1e-6;
 		}
-		printf("route_pool binary: %llu records -> %s | read-back self-test "
+		printf("route_pool binary: %llu records (+%llu below floor %.3f, "
+			"%.1f veh -> background) -> %s | streaming read-back self-test "
 			"%s (max per-link |dv| = %.2e)\n",
-			(unsigned long long)pool_records.size(), filename.c_str(),
-			ok ? "PASS" : "FAIL", max_dv);
+			pool_n, pool_dropped_n, pool_vol_min3, pool_dropped_vol,
+			filename.c_str(), ok ? "PASS" : "FAIL", max_dv);
 		if (summary_log_file != NULL)
 			fprintf(summary_log_file, "route_pool binary: %llu records, "
-				"self-test %s\n", (unsigned long long)pool_records.size(),
+				"dropped %llu (%.1f veh), self-test %s\n",
+				pool_n, pool_dropped_n, pool_dropped_vol,
 				ok ? "PASS" : "FAIL");
 		return;
 	}

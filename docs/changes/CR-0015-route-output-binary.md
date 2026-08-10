@@ -34,3 +34,23 @@ durable contract; the CSV may be deleted after verification.
 selftest cases for the binary writer/reader round trip; regression: level 1
 output unchanged byte-for-byte; level 3 reload reproduces link volumes to
 1e-9.
+
+
+## CR-0015b amendment (2026-08-10, same day)
+
+The first regional run (57.3M paths, 4.08B link entries) exposed two scale
+defects, both fixed:
+1. **Streaming, not materialization** — writer streamed per record with a
+   placeholder header patched at the end; the read-back self-test now streams
+   with a reusable buffer (never loads the pool into memory). The original
+   version buffered all records (~20 GB RAM) and crashed std::bad_alloc.
+2. **fwrite error checking** — a full disk truncated the 18 GB pool at
+   8.5 GB silently; every fwrite is now checked and any failure fails the
+   self-test loudly.
+3. **Level-3 volume floor** — TAPLITE_ROUTE_VOL_MIN now also applies to the
+   binary level (default 0 = full coverage). Below-floor volume goes to
+   background_volume and is COUNTED in the log line, so
+   A·f + dropped = x stays exact.
+Field data: regional PM 2-iteration path store costs ~5.5 min/iteration
+(vs ~15 s without route output) + 12 s allocation; full-coverage pool would
+be ~18 GB, floor=1.0 reduces it to the high-volume core.
