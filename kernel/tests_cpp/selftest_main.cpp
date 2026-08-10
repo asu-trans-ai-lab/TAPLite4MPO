@@ -197,6 +197,46 @@ int run_selftest() {
     near_(tt_at(0.0), T0 + 1.4 * 5.0, 1e-9, "MAG added delay per mile");
     g_added_delay_per_mile = 0.0;
 
+    // ---- CR-0014: QVDF reporting-profile decision contract (K-1/K-2) ----
+    // args: (profile_mode, is_freeway, has_observed_t2, vdf_type, params_provided)
+    {
+        auto d = DecideQvdfProfile(-1, true, false, 0, false);   // the K-1 case:
+        check(!d.eligible, "BPR freeway legacy-auto: no analytical QVDF profile");
+        check(std::string(d.status) == "flat_non_qvdf_assignment",
+              "BPR freeway legacy-auto status");
+        d = DecideQvdfProfile(-1, true, false, 1, false);
+        check(!d.eligible, "conical freeway legacy-auto: no analytical QVDF profile");
+        d = DecideQvdfProfile(-1, true, false, 2, false);        // QVDF run unchanged
+        check(d.eligible && std::string(d.status) == "generated_legacy_link_type",
+              "QVDF freeway legacy-auto preserved");
+        d = DecideQvdfProfile(-1, false, true, 2, false);
+        check(d.eligible && std::string(d.status) == "generated_legacy_observed_t2",
+              "QVDF observed-t2 legacy-auto preserved");
+        d = DecideQvdfProfile(-1, false, true, 0, true);         // calibrated + t2
+        check(d.eligible, "non-QVDF observed-t2 WITH vdf_cd/vdf_n eligible");
+        d = DecideQvdfProfile(-1, false, true, 0, false);        // K-2 case:
+        check(!d.eligible && std::string(d.status) == "flat_missing_parameters",
+              "non-QVDF observed-t2 without params refused (no silent defaults)");
+        d = DecideQvdfProfile(0, true, true, 2, true);
+        check(!d.eligible && std::string(d.status) == "flat_disabled",
+              "explicit mode 0 disables");
+        d = DecideQvdfProfile(1, false, false, 0, true);
+        check(d.eligible && std::string(d.status) == "generated_model",
+              "explicit mode 1 with params generates");
+        d = DecideQvdfProfile(1, false, false, 0, false);
+        check(!d.eligible && std::string(d.status) == "flat_missing_parameters",
+              "explicit mode 1 without params refused");
+        d = DecideQvdfProfile(2, false, false, 0, true);
+        check(!d.eligible && std::string(d.status) == "flat_missing_observation",
+              "mode 2 without observed t2 refused");
+        d = DecideQvdfProfile(2, false, true, 0, true);
+        check(d.eligible && std::string(d.status) == "generated_observed",
+              "mode 2 with observed t2 and params generates");
+        d = DecideQvdfProfile(-1, false, false, 0, false);
+        check(!d.eligible && std::string(d.status) == "flat_legacy_not_selected",
+              "non-freeway non-QVDF stays flat");
+    }
+
     std::printf("  Performance functions: BPR, ModifiedBPR, Conical, QVDF,\n"
                 "    BPR2, INRETS, Akcelik, SANDAGsignal, SCAGpiecewise,\n"
                 "    SCAGrampMeter — exercised on the D/C grid.\n");

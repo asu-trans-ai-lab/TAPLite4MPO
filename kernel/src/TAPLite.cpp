@@ -86,6 +86,7 @@ struct link_record {
 	double Conic_a;      // conic alpha (per functional type)
 	double Conic_b;      // conic beta  (= (2a-1)/(2a-2) per Spiess)
 	double Q_cd, Q_n, Q_cp, Q_s;
+	bool qvdf_params_provided;   // true only when link.csv supplied vdf_cd/vdf_n (calibrated duration model)
 	// Optional reporting-profile selector from link.csv. -1 preserves the
 	// historical link_type/observed-t2 activation rule.
 	int QVDF_profile_mode;
@@ -167,6 +168,7 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		qvdf_params_provided = false;
 		QVDF_profile_mode = -1;
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
@@ -210,6 +212,7 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		qvdf_params_provided = false;
 		QVDF_profile_mode = -1;
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
 		QVDF_t2 = std::numeric_limits<double>::quiet_NaN();
@@ -5257,6 +5260,50 @@ static double RunColumnAdjustSweeps(double* MainVolume)
 	return system_wide;
 }
 
+struct QvdfProfileDecision { bool eligible; const char* status; };
+// CR-0014 (K-1/K-2 guard): the analytical QVDF reporting profile is generated
+// only when the assignment itself is QVDF (vdf_type==2), or when the link
+// carries calibrated duration parameters (vdf_cd/vdf_n in link.csv) alongside
+// an explicit request (qvdf_profile_mode 1/2) or an observed t2. A bare
+// freeway link_type on a non-QVDF assignment no longer manufactures an
+// analytical profile, and constructor defaults (Q_cd=Q_n=1 => P=DOC) are
+// never presented as a calibrated result.
+static QvdfProfileDecision DecideQvdfProfile(int profile_mode,
+	bool is_freeway_link_type, bool has_observed_t2, int vdf_type,
+	bool params_provided)
+{
+	bool calibrated = (vdf_type == 2) || params_provided;
+	switch (profile_mode)
+	{
+	case 0:
+		return { false, "flat_disabled" };
+	case 1:
+		if (!calibrated) return { false, "flat_missing_parameters" };
+		return { true, "generated_model" };
+	case 2:
+		if (!has_observed_t2) return { false, "flat_missing_observation" };
+		if (!calibrated) return { false, "flat_missing_parameters" };
+		return { true, "generated_observed" };
+	default:
+		if (vdf_type == 2)
+		{
+			if (is_freeway_link_type)
+				return { true, "generated_legacy_link_type" };
+			if (has_observed_t2)
+				return { true, "generated_legacy_observed_t2" };
+			return { false, "flat_legacy_not_selected" };
+		}
+		if (has_observed_t2)
+		{
+			if (params_provided)
+				return { true, "generated_legacy_observed_t2" };
+			return { false, "flat_missing_parameters" };
+		}
+		return { false, is_freeway_link_type
+			? "flat_non_qvdf_assignment" : "flat_legacy_not_selected" };
+	}
+}
+
 int AssignmentAPI()
 {
 	auto api_setup_t0 = std::chrono::high_resolution_clock::now();  // SETUP timer (parse + reads + allocations)
@@ -5457,7 +5504,11 @@ int AssignmentAPI()
 		"iteration_no,link_id,from_node_id,to_node_id,volume,ref_volume,base_demand_volume,obs_volume,background_volume,"
 		"link_capacity,lane_capacity,D,doc,vdf_fftt,travel_time,vdf_alpha,vdf_beta,vdf_plf,speed_mph,speed_kmph,VMT,VHT,PMT,PHT,VHT_QVDF,PHT_QVDF,geometry,");
 
-	fprintf(logfile, "iteration_no,link_id,from_node_id,to_node_id,volume,ref_volume,obs_volume,capacity,doc,fftt,travel_time,delay,");
+	// CR-0014 (K-4/K-5): header and both writer sites emit the identical
+	// 14-column fixed schema. The D/C column is basis-stamped in its name:
+	// period volume over hourly link capacity (no H, no PLF) — a diagnostic
+	// ratio, NOT the assignment DOC (which is per-lane hourly with H and PLF).
+	fprintf(logfile, "iteration_no,link_id,from_node_id,to_node_id,volume,ref_volume,obs_volume,background_volume,lane_capacity_hourly,link_capacity_hourly,vol_over_link_capacity_hourly,fftt,travel_time,delay,");
 
 	for (int m = 1; m <= number_of_modes; m++)
 		fprintf(logfile, "mod_vol_%s,", g_mode_type_vector[m].mode_type.c_str());
@@ -5572,17 +5623,15 @@ int AssignmentAPI()
 	{
 		for (int k = 1; k <= number_of_links; k++)
 		{
-			fprintf(logfile, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,",
+			fprintf(logfile, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,",
 				iteration_no, k, Link[k].external_from_node_id, Link[k].external_to_node_id,
-				MainVolume[k], Link[k].Ref_volume, Link[k].Obs_volume[1], Link[k].background_volume, Link[k].Link_Capacity,
+				MainVolume[k], Link[k].Ref_volume, Link[k].Obs_volume[1], Link[k].background_volume,
+				Link[k].Lane_Capacity, Link[k].Link_Capacity,
 				MainVolume[k] / fmax(0.01, Link[k].Link_Capacity), Link[k].FreeTravelTime,
 				Link[k].Travel_time, Link[k].Travel_time - Link[k].FreeTravelTime);
 
 			for (int m = 1; m <= number_of_modes; m++)
 				fprintf(logfile, "%2lf,", Link[k].mode_MainVolume[m]);
-
-			for (int m = 1; m <= number_of_modes; m++)
-				fprintf(logfile, "%2lf,", Link[k].Obs_volume[m]);
 
 			fprintf(logfile, "%2lf,", MainVolume[k]);
 
@@ -5690,9 +5739,10 @@ int AssignmentAPI()
 		{
 			for (int k = 1; k <= number_of_links; k++)
 			{
-				fprintf(logfile, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,",
+				fprintf(logfile, "%d,%d,%d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,%.4lf,",
 					iteration_no, k, Link[k].external_from_node_id, Link[k].external_to_node_id,
-					MainVolume[k], Link[k].Ref_volume, Link[k].Lane_Capacity, Link[k].Link_Capacity,
+					MainVolume[k], Link[k].Ref_volume, Link[k].Obs_volume[1], Link[k].background_volume,
+					Link[k].Lane_Capacity, Link[k].Link_Capacity,
 					MainVolume[k] / fmax(0.01, Link[k].Link_Capacity), Link[k].FreeTravelTime,
 					Link[k].Travel_time, Link[k].Travel_time - Link[k].FreeTravelTime);
 
@@ -5845,13 +5895,12 @@ int AssignmentAPI()
 		double avg_QVDF_period_speed = 0;
 		double IncomingDemand = 0;
 		double DOC = 0;
-		// Select the reporting profile independently from the assignment VDF. A
-		// missing qvdf_profile_mode (-1) preserves the historical behavior exactly:
-		// freeway link_type encodings or an observed t2 request a QVDF profile.
-		// Explicit mode 0 disables it, mode 1 selects it independent of link_type,
-		// and mode 2 gates it on an observed t2. Positive assigned volume and the
-		// volume threshold remain hard computational guards for every mode that is
-		// otherwise eligible.
+		// Reporting-profile selection (see DecideQvdfProfile above): QVDF
+		// assignments (vdf_type==2) keep the historical legacy-auto behavior;
+		// non-QVDF assignments generate an analytical profile only with
+		// calibrated vdf_cd/vdf_n plus an explicit request or observed t2.
+		// Positive assigned volume and the volume threshold remain hard
+		// computational guards for every mode that is otherwise eligible.
 		bool is_freeway_link_type =
 			(Link[k].link_type == 1) ||
 			(Link[k].link_type >= 100 && Link[k].link_type % 100 == 1);
@@ -5860,30 +5909,12 @@ int AssignmentAPI()
 			std::isfinite(Link[k].QVDF_start_speed_observed);
 		bool has_observed_end_speed =
 			std::isfinite(Link[k].QVDF_end_speed_observed);
-		bool qvdf_eligible = false;
-		const char* qvdf_profile_status = "flat_legacy_not_selected";
-		switch (Link[k].QVDF_profile_mode)
-		{
-		case 0:
-			qvdf_profile_status = "flat_disabled";
-			break;
-		case 1:
-			qvdf_eligible = true;
-			qvdf_profile_status = "generated_model";
-			break;
-		case 2:
-			qvdf_eligible = has_observed_qvdf_t2;
-			qvdf_profile_status = qvdf_eligible
-				? "generated_observed" : "flat_missing_observation";
-			break;
-		default:
-			qvdf_eligible = is_freeway_link_type || has_observed_qvdf_t2;
-			if (qvdf_eligible)
-				qvdf_profile_status = is_freeway_link_type
-					? "generated_legacy_link_type"
-					: "generated_legacy_observed_t2";
-			break;
-		}
+		QvdfProfileDecision qvdf_decision = DecideQvdfProfile(
+			Link[k].QVDF_profile_mode, is_freeway_link_type,
+			has_observed_qvdf_t2, Link[k].VDF_type,
+			Link[k].qvdf_params_provided);
+		bool qvdf_eligible = qvdf_decision.eligible;
+		const char* qvdf_profile_status = qvdf_decision.status;
 		bool has_positive_qvdf_volume =
 			std::isfinite(MainVolume[k]) && MainVolume[k] > 0.0;
 		bool do_qvdf = qvdf_eligible && has_positive_qvdf_volume &&
@@ -6405,9 +6436,13 @@ void ReadLinks()
 
 
 			parser_link.GetValueByFieldName("vdf_cp", Link[k].Q_cp);
-			parser_link.GetValueByFieldName("vdf_cd", Link[k].Q_cd);
-			parser_link.GetValueByFieldName("vdf_n", Link[k].Q_n);
+			bool has_qvdf_cd = parser_link.GetValueByFieldName("vdf_cd", Link[k].Q_cd);
+			bool has_qvdf_n = parser_link.GetValueByFieldName("vdf_n", Link[k].Q_n);
 			parser_link.GetValueByFieldName("vdf_s", Link[k].Q_s);
+			// Calibrated congestion-duration model requires vdf_cd/vdf_n from the
+			// input; the constructor defaults (Q_cd=Q_n=1 => P=DOC) must never be
+			// presented as calibrated output for a non-QVDF assignment.
+			Link[k].qvdf_params_provided = has_qvdf_cd || has_qvdf_n;
 
 			// Optional QVDF reporting-profile mode: blank/missing = legacy auto,
 			// 0 = disabled, 1 = model-generated, 2 = observed-t2 gated. Parse as
@@ -7242,8 +7277,20 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 	IncomingDemand = Volume / fmax(0.01, Link[k].lanes) / fmax(0.001, demand_period_ending_hours - demand_period_starting_hours) / fmax(0.0001, Link[k].VDF_plf);
 	DOC = IncomingDemand / fmax(0.1, Link[k].Lane_Capacity);
 
+	// CR-0014 (K-3): the internal BPR-style reference model must not consume
+	// the deprecated alias staging of a conical run (vdf_alpha/vdf_beta then
+	// hold conic a/b, not BPR parameters). Standard BPR coefficients are used
+	// for any non-BPR assignment VDF.
+	double q_alpha = Link[k].VDF_Alpha;
+	double q_beta = Link[k].VDF_Beta;
+	if (Link[k].VDF_type != 0 && Link[k].VDF_type != 2)
+	{
+		q_alpha = 0.15;
+		q_beta = 4.0;
+	}
+
 	double Travel_time =
-		Link[k].FreeTravelTime * (1.0 + Link[k].VDF_Alpha * (pow(DOC, Link[k].VDF_Beta)));
+		Link[k].FreeTravelTime * (1.0 + q_alpha * (pow(DOC, q_beta)));
 
 	congestion_ref_speed = Link[k].Cutoff_Speed;
 	if (DOC < 1)
@@ -7251,7 +7298,7 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 
 
 	//step 3.2 calculate speed from VDF based on D/C ratio
-	avg_queue_speed = congestion_ref_speed / (1.0 + Link[k].VDF_Alpha * pow(DOC, Link[k].VDF_Beta));
+	avg_queue_speed = congestion_ref_speed / (1.0 + q_alpha * pow(DOC, q_beta));
 
 
 	P = Link[k].Q_cd * pow(DOC, Link[k].Q_n);  // applifed for both uncongested and congested conditions
