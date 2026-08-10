@@ -3,6 +3,7 @@
 Time-ordered record of every step and assumption (the auditable trail).
 
 - **STEP** — intake scenario: gmns
+- **NOTE** — no conversion_log.json — converter did not emit a step log (recommended).
 - **STEP** — read declaration: gmns\submission.yml (28 keys)
 - **STEP** — read link.csv: 145971 links, 24 columns
 - **STEP** — assignment period = 6..10 h  (L=4 hours)

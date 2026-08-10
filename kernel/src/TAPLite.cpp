@@ -2583,6 +2583,7 @@ struct RouteData {
 	std::string nodeIDsStr;          // Node IDs (string)
 	std::string linkIDsStr;          // Link IDs (string)
 	std::string linkLengthStr;          // Link Length (string)
+	std::vector<int> linkExtIDs;     // external link ids (binary route pool)
 	double totalDistance;
 	double totalFreeFlowTravelTime;
 	double totalTravelTime;
@@ -2590,16 +2591,94 @@ struct RouteData {
 	std::string routeKey;            // Unique key (e.g., based on node and link sums)
 };
 
-void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
+// ---- CR-0015: binary route pool (route_output level 3) --------------------
+// Fixed little-endian layout, one file: 24-byte header
+//   magic 'TAPR' (4B) | version u32 = 1 | n_records u64 | total_links u64
+// then per record:
+//   mode i32 | o_zone i32 | d_zone i32 | prob f64 | volume f64 |
+//   n_links i32 | n_links x external link id i32
+struct RoutePoolRecord {
+	int mode, o_zone, d_zone;
+	double prob, volume;
+	std::vector<int> link_ext_ids;
+};
+
+static bool WriteRoutePool(const std::string& fn,
+	const std::vector<RoutePoolRecord>& recs)
 {
-	std::ofstream outputFile(filename);  // Open the file for writing
+	FILE* f = fopen(fn.c_str(), "wb");
+	if (!f) return false;
+	unsigned int magic = 0x52504154u;  /* 'TAPR' */
+	unsigned int version = 1u;
+	unsigned long long n = (unsigned long long)recs.size(), total_links = 0;
+	for (size_t i = 0; i < recs.size(); ++i)
+		total_links += recs[i].link_ext_ids.size();
+	fwrite(&magic, 4, 1, f); fwrite(&version, 4, 1, f);
+	fwrite(&n, 8, 1, f); fwrite(&total_links, 8, 1, f);
+	for (size_t i = 0; i < recs.size(); ++i)
+	{
+		const RoutePoolRecord& r = recs[i];
+		int nl = (int)r.link_ext_ids.size();
+		fwrite(&r.mode, 4, 1, f); fwrite(&r.o_zone, 4, 1, f);
+		fwrite(&r.d_zone, 4, 1, f);
+		fwrite(&r.prob, 8, 1, f); fwrite(&r.volume, 8, 1, f);
+		fwrite(&nl, 4, 1, f);
+		if (nl) fwrite(r.link_ext_ids.data(), 4, nl, f);
+	}
+	fclose(f);
+	return true;
+}
+
+static bool ReadRoutePool(const std::string& fn,
+	std::vector<RoutePoolRecord>& out)
+{
+	FILE* f = fopen(fn.c_str(), "rb");
+	if (!f) return false;
+	unsigned int magic = 0, version = 0;
+	unsigned long long n = 0, total_links = 0;
+	if (fread(&magic, 4, 1, f) != 1 || magic != 0x52504154u ||
+		fread(&version, 4, 1, f) != 1 || version != 1u ||
+		fread(&n, 8, 1, f) != 1 || fread(&total_links, 8, 1, f) != 1)
+	{ fclose(f); return false; }
+	out.clear(); out.reserve((size_t)n);
+	unsigned long long links_seen = 0;
+	for (unsigned long long i = 0; i < n; ++i)
+	{
+		RoutePoolRecord r; int nl = 0;
+		if (fread(&r.mode, 4, 1, f) != 1 || fread(&r.o_zone, 4, 1, f) != 1 ||
+			fread(&r.d_zone, 4, 1, f) != 1 || fread(&r.prob, 8, 1, f) != 1 ||
+			fread(&r.volume, 8, 1, f) != 1 || fread(&nl, 4, 1, f) != 1 ||
+			nl < 0)
+		{ fclose(f); return false; }
+		r.link_ext_ids.resize(nl);
+		if (nl && fread(r.link_ext_ids.data(), 4, nl, f) != (size_t)nl)
+		{ fclose(f); return false; }
+		links_seen += nl;
+		out.push_back(r);
+	}
+	fclose(f);
+	return links_seen == total_links;
+}
+
+void OutputRouteDetails(const std::string& filename, std::vector<double> theta,
+	int level = 1)
+{
+	// CR-0015 route_output levels: 1 = full CSV (legacy, zone-count floor
+	// applies); 2 = CSV, volume floor applied on every network size;
+	// 3 = BINARY route pool, NO floor (full coverage) + read-back self-test.
+	std::vector<RoutePoolRecord> pool_records;
+	std::ofstream outputFile;
+	if (level < 3)
+		outputFile.open(filename);
 
 	if (linkIndices.size() == 0)
-		return; 
+		return;
 	// Write the CSV header in lowercase
-	outputFile << "mode,route_id,o_zone_id,d_zone_id,unique_route_id,prob,node_ids,link_ids,distance_mile,total_distance_km,total_free_flow_travel_time,total_travel_time,route_key,seed_od_volume,target_od_volume,final_est_od_volume,volume,";
-
-	outputFile << "\n";
+	if (level < 3)
+	{
+		outputFile << "mode,route_id,o_zone_id,d_zone_id,unique_route_id,prob,node_ids,link_ids,distance_mile,total_distance_km,total_free_flow_travel_time,total_travel_time,route_key,seed_od_volume,target_od_volume,final_est_od_volume,volume,";
+		outputFile << "\n";
+	}
 
 
 	for (int m = 1; m < linkIndices.size(); ++m)
@@ -2624,7 +2703,8 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 						std::string nodeIDsStr;
 						std::string linkIDsStr;
 						std::string linkLengthStr;
-						
+						std::vector<int> linkExtVec;   // CR-0015 binary pool
+
 						int nodeSum = 0;  // Sum of node IDs (for uniqueness key)
 						int linkSum = 0;  // Sum of link IDs (for uniqueness key)
 
@@ -2641,6 +2721,7 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 							// Append the external (link.csv) link id; keep the internal
 							// index k only for the uniqueness checksum below.
 							linkIDsStr += std::to_string(Link[k].external_link_id) + ";";
+							linkExtVec.push_back(Link[k].external_link_id);
 							//double length = Link[k].length;
 							//linkLengthStr += std::to_string(length) + ";";
 							linkSum += k;
@@ -2672,7 +2753,8 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 							rd.unique_route_id = unique_route_id;  // Unique id for output.
 							rd.nodeIDsStr = nodeIDsStr;
 							rd.linkIDsStr = linkIDsStr;
-							//rd.linkLengthStr = linkLengthStr; 
+							rd.linkExtIDs = linkExtVec;
+							//rd.linkLengthStr = linkLengthStr;
 							rd.totalDistance = totalDistance;
 							rd.totalFreeFlowTravelTime = totalFreeFlowTravelTime;
 							rd.totalTravelTime = totalTravelTime;
@@ -2736,7 +2818,25 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 						const char* ev = getenv("TAPLITE_ROUTE_VOL_MIN");
 						route_vol_min = (ev != NULL) ? atof(ev) : 1.0;
 					}
-					if(no_zones <1000 || (no_zones>=1000 && od_volume >= route_vol_min))
+					if (level >= 3)
+					{
+						// binary pool: NO volume floor — full coverage so the
+						// tensor identity A·f = x holds without a residual
+						RoutePoolRecord pr;
+						pr.mode = m;
+						pr.o_zone = g_zone_seq_2_old_zone_id[Orig];
+						pr.d_zone = g_zone_seq_2_old_zone_id[Dest];
+						pr.prob = accumulatedTheta;
+						pr.volume = route_volume;
+						pr.link_ext_ids = rd.linkExtIDs;
+						pool_records.push_back(pr);
+						continue;
+					}
+					bool write_row = (level == 2)
+						? (od_volume >= route_vol_min)
+						: (no_zones < 1000 ||
+						   (no_zones >= 1000 && od_volume >= route_vol_min));
+					if (write_row)
 					{
 					// (Optional) Remove trailing semicolon from linkIDsStr if needed.
 					std::string cleanedLinkIDsStr = rd.linkIDsStr;
@@ -2777,6 +2877,44 @@ void OutputRouteDetails(const std::string& filename, std::vector<double> theta)
 
 			}
 		}
+	}
+
+	if (level >= 3)
+	{
+		// CR-0015: write the binary pool, then the MANDATORY read-back
+		// self-test — reload the file and re-verify the per-link volume
+		// accumulation (the A·f identity) before reporting success.
+		bool okw = WriteRoutePool(filename, pool_records);
+		std::vector<RoutePoolRecord> check;
+		bool okr = okw && ReadRoutePool(filename, check);
+		bool ok = okr && check.size() == pool_records.size();
+		double max_dv = 0.0;
+		if (ok)
+		{
+			std::map<int, double> vol_w, vol_r;
+			for (size_t i = 0; i < pool_records.size(); ++i)
+				for (size_t j = 0; j < pool_records[i].link_ext_ids.size(); ++j)
+					vol_w[pool_records[i].link_ext_ids[j]] += pool_records[i].volume;
+			for (size_t i = 0; i < check.size(); ++i)
+				for (size_t j = 0; j < check[i].link_ext_ids.size(); ++j)
+					vol_r[check[i].link_ext_ids[j]] += check[i].volume;
+			for (std::map<int, double>::iterator it = vol_w.begin();
+				it != vol_w.end(); ++it)
+			{
+				double d = fabs(it->second - vol_r[it->first]);
+				if (d > max_dv) max_dv = d;
+			}
+			ok = max_dv < 1e-6;
+		}
+		printf("route_pool binary: %llu records -> %s | read-back self-test "
+			"%s (max per-link |dv| = %.2e)\n",
+			(unsigned long long)pool_records.size(), filename.c_str(),
+			ok ? "PASS" : "FAIL", max_dv);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "route_pool binary: %llu records, "
+				"self-test %s\n", (unsigned long long)pool_records.size(),
+				ok ? "PASS" : "FAIL");
+		return;
 	}
 
 	// Close the file after writing
@@ -3788,7 +3926,7 @@ void InitializeLinkIndices(int num_modes, int no_zones, int max_routes)
 	// correct per-mode link volumes. When route output IS requested, allocate
 	// the full inner structure only for dedicated (main) modes.
 	linkIndices.clear();
-	if (shortest_path_log_flag == 1)
+	if (shortest_path_log_flag >= 1)
 	{
 		linkIndices = std::vector<std::vector<std::vector<std::vector<std::vector<int>>>>>(
 			num_modes + 1);
@@ -5814,7 +5952,7 @@ int AssignmentAPI()
 
 	if (shortest_path_log_flag)
 	{
-		OutputRouteDetails("route_assignment.csv", m_theta);
+		OutputRouteDetails(shortest_path_log_flag >= 3 ? "route_pool.bin" : "route_assignment.csv", m_theta, shortest_path_log_flag);
 		if (vehicle_log_flag)
 			OutputVehicleDetails("vehicle.csv", m_theta);
 	}
@@ -9673,7 +9811,7 @@ int mapmatchingAPI() {
 				std::vector<double> m_theta; 
 
 
-				OutputRouteDetails("route_assignment.csv", m_theta);
+				OutputRouteDetails(shortest_path_log_flag >= 3 ? "route_pool.bin" : "route_assignment.csv", m_theta, shortest_path_log_flag);
 	
 	Free_3D((void***)MDMinPathPredLink, number_of_modes, no_zones, no_nodes); 
 	Free_2D((void**)CostTo, no_zones, no_nodes);

@@ -1,5 +1,16 @@
 # LDN034_BD — public-source consistency verification (2026-08-09)
 
+**Classification (owner ruling): Gold-LDN-RT-Public — adapter / identity /
+field-manifest / GIS round-trip gold.** NOT a full numerical assignment
+gold: the public source has no frozen narrow files, no expected assignment
+outputs, no NB scenario, and no license file, so it cannot validate the
+complete conversion→assignment→postprocessing chain by itself. The
+per-class reproduction below is a CONSISTENCY check against references
+embedded in this owner-authorized converted fixture — full-result
+reproducibility claims await the private E2E gold (Gold-NVTA-E2E-Private).
+The wide-contract teaching artifact for this dataset covers all FOUR
+periods (AM/MD/PM/NT) per the source.
+
 Verified against the PUBLIC source repository `Mmdabb/DTALite4Cube`
 (`DTALite4Cube/LDN034_BD`): subarea shapefile + four period OMX matrices +
 vdf-code parameter tables. No license file in that repo → per policy the

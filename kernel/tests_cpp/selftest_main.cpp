@@ -237,6 +237,39 @@ int run_selftest() {
               "non-freeway non-QVDF stays flat");
     }
 
+    // ---- CR-0015: binary route pool codec round trip ----
+    {
+        std::vector<RoutePoolRecord> recs(3);
+        recs[0].mode = 1; recs[0].o_zone = 100; recs[0].d_zone = 200;
+        recs[0].prob = 0.375; recs[0].volume = 1234.5678;
+        recs[0].link_ext_ids.push_back(7);
+        recs[0].link_ext_ids.push_back(2000000000);   // large external id
+        recs[1].mode = 6; recs[1].o_zone = 3857; recs[1].d_zone = 1;
+        recs[1].prob = 1.0; recs[1].volume = 0.0;     // zero-volume path
+        recs[1].link_ext_ids.push_back(42);
+        recs[2].mode = 2; recs[2].o_zone = 5; recs[2].d_zone = 5;
+        recs[2].prob = 0.625; recs[2].volume = 0.001; // empty path edge case
+        const char* fn = "selftest_route_pool.bin";
+        check(WriteRoutePool(fn, recs), "route pool write");
+        std::vector<RoutePoolRecord> back;
+        check(ReadRoutePool(fn, back), "route pool read + link-count check");
+        check(back.size() == 3, "route pool record count");
+        if (back.size() == 3) {
+            near_(back[0].volume, 1234.5678, 1e-12, "volume bit round trip");
+            near_(back[0].prob, 0.375, 1e-15, "prob round trip");
+            check(back[0].link_ext_ids.size() == 2 &&
+                  back[0].link_ext_ids[1] == 2000000000,
+                  "large external link id round trip");
+            check(back[1].volume == 0.0 && back[1].link_ext_ids.size() == 1,
+                  "zero-volume path round trip");
+            check(back[2].link_ext_ids.empty(), "empty path round trip");
+        }
+        std::remove(fn);
+        std::vector<RoutePoolRecord> none;
+        check(!ReadRoutePool("selftest_no_such_file.bin", none),
+              "missing file fails loudly");
+    }
+
     std::printf("  Performance functions: BPR, ModifiedBPR, Conical, QVDF,\n"
                 "    BPR2, INRETS, Akcelik, SANDAGsignal, SCAGpiecewise,\n"
                 "    SCAGrampMeter — exercised on the D/C grid.\n");
