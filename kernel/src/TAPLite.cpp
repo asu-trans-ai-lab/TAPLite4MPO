@@ -87,6 +87,16 @@ struct link_record {
 	double Conic_b;      // conic beta  (= (2a-1)/(2a-2) per Spiess)
 	double Q_cd, Q_n, Q_cp, Q_s;
 	bool qvdf_params_provided;   // true only when link.csv supplied vdf_cd/vdf_n (calibrated duration model)
+	// CR-0019: explicit PERIOD capacity, veh/period for the whole link.
+	// When supplied (> 0) the static VDFs use x = V_period / C_period
+	// DIRECTLY — no lanes, no period hours, no PLF. Hourly capacity stays
+	// separate and is used only by QVDF. 0 = not supplied (legacy path).
+	double capacity_period;
+	// CR-0020: QVDF demand/supply modifiers, both 0 = not supplied.
+	//   Q_kd  : D = k_d * (V / lanes / H)   -- the V->D mapping. Replaces the
+	//           implicit k_d = 1/vdf_plf. Free to exceed 1; that is the point.
+	//   Q_kmu : discharge cap mu <= k_mu * C_lane (measured capacity drop).
+	double Q_kd, Q_kmu;
 	// Optional reporting-profile selector from link.csv. -1 preserves the
 	// historical link_type/observed-t2 activation rule.
 	int QVDF_profile_mode;
@@ -168,6 +178,8 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		capacity_period = 0.0;      // CR-0019: 0 = not supplied
+		Q_kd = 0.0; Q_kmu = 0.0;    // CR-0020: 0 = not supplied
 		qvdf_params_provided = false;
 		QVDF_profile_mode = -1;
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
@@ -212,6 +224,8 @@ struct link_record {
 		Q_n = 1.0;
 		Q_cp = 0.28125 /*0.15*15/8*/;
 		Q_s = 4;
+		capacity_period = 0.0;      // CR-0019: 0 = not supplied
+		Q_kd = 0.0; Q_kmu = 0.0;    // CR-0020: 0 = not supplied
 		qvdf_params_provided = false;
 		QVDF_profile_mode = -1;
 		QVDF_t0_observed = std::numeric_limits<double>::quiet_NaN();
@@ -1711,6 +1725,86 @@ void AddLinkSequence(int m, int Orig, int Dest, int route_id, const std::vector<
 
 
 
+
+// ---- CR-0018: compact OD matrix binary (od_performance.bin) --------------
+// The CSV form repeats zone coordinates on every row, carries an always-empty
+// WKT column and a route_key derivable from (mode,o,d), and costs ~200 B per
+// OD pair -> 3.9 GB and ~24 minutes of wall clock on the regional PM network.
+// Binary layout (little-endian, no padding):
+//   HEADER 32 B: magic 'TAPO' u32 | version u32 = 1 | n_zones u32 |
+//                n_modes u32 | n_records u64 | flags u32 | reserved u32
+//   ZONE TABLE  n_zones x 12 B: i32 zone_id | f32 x | f32 y
+//   RECORDS     n_records x 32 B: i32 mode | i32 o_zone | i32 d_zone |
+//     f32 dist_mile | f32 straight_mile | f32 fftt_min | f32 tt_min | f32 vol
+// Derived columns (km, distance_ratio, route_key, geometry) are the
+// consumer's business — never stored.
+struct OdZoneRec { int zone_id; float x, y; };
+struct OdPerfRec {
+	int mode, o_zone, d_zone;
+	float dist_mile, straight_mile, fftt_min, tt_min, volume;
+};
+
+static bool WriteOdPerfBinaryHeader(FILE* f, unsigned int n_zones,
+	unsigned int n_modes)
+{
+	unsigned int magic = 0x4F504154u;   /* 'TAPO' */
+	unsigned int version = 1u, flags = 0u, reserved = 0u;
+	unsigned long long zero = 0;
+	return fwrite(&magic, 4, 1, f) == 1 && fwrite(&version, 4, 1, f) == 1 &&
+		fwrite(&n_zones, 4, 1, f) == 1 && fwrite(&n_modes, 4, 1, f) == 1 &&
+		fwrite(&zero, 8, 1, f) == 1 && fwrite(&flags, 4, 1, f) == 1 &&
+		fwrite(&reserved, 4, 1, f) == 1;
+}
+
+static bool WriteOdPerfBinary(const std::string& fn,
+	const std::vector<OdZoneRec>& zones, unsigned int n_modes,
+	const std::vector<OdPerfRec>& recs)
+{
+	FILE* f = fopen(fn.c_str(), "wb");
+	if (!f) return false;
+	bool ok = WriteOdPerfBinaryHeader(f, (unsigned int)zones.size(), n_modes);
+	for (size_t i = 0; ok && i < zones.size(); ++i)
+		ok = fwrite(&zones[i].zone_id, 4, 1, f) == 1 &&
+			fwrite(&zones[i].x, 4, 1, f) == 1 &&
+			fwrite(&zones[i].y, 4, 1, f) == 1;
+	for (size_t i = 0; ok && i < recs.size(); ++i)
+		ok = fwrite(&recs[i], sizeof(OdPerfRec), 1, f) == 1;
+	unsigned long long n = recs.size();
+	ok = ok && fseek(f, 16, SEEK_SET) == 0 && fwrite(&n, 8, 1, f) == 1;
+	if (fclose(f) != 0) ok = false;
+	return ok;
+}
+
+static bool ReadOdPerfBinary(const std::string& fn,
+	std::vector<OdZoneRec>& zones, unsigned int& n_modes,
+	std::vector<OdPerfRec>& recs)
+{
+	FILE* f = fopen(fn.c_str(), "rb");
+	if (!f) return false;
+	unsigned int magic = 0, version = 0, n_zones = 0, flags = 0, reserved = 0;
+	unsigned long long n_rec = 0;
+	if (fread(&magic, 4, 1, f) != 1 || magic != 0x4F504154u ||
+		fread(&version, 4, 1, f) != 1 || version != 1u ||
+		fread(&n_zones, 4, 1, f) != 1 || fread(&n_modes, 4, 1, f) != 1 ||
+		fread(&n_rec, 8, 1, f) != 1 || fread(&flags, 4, 1, f) != 1 ||
+		fread(&reserved, 4, 1, f) != 1)
+	{ fclose(f); return false; }
+	zones.resize(n_zones);
+	for (unsigned int i = 0; i < n_zones; ++i)
+		if (fread(&zones[i].zone_id, 4, 1, f) != 1 ||
+			fread(&zones[i].x, 4, 1, f) != 1 ||
+			fread(&zones[i].y, 4, 1, f) != 1)
+		{ fclose(f); return false; }
+	recs.resize((size_t)n_rec);
+	for (unsigned long long i = 0; i < n_rec; ++i)
+		if (fread(&recs[(size_t)i], sizeof(OdPerfRec), 1, f) != 1)
+		{ fclose(f); return false; }
+	// trailing bytes mean a truncated/extended file: reject rather than guess
+	char probe = 0;
+	bool clean_eof = (fread(&probe, 1, 1, f) == 0);
+	fclose(f);
+	return clean_eof;
+}
 
 // ---- CR-0017: origin-rooted TREE column pool (tree_pool.bin) -------------
 // Stores one shortest-path tree per (mode x root x iteration) instead of one
@@ -3573,19 +3667,32 @@ void OutputVehicleDetails(const std::string& filename, std::vector<double> theta
 }
 
 
+// CR-0018: accessibility_output levels — 0 = off (nothing written),
+// 1 = legacy CSV, 2 = compact binary od_performance.bin (see
+// docs/OD_PERFORMANCE_BINARY_FORMAT.md).
+static std::vector<OdPerfRec> g_od_perf_records;
+
 void OutputODPerformance(const std::string& filename)
 {
-	std::ofstream outputFile(filename);
-	std::ofstream googleMapsFile("google_maps_od_distance.csv");
-
-	if (!googleMapsFile.is_open())
+	const bool binary_mode = (g_accessibility_output >= 2);
+	std::ofstream outputFile;
+	std::ofstream googleMapsFile;
+	g_od_perf_records.clear();
+	if (!binary_mode)
 	{
-		std::cerr << "Error: Could not open Google Maps OD distance file." << std::endl;
-		return;
+		outputFile.open(filename);
+		googleMapsFile.open("google_maps_od_distance.csv");
+		if (!googleMapsFile.is_open())
+		{
+			std::cerr << "Error: Could not open Google Maps OD distance file." << std::endl;
+			return;
+		}
 	}
 
+	if (!binary_mode)
 	googleMapsFile << "route_key,mode,o_zone_id,d_zone_id,volume,total_distance_mile,total_distance_km,straight_line_distance_mile,straight_line_distance_km,distance_ratio,total_free_flow_travel_time,total_congestion_travel_time,google_maps_http_link,WKT_geometry\n";
 
+	if (!binary_mode)
 	outputFile << "route_key,mode,o_zone_id,d_zone_id,o_x_coord,o_y_coord,d_x_coord,d_y_coord,total_distance_mile,total_distance_km,straight_line_distance_mile,straight_line_distance_km,distance_ratio,total_free_flow_travel_time,total_congestion_travel_time,volume,WKT_geometry\n";
 
 	double grand_totalDistance = 0.0;
@@ -3730,6 +3837,48 @@ void OutputODPerformance(const std::string& filename)
 		}
 	}
 	outputFile.close();
+	if (binary_mode)
+	{
+		std::vector<OdZoneRec> zt;
+		for (int z = 1; z <= no_zones; ++z)
+		{
+			OdZoneRec zr;
+			zr.zone_id = g_zone_seq_2_old_zone_id[z];
+			zr.x = (float)g_node_vector[z].x;
+			zr.y = (float)g_node_vector[z].y;
+			zt.push_back(zr);
+		}
+		std::string bfn = "od_performance.bin";
+		bool ok = WriteOdPerfBinary(bfn, zt, (unsigned int)number_of_modes,
+			g_od_perf_records);
+		std::vector<OdZoneRec> z2; std::vector<OdPerfRec> r2;
+		unsigned int nm2 = 0;
+		ok = ok && ReadOdPerfBinary(bfn, z2, nm2, r2) &&
+			z2.size() == zt.size() && r2.size() == g_od_perf_records.size();
+		double max_dv = 0.0;
+		if (ok)
+			for (size_t i2 = 0; i2 < r2.size(); ++i2)
+			{
+				double d = fabs((double)r2[i2].volume -
+					(double)g_od_perf_records[i2].volume);
+				if (d > max_dv) max_dv = d;
+				if (r2[i2].o_zone != g_od_perf_records[i2].o_zone ||
+					r2[i2].d_zone != g_od_perf_records[i2].d_zone ||
+					r2[i2].mode != g_od_perf_records[i2].mode)
+				{ ok = false; break; }
+			}
+		printf("od_performance binary: %llu records, %llu zones -> %s | "
+			"read-back self-test %s (max |dvol| = %.3e)\n",
+			(unsigned long long)g_od_perf_records.size(),
+			(unsigned long long)zt.size(), bfn.c_str(),
+			ok ? "PASS" : "FAIL", max_dv);
+		if (summary_log_file != NULL)
+			fprintf(summary_log_file, "od_performance binary: %llu records, "
+				"self-test %s\n",
+				(unsigned long long)g_od_perf_records.size(),
+				ok ? "PASS" : "FAIL");
+		std::vector<OdPerfRec>().swap(g_od_perf_records);
+	}
 	googleMapsFile.close();
 	std::cout << "Output written to " << filename << std::endl;
 	std::cout << "Google Maps links saved to google_maps_od_distance.csv" << std::endl;
@@ -4302,7 +4451,17 @@ void InitializeLinkIndices(int num_modes, int no_zones, int max_routes)
 	// correct per-mode link volumes. When route output IS requested, allocate
 	// the full inner structure only for dedicated (main) modes.
 	linkIndices.clear();
-	if (shortest_path_log_flag >= 1)
+	// CR-0021: at route_output level 4 the origin-rooted TREE pool is the route
+	// representation and it is lossless, so this 5D explicit store is pure
+	// duplication -- and it is the peak-memory term (33.7 GB on the NVTA PM
+	// SOV run) while tree_pool.bin is ~5x smaller. Level 4 therefore skips it.
+	// ODME walks the explicit store, so keep it when ODME is active rather than
+	// silently changing ODME's basis -- and say so.
+	bool tree_only = (shortest_path_log_flag >= 4) && (g_ODME_mode == 0) &&
+		!(g_ODME_obs_VMT > 0);
+	if (shortest_path_log_flag >= 4 && !tree_only)
+		printf("NOTE: route_output=4 with ODME active keeps the explicit route store (ODME walks it); peak memory will match level 3.\n");
+	if (shortest_path_log_flag >= 1 && !tree_only)
 	{
 		linkIndices = std::vector<std::vector<std::vector<std::vector<std::vector<int>>>>>(
 			num_modes + 1);
@@ -7006,6 +7165,26 @@ void ReadLinks()
 				Link[k].BoverC = 0;
 
 
+			// CR-0020: QVDF demand modifier k_d and discharge retention k_mu.
+			// Accept the canonical names plus the wide-contract aliases.
+			parser_link.GetValueByFieldName("kd", Link[k].Q_kd, false);
+			if (Link[k].Q_kd <= 0.0)
+				parser_link.GetValueByFieldName("demand_modifier_kd", Link[k].Q_kd, false);
+			parser_link.GetValueByFieldName("kmu", Link[k].Q_kmu, false);
+			if (Link[k].Q_kmu <= 0.0)
+				parser_link.GetValueByFieldName("capacity_retention_kmu", Link[k].Q_kmu, false);
+			if (Link[k].Q_kd < 0.0)  Link[k].Q_kd = 0.0;
+			if (Link[k].Q_kmu < 0.0) Link[k].Q_kmu = 0.0;
+
+			// CR-0019: explicit period capacity (veh/period, whole link).
+			// When present the static VDFs use V_period / C_period directly
+			// and PLF/lanes/period-hours play no part. Absent (or <= 0) keeps
+			// the legacy path so existing networks are unaffected.
+			parser_link.GetValueByFieldName("capacity_period",
+				Link[k].capacity_period, false);
+			if (Link[k].capacity_period < 0.0)
+				Link[k].capacity_period = 0.0;
+
 			parser_link.GetValueByFieldName("vdf_cp", Link[k].Q_cp);
 			bool has_qvdf_cd = parser_link.GetValueByFieldName("vdf_cd", Link[k].Q_cd);
 			bool has_qvdf_n = parser_link.GetValueByFieldName("vdf_n", Link[k].Q_n);
@@ -7716,9 +7895,34 @@ int Read_ODtable(double*** ODtable, double*** DiffODtable, double*** Seed_ODtabl
 	return 1;
 }
 
+// CR-0019: the static-VDF loading ratio.
+//   x = V_period / C_period                    when capacity_period is given
+//   x = V/(lanes*H*PLF) / C_hourly_per_lane    legacy fallback
+// The first form has no PLF, no period hours and no lane arithmetic — the
+// period volume and the period capacity share one time basis by construction,
+// which is the whole point. Hourly capacity is left alone for QVDF.
+static inline double StaticLoadingRatio(int k, double volume)
+{
+	if (Link[k].capacity_period > 0.0)
+		return volume / Link[k].capacity_period;
+	double incoming = volume / fmax(0.01, Link[k].lanes)
+		/ fmax(0.001, demand_period_ending_hours - demand_period_starting_hours)
+		/ fmax(0.0001, Link[k].VDF_plf);
+	return incoming / fmax(0.1, Link[k].Lane_Capacity);
+}
+
 double Link_Travel_Time(int k, double* Volume)
 {
-	double IncomingDemand = Volume[k] / fmax(0.01, Link[k].lanes) / fmax(0.001, demand_period_ending_hours - demand_period_starting_hours) / fmax(0.0001, Link[k].VDF_plf);
+	// CR-0019: when capacity_period is supplied the static VDFs consume
+	// x = V_period / C_period directly. IncomingDemand is retained only so
+	// the legacy branches below keep compiling; it is expressed so that
+	// IncomingDemand / Lane_Capacity == StaticLoadingRatio in both modes.
+	double IncomingDemand;
+	if (Link[k].capacity_period > 0.0)
+		IncomingDemand = Volume[k] / Link[k].capacity_period
+			* fmax(0.1, Link[k].Lane_Capacity);
+	else
+		IncomingDemand = Volume[k] / fmax(0.01, Link[k].lanes) / fmax(0.001, demand_period_ending_hours - demand_period_starting_hours) / fmax(0.0001, Link[k].VDF_plf);
 
 	if (Link[k].VDF_type == 1)
 	{
@@ -7726,7 +7930,7 @@ double Link_Travel_Time(int k, double* Volume)
 		//   t = t0 * ( 2 + sqrt(a^2 (1-x)^2 + b^2) - a(1-x) - b ),  x = V/C
 		// a (Conic_a) per functional type; b (Conic_b) per Spiess. Asymptotically
 		// linear (unlike BPR power). Uses Lane_Capacity for a true per-lane V/C.
-		double x = IncomingDemand / fmax(0.1, Link[k].Lane_Capacity);
+		double x = StaticLoadingRatio(k, Volume[k]);
 		// Conic a/b: prefer explicit conic_a/conic_b columns; otherwise the
 		// staged convention stores conic a in vdf_alpha and b in vdf_beta.
 		double a = (Link[k].Conic_a > 0.0) ? Link[k].Conic_a : Link[k].VDF_Alpha;
@@ -7845,7 +8049,16 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 	double& avg_queue_speed, double& avg_QVDF_period_speed, double& Severe_Congestion_P, double model_speed[300])
 {
 
-	IncomingDemand = Volume / fmax(0.01, Link[k].lanes) / fmax(0.001, demand_period_ending_hours - demand_period_starting_hours) / fmax(0.0001, Link[k].VDF_plf);
+	// CR-0020: the V->D mapping. With k_d supplied this is the QVDF demand
+	// model and PLF plays no part; without it we keep the historical
+	// k_d = 1/vdf_plf so existing networks are bit-identical.
+	double lane_hourly_volume =
+		Volume / fmax(0.01, Link[k].lanes)
+		/ fmax(0.001, demand_period_ending_hours - demand_period_starting_hours);
+	if (Link[k].Q_kd > 0.0)
+		IncomingDemand = Link[k].Q_kd * lane_hourly_volume;
+	else
+		IncomingDemand = lane_hourly_volume / fmax(0.0001, Link[k].VDF_plf);
 	DOC = IncomingDemand / fmax(0.1, Link[k].Lane_Capacity);
 
 	// CR-0014 (K-3): the internal BPR-style reference model must not consume
@@ -7924,7 +8137,13 @@ double Link_QueueVDF(int k, double Volume, double& IncomingDemand, double& DOC, 
 		demand_period_ending_hours,
 		t2 + (1.0 - observed_left_fraction) * P);
 
-	Q_mu = std::min(Link[k].Lane_Capacity, IncomingDemand / std::max(0.01, P));
+	// CR-0020: k_mu caps discharge below nominal capacity (measured capacity
+	// drop). The analytical D/P form is retained; k_mu only lowers the ceiling,
+	// so the duration model stays internally consistent.
+	double mu_ceiling = (Link[k].Q_kmu > 0.0)
+		? Link[k].Q_kmu * Link[k].Lane_Capacity
+		: Link[k].Lane_Capacity;
+	Q_mu = std::min(mu_ceiling, IncomingDemand / std::max(0.01, P));
 
 	//use  as the lower speed compared to 8/15 values for the congested states
 	double RTT = Link[k].length / fmax(0.01, congestion_ref_speed);

@@ -374,6 +374,203 @@ int run_selftest() {
               "unknown link in arc pool rejected");
     }
 
+    // ---- CR-0018: compact OD matrix binary codec ----
+    {
+        std::vector<OdZoneRec> zt(2);
+        zt[0].zone_id = 101; zt[0].x = -77.0485f; zt[0].y = 38.8938f;
+        zt[1].zone_id = 3858; zt[1].x = -77.5f;   zt[1].y = 39.0f;
+        std::vector<OdPerfRec> rr(2);
+        rr[0].mode = 1; rr[0].o_zone = 101; rr[0].d_zone = 3858;
+        rr[0].dist_mile = 1.18f; rr[0].straight_mile = 0.690332f;
+        rr[0].fftt_min = 2.50185f; rr[0].tt_min = 3.19994f;
+        rr[0].volume = 0.002f;
+        rr[1].mode = 6; rr[1].o_zone = 3858; rr[1].d_zone = 101;
+        rr[1].dist_mile = 0.0f; rr[1].straight_mile = 0.0f;
+        rr[1].fftt_min = 0.0f; rr[1].tt_min = 0.0f; rr[1].volume = 0.0f;
+        const char* of = "selftest_od_perf.bin";
+        check(WriteOdPerfBinary(of, zt, 6, rr), "od matrix write");
+        std::vector<OdZoneRec> z2; std::vector<OdPerfRec> r2;
+        unsigned int nm = 0;
+        check(ReadOdPerfBinary(of, z2, nm, r2), "od matrix read");
+        check(nm == 6 && z2.size() == 2 && r2.size() == 2,
+              "od matrix counts round trip");
+        if (r2.size() == 2) {
+            near_(r2[0].volume, 0.002f, 1e-9, "od volume round trip");
+            near_(r2[0].tt_min, 3.19994f, 1e-6, "od travel time round trip");
+            check(r2[0].o_zone == 101 && r2[0].d_zone == 3858 &&
+                  r2[1].mode == 6, "od identity round trip");
+        }
+        if (z2.size() == 2)
+            near_(z2[0].x, -77.0485f, 1e-5,
+                  "zone coords stored ONCE in the zone table");
+        // 32 B/record vs ~200 B/CSV row is the whole point
+        check(sizeof(OdPerfRec) == 32, "od record is 32 bytes");
+        std::remove(of);
+        std::vector<OdZoneRec> z3; std::vector<OdPerfRec> r3;
+        check(!ReadOdPerfBinary("selftest_no_od.bin", z3, nm, r3),
+              "missing od matrix fails loudly");
+    }
+
+    // ---- CR-0019: static VDFs use V_period / C_period, no PLF ----
+    // The whole point: with capacity_period supplied, the loading ratio must
+    // not depend on lanes, period hours, or PLF. Changing any of those must
+    // leave the travel time bit-identical.
+    {
+        demand_period_starting_hours = 15.0;   // PM, H = 4
+        demand_period_ending_hours = 19.0;
+        double v[1] = {4000.0};          // Volume[0] is the lab link
+
+        reset_link(0);                          // BPR
+        Link[0].capacity_period = 5000.0;       // x = 4000/5000 = 0.8
+        double t_bpr = Link_Travel_Time(0, v);
+        near_(t_bpr, T0 * (1.0 + 0.15 * std::pow(0.8, 4.0)), 1e-9,
+              "CR-0019 BPR uses V_period/C_period");
+
+        // PLF, lanes and period hours must now be inert
+        Link[0].VDF_plf = 0.4270;
+        near_(Link_Travel_Time(0, v), t_bpr, 1e-12, "PLF is inert");
+        Link[0].lanes = 7.0;
+        near_(Link_Travel_Time(0, v), t_bpr, 1e-12, "lanes are inert");
+        demand_period_ending_hours = 18.0;      // H = 3
+        near_(Link_Travel_Time(0, v), t_bpr, 1e-12, "period hours are inert");
+        demand_period_ending_hours = 19.0;
+
+        // conical takes the same ratio
+        reset_link(1);
+        Link[0].Conic_a = 15.0;
+        Link[0].Conic_b = (2 * 15.0 - 1) / (2 * 15.0 - 2);
+        Link[0].capacity_period = 5000.0;
+        double t_con = Link_Travel_Time(0, v);
+        Link[0].VDF_plf = 0.4270;
+        Link[0].lanes = 7.0;
+        near_(Link_Travel_Time(0, v), t_con, 1e-12,
+              "CR-0019 conical: PLF and lanes inert");
+        // x = 1 must give exactly 2*t0 for any a (Spiess identity), and it
+        // must hold through the period-capacity path
+        double v1[1] = {5000.0};
+        near_(Link_Travel_Time(0, v1), 2.0 * T0, 1e-9,
+              "CR-0019 conical t(x=1) = 2*t0 via period capacity");
+
+        // legacy path preserved when capacity_period is absent
+        reset_link(0);
+        Link[0].capacity_period = 0.0;
+        Link[0].lanes = 2.0;
+        Link[0].VDF_plf = 0.8503;
+        double legacy_x = 4000.0 / (2.0 * 4.0 * 0.8503) / C_LANE;
+        near_(Link_Travel_Time(0, v),
+              T0 * (1.0 + 0.15 * std::pow(legacy_x, 4.0)), 1e-9,
+              "legacy lanes/H/PLF path unchanged when capacity_period absent");
+
+        // a negative or zero value must fall back, never divide by it
+        Link[0].capacity_period = 0.0;
+        double t_zero = Link_Travel_Time(0, v);
+        check(std::isfinite(t_zero) && t_zero > 0.0,
+              "capacity_period = 0 falls back safely");
+        reset_link(0);
+    }
+
+    // ---- CR-0020: QVDF V->D mapping via k_d, discharge cap via k_mu ----
+    // k_d replaces the implicit k_d = 1/vdf_plf. It is free to exceed 1 --
+    // that is the whole mechanism: x_D > 1 is what makes QVDF queue.
+    {
+        demand_period_starting_hours = 15.0;
+        demand_period_ending_hours = 19.0;          // H = 4
+        double D_, DOC_, P_, t0_, t2_, t3_, vt2_, mu_, gam_, cref_, aqs_, aps_, sev_;
+        double prof[300];
+        const double V = 6000.0;                    // 1 lane, H = 4 -> V/lanes/H = 1500
+
+        reset_link(2);                              // QVDF
+        Link[0].Q_cd = 1.0; Link[0].Q_n = 1.24;
+        Link[0].Q_kd = 1.6;                         // D = 1.6 * 1500 = 2400
+        Link_QueueVDF(0, V, D_, DOC_, P_, t0_, t2_, t3_, vt2_, mu_, gam_,
+                      cref_, aqs_, aps_, sev_, prof);
+        near_(D_, 1.6 * 1500.0, 1e-9, "CR-0020 D = k_d * (V/lanes/H)");
+        near_(DOC_, 2400.0 / C_LANE, 1e-9, "CR-0020 DOC = D / C_lane");
+        check(DOC_ > 1.0, "CR-0020 k_d > 1 yields x_D > 1 (QVDF can queue)");
+        near_(P_, 1.0 * std::pow(2.4, 1.24), 1e-9, "CR-0020 P = f_d * x_D^n");
+
+        double D_ref = D_, P_ref = P_, mu_ref = mu_;
+        Link[0].VDF_plf = 0.3170;                   // must be inert now
+        Link_QueueVDF(0, V, D_, DOC_, P_, t0_, t2_, t3_, vt2_, mu_, gam_,
+                      cref_, aqs_, aps_, sev_, prof);
+        near_(D_, D_ref, 1e-12, "CR-0020 vdf_plf inert when k_d supplied");
+        near_(P_, P_ref, 1e-12, "CR-0020 P unchanged by vdf_plf");
+
+        reset_link(2);                              // legacy: no k_d
+        Link[0].Q_cd = 1.0; Link[0].Q_n = 1.24;
+        Link[0].VDF_plf = 0.8503;
+        Link_QueueVDF(0, V, D_, DOC_, P_, t0_, t2_, t3_, vt2_, mu_, gam_,
+                      cref_, aqs_, aps_, sev_, prof);
+        near_(D_, 1500.0 / 0.8503, 1e-9, "CR-0020 legacy D = (V/lanes/H)/plf");
+
+        reset_link(2);                              // k_mu caps discharge
+        Link[0].Q_cd = 1.0; Link[0].Q_n = 1.24;
+        Link[0].Q_kd = 1.6; Link[0].Q_kmu = 0.80;
+        Link_QueueVDF(0, V, D_, DOC_, P_, t0_, t2_, t3_, vt2_, mu_, gam_,
+                      cref_, aqs_, aps_, sev_, prof);
+        check(mu_ <= 0.80 * C_LANE + 1e-9, "CR-0020 mu <= k_mu * C_lane");
+        near_(mu_, std::min(0.80 * C_LANE, D_ / std::max(0.01, P_)), 1e-9,
+              "CR-0020 mu = min(k_mu*C, D/P)");
+
+        Link[0].Q_kmu = 0.0;                        // absent -> nominal ceiling
+        Link_QueueVDF(0, V, D_, DOC_, P_, t0_, t2_, t3_, vt2_, mu_, gam_,
+                      cref_, aqs_, aps_, sev_, prof);
+        near_(mu_, std::min(C_LANE, D_ / std::max(0.01, P_)), 1e-9,
+              "CR-0020 mu ceiling = C_lane when k_mu absent");
+        (void)mu_ref;
+        reset_link(0);
+    }
+
+    // ---- GOLD-001: external single-link closure gold (SLC I-10 package) ----
+    // An independently authored analytical gold that specifies k_d and k_mu
+    // EXPLICITLY -- i.e. exactly the CR-0020 contract. Verifying the kernel
+    // against a gold we did not write is the point of the verification spine.
+    //   L=1.2mi H=4h V=12000 vf=65 vco=49 C=5000 k_d=1.25 k_mu=0.85
+    //   f_d=5.0 n=1.1 f_p=0.24 s=1.4 T2=8.0
+    {
+        demand_period_starting_hours = 6.0;    // T2=8 with P=3.64 must fit
+        demand_period_ending_hours = 10.0;     // H = 4
+        double D_, DOC_, P_, t0_, t2_, t3_, vt2_, mu_, gam_, cref_, aqs_, aps_, sev_;
+        double prof[300];
+
+        reset_link(2);
+        Link[0].lanes = 1.0;
+        Link[0].Lane_Capacity = 5000.0;
+        Link[0].free_speed = 65.0;
+        Link[0].Cutoff_Speed = 49.0;
+        Link[0].length = 1.2;
+        Link[0].Q_kd = 1.25;  Link[0].Q_kmu = 0.85;
+        Link[0].Q_cd = 5.0;   Link[0].Q_n = 1.1;
+        Link[0].Q_cp = 0.24;  Link[0].Q_s = 1.4;
+        Link[0].QVDF_t2 = 8.0;
+        // t2 is IN/OUT: production seeds it from Link[k].QVDF_t2 at the call
+        // site (TAPLite.cpp:6676), so the harness must do the same or t0/t3
+        // are computed around t2 = 0.
+        t2_ = std::isfinite(Link[0].QVDF_t2) ? Link[0].QVDF_t2
+                                             : DemandPeriodMidpointHours();
+        Link_QueueVDF(0, 12000.0, D_, DOC_, P_, t0_, t2_, t3_, vt2_, mu_, gam_,
+                      cref_, aqs_, aps_, sev_, prof);
+
+        near_(D_,   3750.0,    1e-9, "GOLD-001 D = k_d*(V/lanes/H) = 3750");
+        near_(DOC_, 0.75,      1e-9, "GOLD-001 x_D = D/C = 0.75");
+        near_(P_,   3.6436560, 1e-6, "GOLD-001 P = f_d*x^n = 3.643656 h");
+        near_(vt2_, 19.863990, 1e-5, "GOLD-001 vT2 = v_co/(1+f_p*P^s) = 19.86399");
+        near_(t0_,  6.1781720, 1e-6, "GOLD-001 t0 = T2 - P/2 = 6.178172");
+        near_(t3_,  9.8218280, 1e-6, "GOLD-001 t3 = T2 + P/2 = 9.821828");
+        near_(Link[0].length / vt2_, 0.0604110, 1e-6,
+              "GOLD-001 TT at T2 = L/vT2 = 0.060411 h");
+
+        // mu: the gold reports k_mu*C = 4250; the canonical QVDF form the
+        // kernel implements gives min(k_mu*C, D/P) = 1029.19, because the
+        // ceiling is not binding at x=0.75. Both are pinned here so the
+        // divergence is a recorded fact, not a silent difference.
+        near_(mu_, 3750.0 / 3.6436560, 1e-4,
+              "GOLD-001 kernel mu = min(k_mu*C, D/P) = 1029.19 (NOT k_mu*C)");
+        check(0.85 * 5000.0 > mu_,
+              "GOLD-001 k_mu ceiling 4250 is not binding at x_D = 0.75");
+        reset_link(0);
+    }
+
     std::printf("  Performance functions: BPR, ModifiedBPR, Conical, QVDF,\n"
                 "    BPR2, INRETS, Akcelik, SANDAGsignal, SCAGpiecewise,\n"
                 "    SCAGrampMeter — exercised on the D/C grid.\n");
