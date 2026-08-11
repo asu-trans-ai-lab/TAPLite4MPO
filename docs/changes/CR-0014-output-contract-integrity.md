@@ -53,7 +53,7 @@ report `qvdf_profile_status=flat_non_qvdf_assignment` and flat
 assignment-consistent scalars instead of fabricated analytical QVDF fields.
 Assignment volumes/travel times are bit-identical (verified).
 `TAP_log.csv` consumers: audit found ZERO in-repo parsers (only
-filename-level cleanup in fill.py/scenario.py/run_nvta.py) — no downstream
+filename-level cleanup in fill.py/scenario.py/run_agency.py) — no downstream
 migration needed; external scripts that ever parsed TAP_log must re-review
 (they were reading misaligned columns).
 

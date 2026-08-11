@@ -285,29 +285,29 @@ TAPLite4MPO/
 ├── schemas/           GMNS field schema (JSON)
 ├── docs/              methodology docs
 │   └── mpo_spec/      design spec + multi-agency survey & conformance mapping
-├── nvta_run/          NVTA run-configs + helper scripts (bring-your-own-data, §6)
+├── agency_run/          the agency run-configs + helper scripts (bring-your-own-data, §6)
 ├── USER_GUIDE.md      Volume 1 (kernel)
 ├── USER_GUIDE_VOL2_MPO.md   Volume 2 (MPOs)
 └── build.sh
 ```
 
-## 6. NVTA reproduction (bring-your-own-data)
+## 6. the agency reproduction (bring-your-own-data)
 
-The **NVTA dataset is agency-restricted and is NOT included** in this repository.
-`nvta_run/` ships the run-configs and helper scripts (network prep, settings, conic/QVDF
+The **the agency dataset is agency-restricted and is NOT included** in this repository.
+`agency_run/` ships the run-configs and helper scripts (network prep, settings, conic/QVDF
 staging). To run it, point the scripts at your own copy of the data:
 
 ```bash
 # option A: environment variable
-export DTALITE_NVTA_INTERNAL=/path/to/nvta/_internal
-# option B: nvta_run/local_config.json -> {"internal": "...", "subarea": "..."}
+export DTALITE_NVTA_INTERNAL=/path/to/agency/_internal
+# option B: agency_run/local_config.json -> {"internal": "...", "subarea": "..."}
 # option C: place the data in  data/nvta_internal/
-python nvta_run/run_nvta.py
+python agency_run/run_agency.py
 ```
 If unconfigured, the runner prints a clear message. **All of §2–§3 reproduces fully
 without it** using the open benchmark networks.
 
-> Course note: instructors distribute the NVTA data to students through a separate
+> Course note: instructors distribute the the agency data to students through a separate
 > channel (not this public repo); students set one of the options above.
 
 ---

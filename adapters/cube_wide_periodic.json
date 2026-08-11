@@ -122,11 +122,11 @@
    "tolerance": "p95 relative error < 0.005",
    "when": "BEFORE assignment",
    "on_fail": "STOP. The capacity is on the wrong basis and no downstream assignment number is interpretable.",
-   "nvta_pm_result": "31416 links, max rel err 0.00026, p95 0.00005, 100% within 0.5% - PASS"
+   "field_result": "31416 links, max rel err 0.00026, p95 0.00005, 100% within 0.5% - PASS"
   },
   "G_hourly_identity": {
    "expr": "capacity_hourly_link_{P} == lanes_{P} * capacity_hourly_per_lane_{P}",
-   "nvta_pm_result": "100.00% of links - PASS"
+   "field_result": "100.00% of links - PASS"
   },
   "G_no_runtime_plf": {
    "expr": "perturbing source_plf_{P} must not change any tap_* output when capacity_period_{P} is present",

@@ -4,7 +4,7 @@ Standard BPR/conical VDFs return only a **period-average travel time**. The
 **Queue-based VDF (QVDF, `vdf_type=2`)** is the new-generation output: from the same
 demand/capacity ratio it produces a **D/C-consistent congestion *duration* and queue
 speed profile**, so a static assignment can report *how long* a link is congested — not
-just how slow on average. This is what meets the **NVTA congestion-duration
+just how slow on average. This is what meets the **the agency congestion-duration
 requirements** (and similar agency LOS/duration deliverables).
 
 ---
@@ -206,7 +206,7 @@ a *sister project* to TAPLite4MPO. Clean pipeline:
 ```
 
 So the two projects compose: **CBI turns observed speeds into QVDF parameters; TAPLite4MPO
-assigns with QVDF and reports the D/C-consistent congestion duration.** In the NVTA work
+assigns with QVDF and reports the D/C-consistent congestion duration.** In the the agency work
 this is what produces the per-link congestion-duration measure the agency requires.
 
 > The CBI tool is maintained as a separate repository (the QVDF-E project: corridor FD/CBI

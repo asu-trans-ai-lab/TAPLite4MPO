@@ -20,7 +20,7 @@ there was no release-blocking tag + golden set tied to one audited commit.
   is modified by this CR.
 - New ledger: `docs/changes/` (this folder) with CR-INDEX.
 - Golden capture (this file, §Goldens): S0a Chicago Sketch regression, S0b ARC AM
-  full pipeline, S0c TRMG2 (public golds only — SCAG and NVTA are private by owner
+  full pipeline, S0c TRMG2 (public golds only — SCAG and the agency are private by owner
   decision 2026-08-08 and are never public gates).
 - Protected kernel list declared (below). Touches NO file on that list.
 
@@ -78,7 +78,7 @@ labeled in the dataset inventory, not hidden). Full metrics + honesty notes:
 `../../../../MPO_dataset_1_TRMG2/gold/assignment_metrics.json` (teaching
 dataset scaffold, outside this repo).
 
-**SCAG / NVTA:** excluded from public goldens by owner decision 2026-08-08
+**SCAG / the agency:** excluded from public goldens by owner decision 2026-08-08
 (private mode); never a public release gate.
 
 ## Decision

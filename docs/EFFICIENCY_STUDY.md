@@ -42,7 +42,7 @@ All five experts converged on a four-level ladder, one settings key `warm_start_
 - **Batching**: flatten to one dynamically-scheduled OpenMP loop over (group, origin); consume the shared tree for all group members while hot in per-thread `InitSPScratch` cache. HPC adds: ONE back-trace walk per shared tree accumulating all member modes' OD flows (PCE applied at the accumulate step) instead of M walks.
 - **PCE aggregation**: unchanged — per-class volumes, PCE weighting, per-class tolls in the gap denominator stay exact; sharing trees must never blur class accounting.
 - **Always log the grouping** ("sov/hov2/hov3 share tree of sov; trk dedicated — allowed_use differs on 2,895 links") — silent cleverness loses MPO trust (all 5 experts said this).
-- **Gain**: SP cost scales with GROUPS not classes; NVTA 6 modes → 2–3 groups → SP phase 2–3x, bit-identical results. **Effort: S–M.**
+- **Gain**: SP cost scales with GROUPS not classes; the agency 6 modes → 2–3 groups → SP phase 2–3x, bit-identical results. **Effort: S–M.**
 
 ## Other high-value techniques
 

@@ -2,7 +2,7 @@ import os
 """
 build_multimodal.py
 -------------------
-Construct two SMALL multimodal GMNS test networks that mimic the NVTA regional
+Construct two SMALL multimodal GMNS test networks that mimic the the agency regional
 model (6 modes, allowed_use enforcement, per-mode demand split) from the base
 classical networks shipped with DTALite:
 
@@ -16,9 +16,9 @@ What it does for each base network:
      mode_type token). Most links get the full 6-mode list; a deliberately
      chosen handful get restrictions placed ON high-demand shortest-path
      corridors so the restriction actually bites.
-  3. Writes mode_type.csv with the 6 NVTA modes (all dedicated_shortest_path=1).
+  3. Writes mode_type.csv with the 6 the agency modes (all dedicated_shortest_path=1).
   4. Splits the single base demand.csv (o,d,volume) across the 6 modes by the
-     NVTA mode-split fractions, writing 6 demand files (sov_<net>.csv, ...).
+     the agency mode-split fractions, writing 6 demand files (sov_<net>.csv, ...).
   5. Writes settings_1iter.csv / settings_10iter.csv / settings_20iter.csv
      (11-column schema the engine expects).
 
@@ -38,7 +38,7 @@ BASE_SF = os.path.join(os.path.dirname(__file__), "..", "kernel", "data_sets", "
 BASE_CS = os.path.join(os.path.dirname(__file__), "..", "kernel", "data_sets", "03_chicago_sketch")
 OUT_ROOT = os.path.dirname(__file__)
 
-# NVTA 6 modes. dedicated_shortest_path=1 for all so each mode gets its own
+# the agency 6 modes. dedicated_shortest_path=1 for all so each mode gets its own
 # allowed_use-respecting shortest path.
 MODES = [
     # mode_type_id, mode_type, name, vot, pce, occ, frac

@@ -12,7 +12,7 @@ include docs/ARCHITECTURE.md docs/GOLDEN_PATH_CHECKLIST.md pytaplite/README.md
 prune examples
 prune test_networks
 prune kernel/data_sets
-prune nvta_run
+prune agency_run
 prune private
 prune .github
 global-exclude *.pyc

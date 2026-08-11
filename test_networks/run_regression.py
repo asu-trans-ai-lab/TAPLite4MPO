@@ -13,7 +13,7 @@ Checks applied:
   external_ids     output link/from/to ids match the original input ids
   sparse_ids       near-INT_MAX node/zone/link ids stay compact, preserve
                    external ids in outputs, and work with route output on/off
-  ffx_sparse       reconstruct the Issue #6 FFX134 ids (zones to 6114,
+  sparse_ids       reconstruct the Issue #6 subarea_sparse ids (zones to 6114,
                    nodes to 36387), then require compact parity and external
                    ids in link/route outputs with route output on/off
   gap_ok           final relative gap is finite, NON-NEGATIVE (issue #7) and small
@@ -245,8 +245,8 @@ def chk_sparse_ids(ctx):
     )
 
 
-def chk_ffx_sparse(ctx):
-    """Reconstruct the Issue #6 FFX134 external ids retained in cube_A/cube_B."""
+def chk_sparse_ids(ctx):
+    """Reconstruct the Issue #6 subarea_sparse external ids retained in cube_A/cube_B."""
     def read_rows(path):
         with open(path, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
@@ -278,14 +278,14 @@ def chk_ffx_sparse(ctx):
                 internal = link[internal_col]
                 external = link.get(external_col, "")
                 if not external:
-                    return False, f"{external_col} missing from FFX134 fixture"
+                    return False, f"{external_col} missing from subarea_sparse fixture"
                 if internal in remap and remap[internal] != external:
                     return False, f"inconsistent retained external id for node {internal}"
                 remap[internal] = external
         if set(remap) != {node["node_id"] for node in nodes}:
-            return False, "retained cube_A/cube_B ids do not cover every FFX134 node"
+            return False, "retained cube_A/cube_B ids do not cover every subarea_sparse node"
         if len(set(remap.values())) != len(remap):
-            return False, "retained FFX134 external node ids are not one-to-one"
+            return False, "retained subarea_sparse external node ids are not one-to-one"
 
         for node in nodes:
             old_node = node["node_id"]
@@ -312,7 +312,7 @@ def chk_ffx_sparse(ctx):
         p = run_native(ctx["exe"], ctx["library"], sparse_dir, 60)
         sparse_lp = parse_lp(sparse_dir)
         if p.returncode != 0 or not sparse_lp:
-            return False, f"sparse FFX134 route-output run failed (exit={p.returncode})"
+            return False, f"sparse subarea_sparse route-output run failed (exit={p.returncode})"
 
         expected = Counter(
             (r["link_id"], r["cube_A"], r["cube_B"]) for r in links
@@ -321,22 +321,22 @@ def chk_ffx_sparse(ctx):
             (r["link_id"], r["from_node_id"], r["to_node_id"]) for r in sparse_lp
         )
         if actual != expected:
-            return False, "sparse FFX134 link output leaked internal node/link ids"
+            return False, "sparse subarea_sparse link output leaked internal node/link ids"
 
         dense_volumes = {r["link_id"]: fnum(r["volume"]) for r in (ctx["lp"] or [])}
         sparse_volumes = {r["link_id"]: fnum(r["volume"]) for r in sparse_lp}
         if set(sparse_volumes) != set(dense_volumes):
-            return False, "sparse FFX134 output link set differs from compact fixture"
+            return False, "sparse subarea_sparse output link set differs from compact fixture"
         worst = max(
             abs(sparse_volumes[lid] - dense_volumes[lid])
             for lid in dense_volumes
         )
         if worst > 1e-6:
-            return False, f"sparse FFX134 max volume difference is {worst:.2e}"
+            return False, f"sparse subarea_sparse max volume difference is {worst:.2e}"
 
         route_path = os.path.join(sparse_dir, "route_assignment.csv")
         if not os.path.exists(route_path):
-            return False, "sparse FFX134 route_output=1 produced no route file"
+            return False, "sparse subarea_sparse route_output=1 produced no route file"
         _, routes = read_rows(route_path)
         valid_nodes = set(remap.values())
         valid_links = {r["link_id"] for r in links}
@@ -344,19 +344,19 @@ def chk_ffx_sparse(ctx):
             route_nodes = {x for x in route.get("node_ids", "").split(";") if x}
             route_links = {x for x in route.get("link_ids", "").split(";") if x}
             if not route_nodes <= valid_nodes or not route_links <= valid_links:
-                return False, "sparse FFX134 route output leaked internal ids"
+                return False, "sparse subarea_sparse route output leaked internal ids"
 
         settings[0]["route_output"] = "0"
         write_rows(settings_path, settings_fields, settings)
         os.remove(route_path)
         p_off = run_native(ctx["exe"], ctx["library"], sparse_dir, 60)
         if p_off.returncode != 0 or not parse_lp(sparse_dir):
-            return False, f"sparse FFX134 route_output=0 failed (exit={p_off.returncode})"
+            return False, f"sparse subarea_sparse route_output=0 failed (exit={p_off.returncode})"
         if os.path.exists(route_path):
-            return False, "sparse FFX134 route_output=0 unexpectedly wrote routes"
+            return False, "sparse subarea_sparse route_output=0 unexpectedly wrote routes"
 
         if "# of nodes= 28" not in p.stdout or "# of zones = 17" not in p.stdout:
-            return False, "sparse FFX134 did not report compact node/zone dimensions"
+            return False, "sparse subarea_sparse did not report compact node/zone dimensions"
         max_zone = max(int(node["zone_id"]) for node in nodes if fnum(node["zone_id"]) >= 1)
         max_node = max(int(node["node_id"]) for node in nodes)
         return True, (
@@ -608,8 +608,8 @@ CASES = [
     {"name": "sf_multimodal",         "dir": f"{HERE}/sf_multimodal",         "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "modes_sane", "vmt_vht_reporting"]},
     {"name": "cs_multimodal",         "dir": f"{HERE}/cs_multimodal",         "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "modes_sane"]},
     {"name": "sf_conic",              "dir": f"{HERE}/sf_conic",              "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "modes_sane"]},
-    {"name": "subarea/FFX134_BD",     "dir": f"{SUBAREA}/FFX134_BD",          "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "ffx_sparse"]},
-    {"name": "subarea/FFX134_NB",     "dir": f"{SUBAREA}/FFX134_NB",          "checks": ["completes", "external_ids", "gap_ok", "allowed_use"]},
+    {"name": "subarea/subarea_sparse_BD",     "dir": f"{SUBAREA}/subarea_sparse_BD",          "checks": ["completes", "external_ids", "gap_ok", "allowed_use", "sparse_ids"]},
+    {"name": "subarea/subarea_sparse_NB",     "dir": f"{SUBAREA}/subarea_sparse_NB",          "checks": ["completes", "external_ids", "gap_ok", "allowed_use"]},
     {"name": "subarea/LDN034_BD",     "dir": f"{SUBAREA}/LDN034_BD",          "checks": ["completes", "external_ids", "gap_ok", "allowed_use"]},
     {"name": "subarea/LDN034_NB",     "dir": f"{SUBAREA}/LDN034_NB",          "checks": ["completes", "external_ids", "gap_ok", "allowed_use"]},
     {"name": "data/02_Sioux_Falls",   "dir": f"{DATA}/02_Sioux_Falls",        "checks": ["completes", "external_ids", "gap_ok"]},
@@ -618,7 +618,7 @@ CASES = [
 
 CHECKS = {
     "completes": chk_completes, "external_ids": chk_external_ids,
-    "sparse_ids": chk_sparse_ids, "ffx_sparse": chk_ffx_sparse,
+    "sparse_ids": chk_sparse_ids, "sparse_ids": chk_sparse_ids,
     "gap_ok": chk_gap_ok, "allowed_use": chk_allowed_use,
     "modes_sane": chk_modes_sane, "vmt_vht_reporting": chk_vmt_vht_reporting,
     "lane_dc": chk_lane_dc, "turn_reroute": chk_turn_reroute,

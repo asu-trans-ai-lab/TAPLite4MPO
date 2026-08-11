@@ -95,7 +95,7 @@ Real agency networks and matrices are **restricted** and are **never committed**
 `README.md` is tracked). Each agency model gets its own **private subfolder** with a
 case-study `README.md` documenting exactly which conventions it used and which issues it
 raised — e.g. [`private/SCAG/`](../private/README.md). Reproduce those runs by pointing the
-scripts at your own copy of the data (same pattern as `nvta_run/`, README §6).
+scripts at your own copy of the data (same pattern as `agency_run/`, README §6).
 
 ---
 

@@ -22,7 +22,7 @@ iterations, independently reproduced on a second machine):
 | load/store CPU (independent, Windows) | 0.5140 s | 0.0750 s | 6.85x |
 | FW/tree identity residual | — | 1.0e-10 | lossless |
 
-Projection for NVTA regional PM (measured full-coverage pool: 57.3M paths,
+Projection for a regional PM network (measured full-coverage pool: 57.3M paths,
 4.08B link entries, avg 71.2 links/path, 17,754 nodes, 3,858 zones,
 6 modes, 2 iterations):
 
@@ -33,7 +33,7 @@ Projection for NVTA regional PM (measured full-coverage pool: 57.3M paths,
 | tree pool (node,link arcs) | 6.1 GiB | 2.8x |
 | tree pool compact (link-only) | **3.2 GiB** | 5.4x, still LOSSLESS |
 
-The gain is smaller than Chicago Sketch's 5.6x on the arc form because NVTA
+The gain is smaller than Chicago Sketch's 5.6x on the arc form because the agency
 paths average 71 links (vs ~13): long paths make the explicit form
 relatively less wasteful. The decisive property is not the ratio — it is
 that the tree form gives **full coverage without a volume floor**, so

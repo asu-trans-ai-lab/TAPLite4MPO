@@ -1,7 +1,7 @@
 # taplite4mpo PyPI package — API architecture review
 
 *2026-07. A design review of the package surface (`pytaplite` + `dtalite_qa` +
-the C++ kernel), triggered by the NVTA cross-MPO robustness exercise. Each
+the C++ kernel), triggered by the the agency cross-MPO robustness exercise. Each
 issue states the design rule it violated and how it is now resolved.*
 
 ## The layering rule
@@ -25,9 +25,9 @@ renumber ids or back-map outputs.
 
 ## Issues identified and resolved
 
-### 1. Id-space responsibility was in the wrong layer (the NVTA crash)
+### 1. Id-space responsibility was in the wrong layer (the the agency crash)
 The kernel required dense ids with `zone_id == node_id`; every caller with
-sparse agency ids (NVTA subareas) had to renumber in user space and back-map
+sparse agency ids (the agency subareas) had to renumber in user space and back-map
 outputs (the dtalite4cube `_internal/` + backmap steps). Callers that didn't
 know this crashed the kernel (18 GB / silent death — issue #6).
 **Resolved:** the kernel renumbers internally (zones-first dense 1..Z),
@@ -40,7 +40,7 @@ The static-assignment kernel was built and shipped as `DTALite.exe`, the name
 of the sibling dynamic-assignment product — confusing for users of both.
 **Resolved:** the canonical binary is **`bin/TAPLite.exe`** (`bin/TAPLite` on
 macOS/Linux). `build.sh` also writes a `DTALite`-named compatibility copy, and
-every lookup (`pytaplite.find_kernel`, the ARC/NVTA pipelines, `$TAPLITE_EXE`
+every lookup (`pytaplite.find_kernel`, the ARC/the agency pipelines, `$TAPLITE_EXE`
 with `$DTALITE_EXE` still honored) accepts both names. Internal C symbols
 (`DTA_AssignmentAPI`) are a stable C ABI and stay unchanged.
 
@@ -94,7 +94,7 @@ Scattered scripts made every example look different. **Resolved:** each
 worked example has ONE stage-by-stage pipeline with the same gate names
 (`check → declare/convert → prepare → run → validate`):
 `examples/arc_atlanta/arc_pipeline.py` (public data, notebook
-`ARC_END_TO_END.ipynb`) and `nvta_run/nvta_pipeline.py` (bring-your-own
+`ARC_END_TO_END.ipynb`) and `agency_run/nvta_pipeline.py` (bring-your-own
 private data, notebook `NVTA_END_TO_END.ipynb`). Full runs are never launched
 without an explicit flag.
 

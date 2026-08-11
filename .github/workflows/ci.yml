@@ -7,6 +7,19 @@ on:
   workflow_dispatch:
 
 jobs:
+  public-clean:
+    # This repository is PUBLIC. Fail the build if a client/consultant
+    # identifier or agency reference-volume data reaches it. Runs first and
+    # cheaply, so a disclosure never gets as far as the build matrix.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Client/consultant identifier gate
+        run: python scripts/check_public_clean.py
+
   build-test:
     # The kernel uses MSVC-secure CRT calls (fopen_s/scanf_s), so it builds on
     # Windows (MSVC has them natively; MinGW also works locally via build.sh).
@@ -46,7 +59,7 @@ jobs:
 
       # The release gate: every public-network QA/QC gate must pass (kernel,
       # regression, synthetic sparse-id repro, ARC intake/VDF + smoke run,
-      # NVTA public-safe path, pytaplite APIs). One self-checking command --
+      # the agency public-safe path, pytaplite APIs). One self-checking command --
       # the same script a human runs before tagging a release.
       - name: Release smoke test (public QA/QC gates)
         run: |

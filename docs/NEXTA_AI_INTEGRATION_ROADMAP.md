@@ -97,7 +97,7 @@ manifest, so the whole conversation is reproducible and versioned.
 | M1 manifest | — | small (kernel already logs most of it; wrap in dtalite_qa run) | low |
 | M2 gates | M1 | small (regression exists; formalize CHANGELOG) | low |
 | M3 dashboards | M1 | medium (reuse workflow_dashboard plumbing) | low |
-| M4 auto-config | M1+M3 | medium (port adapt_pipeline to dtalite_qa) | low — proven on NVTA |
+| M4 auto-config | M1+M3 | medium (port adapt_pipeline to dtalite_qa) | low — proven on the agency |
 | M5 CG calibration | M4 | large (integrate CompressedTAP gradients with the kernel's VDF library) | medium — research-grade, but the math + code exist |
 | M6 NeXTA-AI loop | M3+M4 | medium (contract + UI wiring) | medium |
 

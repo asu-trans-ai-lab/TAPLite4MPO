@@ -26,6 +26,6 @@ agency field names and numbers, they stay here (internal), not in the public doc
 
 ## Reproducing a private run
 
-Same pattern as `nvta_run/` (main README §6): the scripts read the data from a path you
+Same pattern as `agency_run/` (main README §6): the scripts read the data from a path you
 provide (env var / `local_config.json` / a local `data/` drop), so a colleague with the data
 agreement can reproduce the run without the data ever entering Git.

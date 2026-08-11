@@ -1,9 +1,9 @@
 # Multimodal TAPLite/DTALite Validation Test Plan
 
-Small, reproducible MULTIMODAL test networks that mimic the NVTA regional model,
+Small, reproducible MULTIMODAL test networks that mimic the the agency regional model,
 used to validate a TAPLite/DTALite C++ kernel (per-mode link volume, link travel
 time, `allowed_use` enforcement, Frank-Wolfe convergence) on SMALL networks
-BEFORE running the 49k-link NVTA model.
+BEFORE running the 49k-link the agency model.
 
 Location: `test_networks/` (this folder)
 
@@ -17,7 +17,7 @@ Base networks (schemas matched exactly, only `allowed_use` added + demand split)
 - SF: `.../DTALite_release-main/data_sets/02_Sioux_Falls/`
 - CS: `.../DTALite_release-main/data_sets/03_chicago_sketch/`
 
-## 1. What mimics NVTA
+## 1. What mimics the agency
 
 ### 6 modes (`mode_type.csv`)
 | id | mode_type | vot | pce | occ | demand_file | dedicated_shortest_path | split |
@@ -33,7 +33,7 @@ All `dedicated_shortest_path=1`: each mode computes its own `allowed_use`-respec
 shortest path. `<net>` = `sf` / `cs`.
 
 ### Demand split
-The single base `demand.csv` (o,d,volume) is split across the 6 modes by the NVTA
+The single base `demand.csv` (o,d,volume) is split across the 6 modes by the the agency
 fractions above, producing 6 demand files per network with header
 `o_zone_id,d_zone_id,volume`.
 
@@ -154,7 +154,7 @@ IMPORTANT runtime gotchas (both encoded in `test_harness.py`):
 
 **OVERALL: allowed_use enforcement ALL PASS; all restrictions non-vacuous (bite).**
 
-## 7. Checklist the C++ CMake kernel MUST pass on SF and CS before NVTA
+## 7. Checklist the C++ CMake kernel MUST pass on SF and CS before the agency
 
 Run the same SF and CS folders through the freshly built C++ kernel and confirm:
 
@@ -175,4 +175,4 @@ Run the same SF and CS folders through the freshly built C++ kernel and confirm:
       (within FW solver tolerance) on BOTH SF and CS.
 
 Only after ALL boxes are checked on SF and CS should the kernel be run on the full
-49k-link NVTA network.
+49k-link the agency network.

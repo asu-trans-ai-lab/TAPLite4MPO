@@ -9,7 +9,7 @@ cutting a PyPI release (§0 onward).
 > ```
 > One self-checking command covering every public-network QA/QC gate — kernel build,
 > regression suite, the synthetic sparse-id repro (issue #6), ARC intake/VDF gates,
-> the full ARC equilibrium (region %RMSE must be <= 38), the NVTA public-safe path,
+> the full ARC equilibrium (region %RMSE must be <= 38), the the agency public-safe path,
 > and the pytaplite APIs. CI runs the quick version on every push/PR; `--full` is the
 > pre-tag requirement. Exit code 0 = safe to ship.
 
@@ -62,7 +62,7 @@ subfolder** with a case-study README documenting its conventions and issues. The
 [`private/SCAG/README.md`](private/README.md) — the SCAG RTP24 build (network done, tier-2 zone
 correspondence resolved, piecewise VDF, and the open "missing volume" demand question), mapped
 entry-by-entry to the error catalog. Reproduce private runs by pointing scripts at your own
-copy of the data (same pattern as `nvta_run/`, README §6).
+copy of the data (same pattern as `agency_run/`, README §6).
 
 ---
 
@@ -127,5 +127,5 @@ versions in lockstep for now (one number for the whole `taplite4mpo` distributio
 - **In the wheel/sdist:** `dtalite_qa/`, `pytaplite/`, the kernel source (`kernel/src/*.cpp,*.h`),
   the binding (`kernel/python/binding.cpp`), `README.md`, `LICENSE`, key docs.
 - **Excluded** (via `MANIFEST.in`): `examples/`, `test_networks/`, `kernel/data_sets/`,
-  `nvta_run/`, `private/` — these are repo content, not package payload. Users get those by
+  `agency_run/`, `private/` — these are repo content, not package payload. Users get those by
   cloning the GitHub repo.

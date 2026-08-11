@@ -3,7 +3,7 @@ import os
 test_harness.py
 ---------------
 Validate the TAPLite/DTALite engine on the two SMALL multimodal test networks
-built by build_multimodal.py, BEFORE running the huge NVTA model.
+built by build_multimodal.py, BEFORE running the huge the agency model.
 
 For each network (sf_multimodal, cs_multimodal) and each iteration count
 (1, 10, 20):

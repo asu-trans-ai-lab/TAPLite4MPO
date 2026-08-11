@@ -16,10 +16,10 @@ Inside the per-hop back-trace loop of `All_or_Nothing_Assign`:
    critical section — serializing all threads on every hop of every path.
 2. **`AddLinkSequence()` called INSIDE the hop loop.** The complete path is
    only known after the loop; calling the store per hop re-copied the
-   growing vector every time — quadratic in path length. On NVTA (avg 71
+   growing vector every time — quadratic in path length. On the agency (avg 71
    links/path) that is ~2,500 int copies per path instead of 71.
 
-Measured consequence before the fix (NVTA regional PM, 49,329 links /
+Measured consequence before the fix (a regional PM network, 49,329 links /
 3,858 zones / 6 modes, 16 cores): **~5.5 min per FW iteration with route
 output on, vs ~15 s with it off** — a ~22x penalty that made full-iteration
 regional path extraction impractical.
@@ -32,7 +32,7 @@ exactly once, after the back-trace completes. Guard conditions unchanged
 
 ## Verification — MEASURED
 
-Regional NVTA PM, identical inputs/settings/exe-except-this-fix, 16 cores:
+a regional PM network, identical inputs/settings/exe-except-this-fix, 16 cores:
 
 | metric | pre-fix (run3) | post-fix (run4) | gain |
 |---|---|---|---|

@@ -2311,7 +2311,7 @@ void All_or_Nothing_Assign(int Assignment_iteration_no, double*** ODflow, int***
 					// CR-0016: store ONCE, after the full path is traced. The old
 					// placement was inside the hop loop, re-copying the growing
 					// vector after every hop (quadratic in path length: ~2,500 int
-					// copies per 71-link NVTA path instead of 71).
+					// copies per 71-link the agency path instead of 71).
 					if (linkIndices.size() > 0 &&
 						(shortest_path_log_flag || Assignment_iteration_no == 0))
 						AddLinkSequence(m, Orig, Dest, Assignment_iteration_no,
@@ -4453,7 +4453,7 @@ void InitializeLinkIndices(int num_modes, int no_zones, int max_routes)
 	linkIndices.clear();
 	// CR-0021: at route_output level 4 the origin-rooted TREE pool is the route
 	// representation and it is lossless, so this 5D explicit store is pure
-	// duplication -- and it is the peak-memory term (33.7 GB on the NVTA PM
+	// duplication -- and it is the peak-memory term (33.7 GB on the the regional PM network
 	// SOV run) while tree_pool.bin is ~5x smaller. Level 4 therefore skips it.
 	// ODME walks the explicit store, so keep it when ODME is active rather than
 	// silently changing ODME's basis -- and say so.
@@ -7718,7 +7718,7 @@ int Read_ODtable(double*** ODtable, double*** DiffODtable, double*** Seed_ODtabl
 	bool write_seed = (g_ODME_mode != 0) || (g_ODME_obs_VMT > 0) || (shortest_path_log_flag != 0);
 
 	// Read modes sequentially. (Reading them in parallel was measured to REGRESS the
-	// CSV path ~1.8x on NVTA -- 6 large files + ~5 GB of concurrent dense-array writes
+	// CSV path ~1.8x on the agency -- 6 large files + ~5 GB of concurrent dense-array writes
 	// are I/O / memory-bandwidth bound, so one-at-a-time has better locality. The
 	// binary path is already I/O-light; use the binary format + skip_seed for speed.)
 	for (int m = 1; m <= number_of_modes; m++)

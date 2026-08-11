@@ -187,7 +187,7 @@ Run before accepting any converted network. Automated form:
 
 ## 9. Reference implementation of the checks
 
-The audit script that produced the NVTA findings is the reference
+The audit script that produced the the agency findings is the reference
 implementation of §6 and §8:
 
 ```

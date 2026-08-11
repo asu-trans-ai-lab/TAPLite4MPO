@@ -7,7 +7,7 @@ outputs, no NB scenario, and no license file, so it cannot validate the
 complete conversion→assignment→postprocessing chain by itself. The
 per-class reproduction below is a CONSISTENCY check against references
 embedded in this owner-authorized converted fixture — full-result
-reproducibility claims await the private E2E gold (Gold-NVTA-E2E-Private).
+reproducibility claims await the private E2E gold (Gold-Agency-E2E-Private).
 The wide-contract teaching artifact for this dataset covers all FOUR
 periods (AM/MD/PM/NT) per the source.
 

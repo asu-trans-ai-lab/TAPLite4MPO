@@ -4,7 +4,7 @@ private/*
 # ---- PRIVATE internal docs (agency coordination, personnel, status) ----
 private_docs/*
 !private_docs/README.md
-# local machine-specific config (e.g. external NVTA data root)
+# local machine-specific config (e.g. external the agency data root)
 **/local_config.json
 # build artifacts (regenerate with build.sh)
 bin/
@@ -13,9 +13,9 @@ cmake_build_rel/
 *.o
 # exe copies staged into run folders at runtime (canonical is bin/DTALite.exe)
 test_networks/**/DTALite*.exe
-nvta_run/**/DTALite*.exe
-# nvta_run results are DERIVED FROM PRIVATE agency data -> never upload
-nvta_run/results/
+agency_run/**/DTALite*.exe
+# agency_run results are DERIVED FROM PRIVATE agency data -> never upload
+agency_run/results/
 # generic kernel outputs that may carry private volumes (regenerate by re-running)
 **/link_performance.csv
 **/od_performance.csv
@@ -62,8 +62,8 @@ build/
 wheelhouse/
 dist_release/
 
-# Local NVTA workflow packages, agency model data, and source archives
-nvta/
+# Local the agency workflow packages, agency model data, and source archives
+agency/
 nvta_dtalite_package/
 updated_nvta_dtalite_package/
 nvta_dtalite_package_*.zip

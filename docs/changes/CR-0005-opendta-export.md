@@ -38,5 +38,5 @@ interface.
 
 ## Decision
 Owner-directed. Follow-ups: DTAC v2 θ-share source option (exact shares),
-observed reference_tt layer hookup (INRIX) on the OpenDTA side, NVTA
+observed reference_tt layer hookup (INRIX) on the OpenDTA side, the agency
 corridor case as first real consumer (Gate 0–3 order per the OpenDTA plan).

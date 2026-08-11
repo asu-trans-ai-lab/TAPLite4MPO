@@ -16,7 +16,7 @@ Gates (all on PUBLIC data -- no agency files needed):
   G5  ARC smoke     arc_pipeline all --quick: 1-iteration run + validation
                     (--full instead runs the real equilibrium and ENFORCES
                     region %RMSE <= 38)
-  G6  NVTA safety   nvta_pipeline check with NO data configured: must skip
+  G6  the agency safety   nvta_pipeline check with NO data configured: must skip
                     cleanly with the "EXPECTED" message and exit 0
   G7  package API   pytaplite on Chicago Sketch: assign (quick), accessibility
                     (od skim non-empty), demand_to_binary + binary assign,
@@ -182,12 +182,12 @@ def g6_nvta_safety():
     env_backup = os.environ.pop("DTALITE_NVTA_SCENARIO", None)
     try:
         rc, out = run([sys.executable, "nvta_pipeline.py", "check"],
-                      cwd=os.path.join(REPO, "nvta_run"))
+                      cwd=os.path.join(REPO, "agency_run"))
     finally:
         if env_backup is not None:
             os.environ["DTALITE_NVTA_SCENARIO"] = env_backup
     ok = rc == 0 and "EXPECTED" in out
-    return record("G6 NVTA public-safe path", ok,
+    return record("G6 the agency public-safe path", ok,
                   "skips cleanly without agency data" if ok else f"rc={rc}")
 
 

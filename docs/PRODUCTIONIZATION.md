@@ -12,12 +12,12 @@ schema/manifest, and a prioritized feature roadmap for professional MPO use.
 | **private / agency data** | **`private/<scenario>/`** | **no (git-ignored)** |
 | external private data | anywhere on disk, referenced by config | n/a |
 
-- `private/` is ignored except its README; drop NVTA / MPO / client networks there
+- `private/` is ignored except its README; drop the agency / MPO / client networks there
   and run them exactly like public ones (`python -m dtalite_qa run private/<s> --exe ...`).
-- `nvta_run/` scripts no longer hard-code agency paths — they resolve the data
-  root from `DTALITE_NVTA_INTERNAL`, a git-ignored `nvta_run/local_config.json`,
-  or `private/nvta_internal/` (see `nvta_run/data_root.py`).
-- `.gitignore` now excludes `private/**`, `nvta_run/results/` (derived from private
+- `agency_run/` scripts no longer hard-code agency paths — they resolve the data
+  root from `DTALITE_NVTA_INTERNAL`, a git-ignored `agency_run/local_config.json`,
+  or `private/nvta_internal/` (see `agency_run/data_root.py`).
+- `.gitignore` now excludes `private/**`, `agency_run/results/` (derived from private
   data), `local_config.json`, and generic kernel outputs that may carry private
   volumes — so you can publish everything else.
 
@@ -92,7 +92,7 @@ writes packed `.bin` files; `demand_format=1` in settings.csv makes the kernel r
 them (falling back to CSV). Layout: header `"DTAB"`/int32 version/int64 count, then
 `int32 o, int32 d, double vol` records. Results are bit-identical to CSV.
 
-The speedup grows with demand size. On the **NVTA** regional model (PM, ~30M OD
+The speedup grows with demand size. On the **the agency** regional model (PM, ~30M OD
 pairs across 6 modes, 1-iter AON, 8 threads), total wall time:
 
 | run | CSV | binary | speedup |
@@ -102,7 +102,7 @@ pairs across 6 modes, 1-iter AON, 8 threads), total wall time:
 
 Assignment CPU is identical both ways; the whole difference is demand loading. All
 six modes' binary totals match the CSV totals to the cent. One-time conversion of
-all 6 NVTA demand files: ~59 s.
+all 6 the agency demand files: ~59 s.
 
 **Demand-read tuning (done).** Beyond the binary format: the per-mode reads now run
 in parallel (`#pragma omp parallel for` over modes — each writes its own `ODtable[m]`),

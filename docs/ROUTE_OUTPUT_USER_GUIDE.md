@@ -24,7 +24,7 @@ CSV volume floor for levels 1 (>=1000 zones) and 2 (always).
 ## 2. Cost model — what to expect
 
 Enabling any route output (level >= 1) allocates the 5D path store and makes
-each assignment iteration substantially more expensive (regional NVTA PM,
+each assignment iteration substantially more expensive (a regional PM network,
 49k links / 3.9k zones / 6 classes, 16 cores: ~15 s/iteration without the
 store vs ~5.5 min/iteration with it, plus ~12 s store allocation). This is
 the path STORAGE cost, not the output-format cost. Hence the frozen
