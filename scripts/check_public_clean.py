@@ -37,8 +37,12 @@ def main() -> int:
     bad_name = [f for f in files if FORBIDDEN.search(f)]
     bad_body, bad_data = [], []
 
+    # This checker necessarily spells the forbidden terms in order to look for
+    # them, so it must exempt itself or it fails on its own source.
+    self_path = "scripts/check_public_clean.py"
+
     for f in files:
-        if any(f.lower().endswith(s) for s in SKIP_SUFFIX):
+        if f == self_path or any(f.lower().endswith(s) for s in SKIP_SUFFIX):
             continue
         try:
             text = open(f, encoding="utf-8", errors="ignore").read()
